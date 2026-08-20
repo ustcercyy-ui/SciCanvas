@@ -1,0 +1,1123 @@
+<Window x:Class="SciCanvas.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="{Binding ProjectDisplayName, StringFormat={}{0} · SciCanvas}"
+        Width="1440"
+        Height="900"
+        MinWidth="1120"
+        MinHeight="700"
+        WindowStartupLocation="CenterScreen"
+        Closing="MainWindow_OnClosing"
+        Background="#0D1117"
+        Foreground="#E8EDF4">
+    <Window.InputBindings>
+        <KeyBinding Key="N" Modifiers="Control" Command="{Binding NewProjectCommand}" />
+        <KeyBinding Key="O" Modifiers="Control" Command="{Binding OpenProjectCommand}" />
+        <KeyBinding Key="S" Modifiers="Control" Command="{Binding SaveProjectCommand}" />
+        <KeyBinding Key="S" Modifiers="Control+Shift" Command="{Binding SaveProjectAsCommand}" />
+        <KeyBinding Key="I" Modifiers="Control" Command="{Binding OpenSourcesCommand}" />
+        <KeyBinding Key="Enter" Modifiers="Control" Command="{Binding AddCurrentCropToFigureCommand}" />
+        <KeyBinding Key="Z" Modifiers="Control" Command="{Binding UndoCommand}" />
+        <KeyBinding Key="Y" Modifiers="Control" Command="{Binding RedoCommand}" />
+        <KeyBinding Key="Z" Modifiers="Control+Shift" Command="{Binding RedoCommand}" />
+    </Window.InputBindings>
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibility" />
+
+        <SolidColorBrush x:Key="PanelBrush" Color="#141A22" />
+        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#1A222D" />
+        <SolidColorBrush x:Key="BorderBrush" Color="#2B3543" />
+        <SolidColorBrush x:Key="MutedBrush" Color="#8F9BAD" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#22C7E8" />
+
+        <Style TargetType="Button">
+            <Setter Property="Foreground" Value="#E8EDF4" />
+            <Setter Property="Background" Value="#202A36" />
+            <Setter Property="BorderBrush" Value="#344253" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="12,7" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Padding="{TemplateBinding Padding}"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#293646" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#16222C" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.38" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="AccentButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="#087E98" />
+            <Setter Property="BorderBrush" Value="#26D8F6" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+
+        <Style TargetType="TextBox">
+            <Setter Property="Foreground" Value="#F4F7FA" />
+            <Setter Property="Background" Value="#0F151D" />
+            <Setter Property="BorderBrush" Value="#354253" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="CaretBrush" Value="#22C7E8" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="#DDE5EE" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#AEB9C7" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="58" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="30" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="#121820" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+            <Grid Margin="16,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="30" Height="30" Margin="0,0,10,0" Background="#0A829B" CornerRadius="6">
+                        <TextBlock Text="SC" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold" FontSize="11" />
+                    </Border>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="SciCanvas" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="LOCAL · NON-DESTRUCTIVE" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Margin="28,0,0,0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Command="{Binding OpenSourcesCommand}" Style="{StaticResource AccentButtonStyle}" Content="＋ 导入图像" />
+                    <Button Margin="8,0,0,0" Command="{Binding NewProjectCommand}" Content="新建" />
+                    <Button Margin="8,0,0,0" Command="{Binding OpenProjectCommand}" Content="打开工程" />
+                    <Button Margin="8,0,0,0" Command="{Binding SaveProjectCommand}" Content="保存工程" />
+                    <Button Margin="8,0,0,0" Command="{Binding SaveProjectAsCommand}" Content="另存为" />
+                    <Button Margin="8,0,0,0" Command="{Binding UndoCommand}" Content="↶" ToolTip="撤销 · Ctrl+Z" />
+                    <Button Margin="6,0,0,0" Command="{Binding RedoCommand}" Content="↷" ToolTip="重做 · Ctrl+Y 或 Ctrl+Shift+Z" />
+                    <Button Margin="8,0,0,0" Command="{Binding ShowFigureWorkspaceCommand}" Content="{Binding TemplateLibraryLabel}" ToolTip="打开材料科研拼版模板库" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Button Command="{Binding ShowCropWorkspaceCommand}" Content="裁剪视图" />
+                    <Button Margin="6,0,0,0" Command="{Binding ShowFigureWorkspaceCommand}" Content="拼版视图" />
+                    <Button Margin="16,0,0,0" Command="{Binding AddCurrentCropToFigureCommand}" Style="{StaticResource AccentButtonStyle}" Content="加入拼版" />
+                </StackPanel>
+
+                <Border Grid.Column="3" Padding="10,5" Background="#10251E" BorderBrush="#256B51" BorderThickness="1" CornerRadius="12" VerticalAlignment="Center">
+                    <TextBlock Text="● 源文件保护已开启" Foreground="#75D9AA" FontSize="11" />
+                </Border>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="275" />
+                <ColumnDefinition Width="1" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="1" />
+                <ColumnDefinition Width="325" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Background="{StaticResource PanelBrush}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="54" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="14,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="源图像" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="{Binding Sources.Count, StringFormat={}{0} 项}" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" />
+                    </Grid>
+
+                    <ListBox Grid.Row="1"
+                             Margin="8,0,8,8"
+                             Padding="0"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             ItemsSource="{Binding Sources}"
+                             SelectedItem="{Binding SelectedSource}"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="Margin" Value="0,0,0,6" />
+                                <Setter Property="Background" Value="Transparent" />
+                                <Setter Property="BorderThickness" Value="0" />
+                                <Style.Triggers>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter Property="Background" Value="#203442" />
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="8" Background="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=Background}" CornerRadius="5">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="66" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Width="58" Height="58" Background="#0B0F14" CornerRadius="3" ClipToBounds="True">
+                                            <Image Source="{Binding Preview}" Stretch="Uniform" />
+                                        </Border>
+                                        <StackPanel Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding DisplayName}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding OriginalPath}" />
+                                            <TextBlock Margin="0,4,0,0" Text="{Binding DimensionsText}" Foreground="#B8C4D1" FontSize="10" />
+                                            <TextBlock Margin="0,2,0,0"
+                                                       Text="{Binding DetailsText, Mode=OneWay}"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       FontSize="9" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <Border Grid.Row="2" Margin="12" Padding="10" Background="#101820" BorderBrush="#284455" BorderThickness="1" CornerRadius="4">
+                        <StackPanel>
+                            <TextBlock Text="只读导入" Foreground="#7EDDF0" FontSize="11" FontWeight="SemiBold" />
+                            <TextBlock Margin="0,4,0,0" Text="原图路径、SHA-256 与 Windows 文件标识会被记录；导出不会覆盖源文件。" Foreground="{StaticResource MutedBrush}" FontSize="10" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1" Background="{StaticResource BorderBrush}" />
+
+            <Grid Grid.Column="2" Background="#090D12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="42" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Visibility="{Binding CropWorkspaceVisibility}" Background="#11171F" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+                    <Grid Margin="14,0">
+                        <TextBlock Text="画布 · 源像素坐标" Foreground="#B8C3CF" VerticalAlignment="Center" FontSize="11" />
+                        <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" FontSize="10"
+                                   Text="拖动空白处新建裁剪框 · 拖动框体移动" />
+                    </Grid>
+                </Border>
+
+                <Grid Grid.Row="1" Margin="24" ClipToBounds="True" Visibility="{Binding CropWorkspaceVisibility}">
+                    <Border Background="#0C1219" BorderBrush="#202B36" BorderThickness="1" />
+
+                    <StackPanel Visibility="{Binding EmptyStateVisibility}" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Border Width="84" Height="84" Background="#121D27" BorderBrush="#294250" BorderThickness="1" CornerRadius="42">
+                            <TextBlock Text="＋" Foreground="#4BD4EF" FontSize="40" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <TextBlock Margin="0,18,0,0" Text="导入科研图像开始裁剪" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                        <TextBlock Margin="0,8,0,0" Text="支持 TIFF、PNG、JPEG、BMP · 全程本地处理" Foreground="{StaticResource MutedBrush}" FontSize="11" />
+                        <Button Margin="0,20,0,0" Command="{Binding OpenSourcesCommand}" Style="{StaticResource AccentButtonStyle}" Content="选择图像" HorizontalAlignment="Center" />
+                    </StackPanel>
+
+                    <Viewbox Margin="22" Stretch="Uniform" StretchDirection="Both">
+                        <Canvas x:Name="ImageCanvas"
+                                Width="{Binding SelectedSource.Width, FallbackValue=1}"
+                                Height="{Binding SelectedSource.Height, FallbackValue=1}"
+                                Background="Transparent"
+                                Cursor="Cross"
+                                PreviewMouseLeftButtonDown="ImageCanvas_OnMouseLeftButtonDown"
+                                PreviewMouseMove="ImageCanvas_OnMouseMove"
+                                PreviewMouseLeftButtonUp="ImageCanvas_OnMouseLeftButtonUp"
+                                LostMouseCapture="ImageCanvas_OnLostMouseCapture">
+                            <Image Width="{Binding SelectedSource.Width}"
+                                   Height="{Binding SelectedSource.Height}"
+                                   Source="{Binding SelectedSource.Preview}"
+                                   Stretch="Fill"
+                                   RenderOptions.BitmapScalingMode="HighQuality" />
+                            <Rectangle x:Name="CropOverlay"
+                                       Canvas.Left="{Binding Crop.X}"
+                                       Canvas.Top="{Binding Crop.Y}"
+                                       Panel.ZIndex="2"
+                                       Width="{Binding Crop.Width}"
+                                       Height="{Binding Crop.Height}"
+                                       Fill="#2400D7FF"
+                                       Stroke="#17D9F4"
+                                       StrokeThickness="5"
+                                       Cursor="SizeAll"
+                                       Visibility="{Binding IsCropOverlayVisible, Converter={StaticResource BooleanToVisibility}}" />
+                        </Canvas>
+                    </Viewbox>
+                </Grid>
+
+                <Border Grid.Row="0" Visibility="{Binding FigureWorkspaceVisibility}" Background="#11171F" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+                    <Grid Margin="14,0">
+                        <TextBlock Text="论文拼版 · 模板像素坐标" Foreground="#B8C3CF" VerticalAlignment="Center" FontSize="11" />
+                        <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" FontSize="10"
+                                   Text="Ctrl+单击多选面板 · 拖动选择组 · 按模板 DPI 精确导出" />
+                    </Grid>
+                </Border>
+
+                <Grid Grid.Row="1" Margin="24" ClipToBounds="True" Visibility="{Binding FigureWorkspaceVisibility}">
+                    <Border Background="#0C1219" BorderBrush="#202B36" BorderThickness="1" />
+                    <Viewbox Margin="20" Stretch="Uniform" StretchDirection="Both">
+                        <Grid x:Name="FigureSurface"
+                              Width="{Binding Figure.CanvasWidth}"
+                              Height="{Binding Figure.CanvasHeight}"
+                              Background="{Binding Figure.BackgroundBrush}">
+                            <ListBox Width="{Binding Figure.CanvasWidth}"
+                                     Height="{Binding Figure.CanvasHeight}"
+                                     Padding="0"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     ItemsSource="{Binding Figure.Panels}"
+                                     SelectionMode="Extended">
+                                <ListBox.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <Canvas />
+                                    </ItemsPanelTemplate>
+                                </ListBox.ItemsPanel>
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                        <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                        <Setter Property="Panel.ZIndex" Value="{Binding ZIndex}" />
+                                        <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+                                        <Setter Property="Width" Value="{Binding Width}" />
+                                        <Setter Property="Height" Value="{Binding Height}" />
+                                        <Setter Property="Padding" Value="0" />
+                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                        <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                                        <Setter Property="Background" Value="Transparent" />
+                                        <Setter Property="BorderThickness" Value="0" />
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Tag="{Binding}"
+                                                Background="#F2F4F6"
+                                                Cursor="SizeAll"
+                                                ClipToBounds="True"
+                                                PreviewMouseLeftButtonDown="FigurePanel_OnMouseLeftButtonDown"
+                                                PreviewMouseMove="FigurePanel_OnMouseMove"
+                                                PreviewMouseLeftButtonUp="FigurePanel_OnMouseLeftButtonUp"
+                                                LostMouseCapture="FigurePanel_OnLostMouseCapture"
+                                                Visibility="{Binding IsVisible, Converter={StaticResource BooleanToVisibility}}">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="BorderBrush" Value="#4C5968" />
+                                                    <Setter Property="BorderThickness" Value="3" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                            <Setter Property="BorderBrush" Value="#16C7E8" />
+                                                            <Setter Property="BorderThickness" Value="7" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <Grid>
+                                                <Image Source="{Binding Preview}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
+                                                <Canvas IsHitTestVisible="False"
+                                                        Visibility="{Binding HasRenderableScaleBar, Converter={StaticResource BooleanToVisibility}}">
+                                                    <TextBlock Canvas.Left="{Binding ScaleBarPreviewX}"
+                                                               Canvas.Top="{Binding ScaleBarLabelPreviewY}"
+                                                               Padding="5,2"
+                                                               Text="{Binding ScaleBarLabel}"
+                                                               Foreground="White"
+                                                               Background="#B0000000"
+                                                               FontFamily="Arial"
+                                                               FontSize="20"
+                                                               FontWeight="Bold" />
+                                                    <Border Canvas.Left="{Binding ScaleBarPreviewX}"
+                                                            Canvas.Top="{Binding ScaleBarPreviewY}"
+                                                            Width="{Binding ScaleBarPreviewWidth}"
+                                                            Height="7"
+                                                            Background="White"
+                                                            BorderBrush="Black"
+                                                            BorderThickness="2" />
+                                                </Canvas>
+                                                <Border HorizontalAlignment="Left"
+                                                        VerticalAlignment="Top"
+                                                        Margin="8"
+                                                        Padding="7,3"
+                                                        Background="White"
+                                                        Visibility="{Binding DataContext.Figure.ShowPanelLabels, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibility}}">
+                                                    <TextBlock Text="{Binding Label, Mode=OneWay}" Foreground="Black" FontFamily="Arial" FontSize="28" FontWeight="Bold" />
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <ItemsControl Width="{Binding Figure.CanvasWidth}"
+                                          Height="{Binding Figure.CanvasHeight}"
+                                          ItemsSource="{Binding Figure.Guides}"
+                                          Panel.ZIndex="90"
+                                          IsHitTestVisible="False">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <Canvas />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemContainerStyle>
+                                    <Style TargetType="ContentPresenter">
+                                        <Setter Property="Canvas.Left" Value="{Binding CanvasLeft}" />
+                                        <Setter Property="Canvas.Top" Value="{Binding CanvasTop}" />
+                                    </Style>
+                                </ItemsControl.ItemContainerStyle>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Width="{Binding LineWidth}"
+                                                Height="{Binding LineHeight}">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="#A016C7E8" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                            <Setter Property="Background" Value="#E0FFB300" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <ItemsControl Width="{Binding Figure.CanvasWidth}"
+                                          Height="{Binding Figure.CanvasHeight}"
+                                          ItemsSource="{Binding Figure.Annotations}"
+                                          Panel.ZIndex="100"
+                                          IsTabStop="False">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <Canvas />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemContainerStyle>
+                                    <Style TargetType="ContentPresenter">
+                                        <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                        <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                        <Setter Property="Panel.ZIndex" Value="{Binding ZIndex}" />
+                                    </Style>
+                                </ItemsControl.ItemContainerStyle>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Tag="{Binding}"
+                                              Cursor="SizeAll"
+                                              Visibility="{Binding IsVisible, Converter={StaticResource BooleanToVisibility}}"
+                                              PreviewMouseLeftButtonDown="Annotation_OnMouseLeftButtonDown"
+                                              PreviewMouseMove="Annotation_OnMouseMove"
+                                              PreviewMouseLeftButtonUp="Annotation_OnMouseLeftButtonUp"
+                                              LostMouseCapture="Annotation_OnLostMouseCapture">
+                                            <Border Visibility="{Binding TextVisibility}"
+                                                    Padding="3"
+                                                    Background="Transparent">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="BorderThickness" Value="0" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                <Setter Property="BorderBrush" Value="#16C7E8" />
+                                                                <Setter Property="BorderThickness" Value="3" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="{Binding Text}"
+                                                           Foreground="{Binding PreviewBrush}"
+                                                           FontFamily="Arial"
+                                                           FontSize="{Binding FontSizePixels}">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="FontWeight" Value="Normal" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsBold}" Value="True">
+                                                                    <Setter Property="FontWeight" Value="Bold" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </Border>
+                                            <Grid Visibility="{Binding ArrowVisibility}">
+                                                <Path Data="{Binding ArrowGeometry}"
+                                                      Stroke="Transparent"
+                                                      StrokeThickness="24"
+                                                      Fill="Transparent" />
+                                                <Path Data="{Binding ArrowGeometry}"
+                                                      Stroke="#16C7E8"
+                                                      StrokeThickness="{Binding SelectionStrokeWidthPixels}"
+                                                      Fill="#16C7E8"
+                                                      IsHitTestVisible="False"
+                                                      Visibility="{Binding IsSelected, Converter={StaticResource BooleanToVisibility}}" />
+                                                <Path Data="{Binding ArrowGeometry}"
+                                                      Stroke="{Binding PreviewBrush}"
+                                                      StrokeThickness="{Binding StrokeWidthPixels}"
+                                                      Fill="{Binding PreviewBrush}"
+                                                      IsHitTestVisible="False" />
+                                            </Grid>
+                                            <Grid Width="{Binding ShapeWidth}"
+                                                  Height="{Binding ShapeHeight}"
+                                                  Background="Transparent"
+                                                  Visibility="{Binding ShapeVisibility}">
+                                                <Grid Visibility="{Binding RectangleVisibility}">
+                                                    <Rectangle Stroke="#16C7E8"
+                                                               StrokeThickness="{Binding SelectionStrokeWidthPixels}"
+                                                               Fill="Transparent"
+                                                               IsHitTestVisible="False"
+                                                               Visibility="{Binding IsSelected, Converter={StaticResource BooleanToVisibility}}" />
+                                                    <Rectangle Stroke="{Binding PreviewBrush}"
+                                                               StrokeThickness="{Binding StrokeWidthPixels}"
+                                                               Fill="Transparent"
+                                                               IsHitTestVisible="False" />
+                                                </Grid>
+                                                <Grid Visibility="{Binding EllipseVisibility}">
+                                                    <Ellipse Stroke="#16C7E8"
+                                                             StrokeThickness="{Binding SelectionStrokeWidthPixels}"
+                                                             Fill="Transparent"
+                                                             IsHitTestVisible="False"
+                                                             Visibility="{Binding IsSelected, Converter={StaticResource BooleanToVisibility}}" />
+                                                    <Ellipse Stroke="{Binding PreviewBrush}"
+                                                             StrokeThickness="{Binding StrokeWidthPixels}"
+                                                             Fill="Transparent"
+                                                             IsHitTestVisible="False" />
+                                                </Grid>
+                                            </Grid>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Grid>
+                    </Viewbox>
+
+                    <StackPanel Visibility="{Binding Figure.EmptyVisibility}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+                        <TextBlock Text="{Binding Figure.TemplateName}" Foreground="#17202A" FontSize="28" FontWeight="Bold" HorizontalAlignment="Center" />
+                        <TextBlock Margin="0,10,0,0" Text="{Binding Figure.TemplateDescription}" Foreground="#45515E" FontSize="14" TextWrapping="Wrap" MaxWidth="620" TextAlignment="Center" />
+                    </StackPanel>
+                </Grid>
+            </Grid>
+
+            <Border Grid.Column="3" Background="{StaticResource BorderBrush}" />
+
+            <Border Grid.Column="4" Background="{StaticResource PanelBrush}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <Grid>
+                    <StackPanel Margin="16,16,16,24"
+                                IsEnabled="{Binding HasSelection}"
+                                Visibility="{Binding CropWorkspaceVisibility}">
+                        <TextBlock Text="检查器" FontSize="15" FontWeight="SemiBold" />
+                        <TextBlock Margin="0,4,0,0" Text="整数像素 · 非破坏式" Foreground="{StaticResource MutedBrush}" FontSize="10" />
+
+                        <Border Margin="0,14,0,0" Padding="10" Background="#10251E" BorderBrush="#28664F" BorderThickness="1" CornerRadius="4">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="源图层已锁定" Foreground="#7DE0AF" FontSize="11" FontWeight="SemiBold" />
+                                    <TextBlock Margin="0,3,0,0" Text="不会向原图写入像素或元数据" Foreground="#91B8A6" FontSize="9" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="1" Text="LOCK" Foreground="#7DE0AF" FontSize="9" FontWeight="Bold" VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+
+                        <Border Margin="0,10,0,0" Padding="10" Background="#241B16" BorderBrush="#755137" BorderThickness="1" CornerRadius="4">
+                            <StackPanel>
+                                <TextBlock Text="源图版本控制" Foreground="#E7C49C" FontSize="10" FontWeight="SemiBold" />
+                                <TextBlock Margin="0,4,0,7"
+                                           Text="仅当磁盘文件已被有意更新时使用；操作会显示新旧 SHA-256 并要求再次确认。"
+                                           Foreground="#BDA68E"
+                                           FontSize="8"
+                                           TextWrapping="Wrap" />
+                                <Button Command="{Binding AcceptSourceRevisionCommand}" Content="核对并明确接受当前文件为新版本" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Margin="0,22,0,8" Style="{StaticResource SectionTitleStyle}" Text="裁剪区域 / PX" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="X" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <TextBox Margin="0,4,0,0" Text="{Binding Crop.X, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Y" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <TextBox Margin="0,4,0,0" Text="{Binding Crop.Y, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                        </Grid>
+                        <Grid Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="宽度" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <TextBox Margin="0,4,0,0" Text="{Binding Crop.Width, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="高度" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <TextBox Margin="0,4,0,0" Text="{Binding Crop.Height, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock Margin="0,9,0,0" Text="{Binding Crop.ValidationMessage}" Foreground="#7DD9E9" FontSize="10" TextWrapping="Wrap" />
+                        <CheckBox Margin="0,10,0,0"
+                                  IsChecked="{Binding LockCropSizeAcrossSources}"
+                                  Content="切换源图像时保持相同宽高"
+                                  ToolTip="用于在一批图像上沿用同一裁剪尺寸，并分别自由选择位置" />
+
+                        <TextBlock Margin="0,22,0,8" Style="{StaticResource SectionTitleStyle}" Text="对齐到源图像" />
+                        <UniformGrid Columns="3" Rows="2">
+                            <Button Margin="0,0,5,5" Padding="7" Command="{Binding Crop.AlignLeftCommand}" Content="左" ToolTip="左对齐" />
+                            <Button Margin="0,0,5,5" Padding="7" Command="{Binding Crop.AlignHorizontalCenterCommand}" Content="水平中" ToolTip="水平居中" />
+                            <Button Margin="0,0,0,5" Padding="7" Command="{Binding Crop.AlignRightCommand}" Content="右" ToolTip="右对齐" />
+                            <Button Margin="0,0,5,0" Padding="7" Command="{Binding Crop.AlignTopCommand}" Content="上" ToolTip="上对齐" />
+                            <Button Margin="0,0,5,0" Padding="7" Command="{Binding Crop.AlignVerticalCenterCommand}" Content="垂直中" ToolTip="垂直居中" />
+                            <Button Padding="7" Command="{Binding Crop.AlignBottomCommand}" Content="下" ToolTip="下对齐" />
+                        </UniformGrid>
+
+                        <TextBlock Margin="0,22,0,8" Style="{StaticResource SectionTitleStyle}" Text="图层" />
+                        <Border Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4">
+                            <StackPanel>
+                                <Grid Margin="10,9">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox IsChecked="{Binding IsCropOverlayVisible}" />
+                                    <TextBlock Grid.Column="1" Margin="8,0,0,0" Text="裁剪框" VerticalAlignment="Center" FontSize="11" />
+                                    <TextBlock Grid.Column="2" Text="OVERLAY" Foreground="{StaticResource MutedBrush}" FontSize="8" VerticalAlignment="Center" />
+                                </Grid>
+                                <Border Height="1" Background="{StaticResource BorderBrush}" />
+                                <Grid Margin="10,9">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox IsChecked="True" IsEnabled="False" />
+                                    <TextBlock Grid.Column="1" Margin="8,0,0,0" Text="{Binding SelectedSource.DisplayName, FallbackValue=源图像}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" FontSize="11" />
+                                    <TextBlock Grid.Column="2" Text="LOCK" Foreground="#70D6A4" FontSize="8" FontWeight="Bold" VerticalAlignment="Center" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Margin="0,22,0,8" Style="{StaticResource SectionTitleStyle}" Text="输出" />
+                        <Button Command="{Binding ExportCropCommand}"
+                                Style="{StaticResource AccentButtonStyle}"
+                                Content="导出当前裁剪" />
+                        <TextBlock Margin="0,8,0,0"
+                                   Text="首版仅写入全新文件；不会覆盖源图或任何已有文件。TIFF 为推荐格式。"
+                                   Foreground="{StaticResource MutedBrush}"
+                                   FontSize="9"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <StackPanel Margin="16,16,16,24" Visibility="{Binding FigureWorkspaceVisibility}">
+                        <TextBlock Text="拼版检查器" FontSize="15" FontWeight="SemiBold" />
+                        <TextBlock Margin="0,4,0,0" Text="模板布局 · 原始像素导出" Foreground="{StaticResource MutedBrush}" FontSize="10" />
+
+                        <Border Margin="0,14,0,0" Padding="11" Background="#16232D" BorderBrush="#315365" BorderThickness="1" CornerRadius="4">
+                            <StackPanel>
+                                <TextBlock Text="模板" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <ComboBox Margin="0,5,0,8"
+                                          ItemsSource="{Binding AvailableTemplates}"
+                                          SelectedItem="{Binding SelectedFigureTemplate}"
+                                          DisplayMemberPath="Name"
+                                          IsEnabled="{Binding IsTemplateSelectionEnabled}"
+                                          ToolTip="已有面板时请先清空拼版，再切换模板" />
+                                <TextBlock Text="{Binding Figure.TemplateName}" Foreground="#8CE5F4" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <TextBlock Margin="0,5,0,0" Text="{Binding Figure.CanvasSizeText}" Foreground="#C0CBD6" FontSize="10" />
+                                <TextBlock Margin="0,5,0,0" Text="{Binding Figure.TemplateDescription}" Foreground="{StaticResource MutedBrush}" FontSize="9" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Margin="0,18,0,8" Style="{StaticResource SectionTitleStyle}" Text="画布与面板编号" />
+                        <Border Padding="10" Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4">
+                            <StackPanel>
+                                <TextBlock Text="背景颜色 / HEX" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <Grid Margin="0,5,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox IsEditable="True"
+                                              Text="{Binding Figure.BackgroundColor, UpdateSourceTrigger=PropertyChanged}">
+                                        <ComboBoxItem Content="#FFFFFFFF" />
+                                        <ComboBoxItem Content="#FF000000" />
+                                        <ComboBoxItem Content="#FFF5F5F2" />
+                                        <ComboBoxItem Content="#00FFFFFF" />
+                                    </ComboBox>
+                                    <Button Grid.Column="2" Padding="8,5" Command="{Binding Figure.ResetBackgroundCommand}" Content="白色" />
+                                </Grid>
+                                <TextBlock Margin="0,5,0,0"
+                                           Text="{Binding Figure.BackgroundValidationMessage}"
+                                           Foreground="#80DDEA"
+                                           FontSize="8"
+                                           TextWrapping="Wrap" />
+                                <CheckBox Margin="0,10,0,0" IsChecked="{Binding Figure.ShowPanelLabels}" Content="预览与导出面板编号" />
+                                <CheckBox Margin="0,5,0,0" IsChecked="{Binding Figure.AutoPanelLabelsEnabled}" Content="新增或删除面板时自动编号" />
+                                <Grid Margin="0,7,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="118" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="编号序列" Foreground="{StaticResource MutedBrush}" FontSize="9" VerticalAlignment="Center" />
+                                    <ComboBox Grid.Column="2"
+                                              SelectedValue="{Binding Figure.PanelLabelSequence}"
+                                              SelectedValuePath="Tag">
+                                        <ComboBoxItem Tag="lowercase" Content="a, b, c…" />
+                                        <ComboBoxItem Tag="uppercase" Content="A, B, C…" />
+                                        <ComboBoxItem Tag="numeric" Content="1, 2, 3…" />
+                                    </ComboBox>
+                                </Grid>
+                                <Button Margin="0,7,0,0" Command="{Binding Figure.RenumberPanelLabelsCommand}" Content="按画布位置重新编号" />
+                                <TextBlock Margin="0,5,0,0" Text="{Binding Figure.PanelLabelSettingsText}" Foreground="{StaticResource MutedBrush}" FontSize="8" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <Grid Margin="0,18,0,8">
+                            <TextBlock Style="{StaticResource SectionTitleStyle}" Text="面板图层" />
+                            <TextBlock HorizontalAlignment="Right" Text="{Binding Figure.PanelCountText}" Foreground="{StaticResource MutedBrush}" FontSize="10" />
+                        </Grid>
+                        <ListBox MinHeight="120"
+                                 MaxHeight="300"
+                                 Background="{StaticResource PanelRaisedBrush}"
+                                 BorderBrush="{StaticResource BorderBrush}"
+                                 BorderThickness="1"
+                                 ItemsSource="{Binding Figure.Panels}"
+                                 SelectionMode="Extended"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="Padding" Value="0" />
+                                    <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="7,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <CheckBox IsChecked="{Binding IsVisible}" ToolTip="显示/隐藏图层" />
+                                        <StackPanel Grid.Column="1" Margin="8,0">
+                                            <TextBlock FontSize="11" FontWeight="SemiBold">
+                                                <Run Text="{Binding Label, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding RoleDisplayName, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding Source.DisplayName}" Foreground="{StaticResource MutedBrush}" FontSize="9" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <CheckBox Grid.Column="2" IsChecked="{Binding IsLocked}" Content="锁" FontSize="9" ToolTip="锁定后不能在画布拖动" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <UniformGrid Margin="0,8,0,0" Columns="3">
+                            <Button Margin="0,0,5,0" Padding="7" Command="{Binding Figure.MoveLayerUpCommand}" Content="上移" />
+                            <Button Margin="0,0,5,0" Padding="7" Command="{Binding Figure.MoveLayerDownCommand}" Content="下移" />
+                            <Button Padding="7" Command="{Binding Figure.RemoveSelectedCommand}" Content="移除所选" />
+                        </UniformGrid>
+                        <UniformGrid Margin="0,6,0,0" Columns="2">
+                            <Button Margin="0,0,5,0" Padding="6" Command="{Binding Figure.SelectAllPanelsCommand}" Content="全选面板" />
+                            <Button Padding="6" Command="{Binding Figure.ClearPanelSelectionCommand}" Content="取消选择" />
+                        </UniformGrid>
+
+                        <TextBlock Margin="0,20,0,8" Style="{StaticResource SectionTitleStyle}" Text="选中面板" />
+                        <Border Padding="10" Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4">
+                            <StackPanel>
+                                <TextBlock Text="{Binding Figure.SelectedPanel.RoleDisplayName, FallbackValue=未选择面板}" FontWeight="SemiBold" />
+                                <TextBlock Margin="0,8,0,3" Text="面板编号" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <TextBox Text="{Binding Figure.SelectedPanel.Label, UpdateSourceTrigger=PropertyChanged}" MaxLength="16" />
+                                <TextBlock Margin="0,5,0,0" Text="{Binding Figure.SelectedPanel.EffectiveDpiText}" Foreground="#80DDEA" FontSize="10" />
+                                <TextBlock Margin="0,4,0,0" Text="{Binding Figure.SelectedPanel.HelpText}" Foreground="{StaticResource MutedBrush}" FontSize="9" TextWrapping="Wrap" />
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="X" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedPanel.X, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Y" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedPanel.Y, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Margin="0,12,0,6" Text="对齐到画布" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <UniformGrid Columns="3" Rows="2">
+                                    <Button Margin="0,0,5,5" Padding="6" Command="{Binding Figure.AlignPanelLeftCommand}" Content="左" />
+                                    <Button Margin="0,0,5,5" Padding="6" Command="{Binding Figure.AlignPanelHorizontalCenterCommand}" Content="水平中" />
+                                    <Button Margin="0,0,0,5" Padding="6" Command="{Binding Figure.AlignPanelRightCommand}" Content="右" />
+                                    <Button Margin="0,0,5,0" Padding="6" Command="{Binding Figure.AlignPanelTopCommand}" Content="上" />
+                                    <Button Margin="0,0,5,0" Padding="6" Command="{Binding Figure.AlignPanelVerticalCenterCommand}" Content="垂直中" />
+                                    <Button Padding="6" Command="{Binding Figure.AlignPanelBottomCommand}" Content="下" />
+                                </UniformGrid>
+
+                                <Border Margin="0,12,0,0"
+                                        Padding="9"
+                                        Background="#10212A"
+                                        BorderBrush="#245A68"
+                                        BorderThickness="1"
+                                        CornerRadius="3"
+                                        Visibility="{Binding Figure.MultiplePanelSelectionVisibility}">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Figure.SelectedPanelCountText}" Foreground="#8CE5F4" FontSize="10" FontWeight="SemiBold" />
+                                        <TextBlock Margin="0,4,0,7" Text="所选面板相互对齐；锁定面板作为参照但不会移动。" Foreground="{StaticResource MutedBrush}" FontSize="8" TextWrapping="Wrap" />
+                                        <UniformGrid Columns="3" Rows="2">
+                                            <Button Margin="0,0,5,5" Padding="5" Command="{Binding Figure.AlignSelectionLeftCommand}" Content="齐左" />
+                                            <Button Margin="0,0,5,5" Padding="5" Command="{Binding Figure.AlignSelectionHorizontalCenterCommand}" Content="横中" />
+                                            <Button Margin="0,0,0,5" Padding="5" Command="{Binding Figure.AlignSelectionRightCommand}" Content="齐右" />
+                                            <Button Margin="0,0,5,0" Padding="5" Command="{Binding Figure.AlignSelectionTopCommand}" Content="齐上" />
+                                            <Button Margin="0,0,5,0" Padding="5" Command="{Binding Figure.AlignSelectionVerticalCenterCommand}" Content="纵中" />
+                                            <Button Padding="5" Command="{Binding Figure.AlignSelectionBottomCommand}" Content="齐下" />
+                                        </UniformGrid>
+                                        <UniformGrid Margin="0,7,0,0" Columns="2">
+                                            <Button Margin="0,0,5,0" Padding="5" Command="{Binding Figure.DistributeSelectionHorizontallyCommand}" Content="水平等距" />
+                                            <Button Padding="5" Command="{Binding Figure.DistributeSelectionVerticallyCommand}" Content="垂直等距" />
+                                        </UniformGrid>
+                                        <Grid Margin="0,8,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="8" />
+                                                <ColumnDefinition Width="90" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="精确边界间距 / px" Foreground="{StaticResource MutedBrush}" FontSize="9" VerticalAlignment="Center" />
+                                            <TextBox Grid.Column="2" Text="{Binding Figure.ExactSpacingPixels, UpdateSourceTrigger=PropertyChanged}" />
+                                        </Grid>
+                                        <UniformGrid Margin="0,6,0,0" Columns="2">
+                                            <Button Margin="0,0,5,0" Padding="5" Command="{Binding Figure.SetHorizontalSpacingCommand}" Content="应用水平间距" />
+                                            <Button Padding="5" Command="{Binding Figure.SetVerticalSpacingCommand}" Content="应用垂直间距" />
+                                        </UniformGrid>
+                                        <TextBlock Margin="0,5,0,0" Text="{Binding Figure.ExactSpacingStatusText}" Foreground="{StaticResource MutedBrush}" FontSize="8" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Margin="0,14,0,0" Padding="9" Background="#101820" BorderBrush="#334454" BorderThickness="1" CornerRadius="3">
+                                    <StackPanel>
+                                        <CheckBox IsChecked="{Binding Figure.SelectedPanel.ShowScaleBar}"
+                                                  Content="显示经过校准的比例尺" />
+                                        <Grid Margin="0,10,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="8" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="物理尺寸 / 像素" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                                <TextBox Margin="0,4,0,0"
+                                                         Text="{Binding Figure.SelectedPanel.PhysicalUnitsPerSourcePixel, UpdateSourceTrigger=PropertyChanged}" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="比例尺长度" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                                <TextBox Margin="0,4,0,0"
+                                                         Text="{Binding Figure.SelectedPanel.ScaleBarPhysicalLength, UpdateSourceTrigger=PropertyChanged}" />
+                                            </StackPanel>
+                                        </Grid>
+                                        <Grid Margin="0,8,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="8" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="单位" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                                <ComboBox Margin="0,4,0,0"
+                                                          IsEditable="True"
+                                                          Text="{Binding Figure.SelectedPanel.ScaleBarUnit, UpdateSourceTrigger=PropertyChanged}">
+                                                    <ComboBoxItem Content="nm" />
+                                                    <ComboBoxItem Content="µm" />
+                                                    <ComboBoxItem Content="mm" />
+                                                </ComboBox>
+                                            </StackPanel>
+                                            <CheckBox Grid.Column="2"
+                                                      VerticalAlignment="Bottom"
+                                                      Margin="0,0,0,6"
+                                                      IsChecked="{Binding Figure.SelectedPanel.ScaleBarShowLabel}"
+                                                      Content="显示数值标签" />
+                                        </Grid>
+                                        <TextBlock Margin="0,8,0,0"
+                                                   Text="{Binding Figure.SelectedPanel.ScaleBarStatusText}"
+                                                   Foreground="#80DDEA"
+                                                   FontSize="9"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock Margin="0,5,0,0"
+                                                   Text="校准值应来自显微镜元数据或实验记录；软件不会猜测物理尺度。"
+                                                   Foreground="{StaticResource MutedBrush}"
+                                                   FontSize="8"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <Grid Margin="0,20,0,8">
+                            <TextBlock Style="{StaticResource SectionTitleStyle}" Text="参考线与吸附" />
+                            <TextBlock HorizontalAlignment="Right" Text="{Binding Figure.GuideCountText}" Foreground="{StaticResource MutedBrush}" FontSize="10" />
+                        </Grid>
+                        <CheckBox IsChecked="{Binding Figure.IsSnappingEnabled}" Content="拖动面板时启用吸附" />
+                        <Grid Margin="0,7,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="90" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="吸附阈值 / px" Foreground="{StaticResource MutedBrush}" FontSize="9" VerticalAlignment="Center" />
+                            <TextBox Grid.Column="2" Text="{Binding Figure.SnapTolerancePixels, UpdateSourceTrigger=PropertyChanged}" />
+                        </Grid>
+                        <TextBlock Margin="0,5,0,0" Text="{Binding Figure.SnapSettingsText}" Foreground="#80DDEA" FontSize="8" />
+                        <UniformGrid Margin="0,8,0,0" Columns="2">
+                            <Button Margin="0,0,5,0" Command="{Binding Figure.AddVerticalGuideCommand}" Content="＋ 垂直参考线" />
+                            <Button Command="{Binding Figure.AddHorizontalGuideCommand}" Content="＋ 水平参考线" />
+                        </UniformGrid>
+                        <ListBox Margin="0,8,0,0"
+                                 MinHeight="60"
+                                 MaxHeight="140"
+                                 Background="{StaticResource PanelRaisedBrush}"
+                                 BorderBrush="{StaticResource BorderBrush}"
+                                 BorderThickness="1"
+                                 ItemsSource="{Binding Figure.Guides}"
+                                 SelectedItem="{Binding Figure.SelectedGuide}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="7,5">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Summary}" FontSize="10" />
+                                        <TextBlock Grid.Column="1" Text="锁" Foreground="#70D6A4" FontSize="9"
+                                                   Visibility="{Binding IsLocked, Converter={StaticResource BooleanToVisibility}}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <Border Margin="0,8,0,0"
+                                Padding="9"
+                                Background="{StaticResource PanelRaisedBrush}"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="3"
+                                Visibility="{Binding Figure.SelectedGuideVisibility}">
+                            <StackPanel>
+                                <TextBlock Text="{Binding Figure.SelectedGuide.OrientationDisplayName}" FontWeight="SemiBold" />
+                                <TextBlock Margin="0,7,0,3" Text="位置 / 画布 px" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <TextBox IsEnabled="{Binding Figure.SelectedGuide.CanEditPosition}"
+                                         Text="{Binding Figure.SelectedGuide.Position, UpdateSourceTrigger=PropertyChanged}" />
+                                <CheckBox Margin="0,7,0,0" IsChecked="{Binding Figure.SelectedGuide.IsLocked}" Content="锁定参考线" />
+                                <Button Margin="0,7,0,0" Command="{Binding Figure.RemoveSelectedGuideCommand}" Content="删除参考线" />
+                            </StackPanel>
+                        </Border>
+
+                        <Grid Margin="0,20,0,8">
+                            <TextBlock Style="{StaticResource SectionTitleStyle}" Text="科研标注层" />
+                            <TextBlock HorizontalAlignment="Right" Text="{Binding Figure.AnnotationCountText}" Foreground="{StaticResource MutedBrush}" FontSize="10" />
+                        </Grid>
+                        <UniformGrid Columns="2" Rows="2">
+                            <Button Margin="0,0,5,5" Command="{Binding Figure.AddTextAnnotationCommand}" Content="＋ 文字" />
+                            <Button Margin="0,0,0,5" Command="{Binding Figure.AddArrowAnnotationCommand}" Content="＋ 箭头" />
+                            <Button Margin="0,0,5,0" Command="{Binding Figure.AddRectangleAnnotationCommand}" Content="＋ 矩形" />
+                            <Button Command="{Binding Figure.AddEllipseAnnotationCommand}" Content="＋ 椭圆" />
+                        </UniformGrid>
+                        <ListBox Margin="0,8,0,0"
+                                 MinHeight="80"
+                                 MaxHeight="180"
+                                 Background="{StaticResource PanelRaisedBrush}"
+                                 BorderBrush="{StaticResource BorderBrush}"
+                                 BorderThickness="1"
+                                 ItemsSource="{Binding Figure.Annotations}"
+                                 SelectedItem="{Binding Figure.SelectedAnnotation}">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="Padding" Value="0" />
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="7,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <CheckBox IsChecked="{Binding IsVisible}" ToolTip="显示/隐藏标注" />
+                                        <StackPanel Grid.Column="1" Margin="8,0">
+                                            <TextBlock Text="{Binding Summary}" FontSize="10" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding Color}" Foreground="{StaticResource MutedBrush}" FontSize="8" />
+                                        </StackPanel>
+                                        <CheckBox Grid.Column="2" IsChecked="{Binding IsLocked}" Content="锁" FontSize="9" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <UniformGrid Margin="0,8,0,0" Columns="3">
+                            <Button Margin="0,0,5,0" Padding="7" Command="{Binding Figure.MoveAnnotationUpCommand}" Content="上移" />
+                            <Button Margin="0,0,5,0" Padding="7" Command="{Binding Figure.MoveAnnotationDownCommand}" Content="下移" />
+                            <Button Padding="7" Command="{Binding Figure.RemoveSelectedAnnotationCommand}" Content="移除" />
+                        </UniformGrid>
+
+                        <Border Margin="0,10,0,0"
+                                Padding="10"
+                                Background="{StaticResource PanelRaisedBrush}"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                Visibility="{Binding Figure.SelectedAnnotationVisibility}">
+                            <StackPanel>
+                                <TextBlock Text="{Binding Figure.SelectedAnnotation.KindDisplayName, FallbackValue=未选择标注}" FontWeight="SemiBold" />
+                                <TextBox Margin="0,8,0,0"
+                                         Visibility="{Binding Figure.SelectedAnnotation.TextVisibility}"
+                                         Text="{Binding Figure.SelectedAnnotation.Text, UpdateSourceTrigger=PropertyChanged}" />
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="X" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedAnnotation.X, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Y" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedAnnotation.Y, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+                                <Grid Margin="0,8,0,0" Visibility="{Binding Figure.SelectedAnnotation.EndpointVisibility}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Figure.SelectedAnnotation.EndXLabel}" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedAnnotation.EndX, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="{Binding Figure.SelectedAnnotation.EndYLabel}" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedAnnotation.EndY, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="颜色" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <ComboBox Margin="0,4,0,0"
+                                                  IsEditable="True"
+                                                  Text="{Binding Figure.SelectedAnnotation.Color, UpdateSourceTrigger=PropertyChanged}">
+                                            <ComboBoxItem Content="#FF111111" />
+                                            <ComboBoxItem Content="#FFFFFFFF" />
+                                            <ComboBoxItem Content="#FFE53935" />
+                                            <ComboBoxItem Content="#FF1E88E5" />
+                                            <ComboBoxItem Content="#FFFFB300" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" Visibility="{Binding Figure.SelectedAnnotation.TextVisibility}">
+                                        <TextBlock Text="字号 / PT" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedAnnotation.FontSizePt, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" Visibility="{Binding Figure.SelectedAnnotation.StrokeVisibility}">
+                                        <TextBlock Text="线宽 / PT" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedAnnotation.StrokeWidthPt, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+                                <CheckBox Margin="0,8,0,0"
+                                          Visibility="{Binding Figure.SelectedAnnotation.TextVisibility}"
+                                          IsChecked="{Binding Figure.SelectedAnnotation.IsBold}"
+                                          Content="粗体" />
+                                <TextBlock Margin="0,8,0,0"
+                                           Text="{Binding Figure.SelectedAnnotation.ValidationMessage}"
+                                           Foreground="#80DDEA"
+                                           FontSize="9"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <Button Margin="0,18,0,0" Command="{Binding AddCurrentCropToFigureCommand}" Content="加入当前裁剪" />
+                        <Button Margin="0,8,0,0" Command="{Binding ExportFigureCommand}" Style="{StaticResource AccentButtonStyle}" Content="导出整张拼版" />
+                        <TextBlock Margin="0,8,0,0"
+                                   Text="最终组图从原始文件重新裁剪并渲染，不使用界面预览代理；输出固定为8位RGB合成图。"
+                                   Foreground="{StaticResource MutedBrush}"
+                                   FontSize="9"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="2" Background="#10161E" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
+            <Grid Margin="12,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="●" Foreground="#62D49C" FontSize="9" />
+                    <TextBlock Margin="6,0,0,0" Text="{Binding StatusMessage}" Foreground="#AEB9C6" FontSize="10" />
+                    <TextBlock Margin="14,0,0,0" Text="{Binding LastError}" Foreground="#F28A8A" FontSize="10" TextTrimming="CharacterEllipsis" MaxWidth="560" ToolTip="{Binding LastError}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Margin="0,0,14,0" Text="{Binding AutosaveStatusText}" Foreground="#62D49C" FontSize="9" />
+                    <TextBlock Text="{Binding HistoryStatusText}" Foreground="#7FA8B5" FontSize="9" />
+                    <TextBlock Margin="14,0,0,0" Text="本地模式 · 无网络上传" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

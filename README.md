@@ -1,0 +1,114 @@
+# SciCanvas（暂定名）
+
+SciCanvas 是一款面向材料科学与实验研究人员的 Windows 本地图像裁剪、拼接和论文组图软件。它以像素准确、非破坏编辑、源文件保护和可追溯导出为首要原则。
+
+当前仓库已经包含可运行的 WPF 工作台、科研比例尺、文字/箭头/形状标注层、面板多选排版、材料组图模板库，以及产品规格、工程架构、模板 Schema 和自动化测试。
+
+## 当前可用
+
+- 从 Windows 文件选择器批量导入 TIFF、PNG、JPEG、BMP；读取过程使用只读文件流。
+- 自动读取像素尺寸、位深/通道等基础元数据，并计算 SHA-256 与 Windows 文件标识。
+- 在源图像像素坐标中拖拽新建裁剪框、拖动已有裁剪框，或直接输入整数 `X / Y / 宽 / 高`。
+- 切换不同源图像时可锁定裁剪宽高，分别自由调整每张图的裁剪位置。
+- 将裁剪框左对齐、水平居中、右对齐、上对齐、垂直居中或下对齐到源图像。
+- 在图层区显示/隐藏裁剪框；源图层始终锁定。
+- 导出当前裁剪为 TIFF、PNG、BMP 或 JPEG；导出前重新验证源文件，且只写入全新文件。
+- 核心层已实现源文件变化验证与导出路径防覆盖策略，编码器也使用 `CreateNew` 拒绝覆盖已有文件。
+- 将当前裁剪作为非破坏面板加入论文拼版，不生成中间修改图。
+- 内置 6 套材料科研组图模板，新增“储能电化学 · 六面板证据链”“物相—结构—机理 · 六面板”和“力学性能—断口 · 五面板”。
+- 可在空拼版中切换模板；工程文件记录模板 ID，重新打开时自动恢复对应模板。
+- 模板按期刊物理尺寸生成 300 dpi 画布，并检查每个面板的有效 DPI。
+- 拼版面板可自由拖动、显示/隐藏、锁定、调整图层顺序或移除。
+- 选中面板可一键左对齐、水平居中、右对齐、上对齐、垂直居中或下对齐到最终画布。
+- `Ctrl+单击` 可多选面板，也可在图层列表中扩展选择；选择组可整体拖动并统一限制在画布边界内。
+- 多选面板可按左边、中心、右边、上边、垂直中心或下边相互对齐；至少 3 个未锁定面板可按两端位置进行水平或垂直等距分布。
+- 锁定面板可以作为多选对齐参照，但不会被拖动或对齐命令修改；也可一键全选或取消选择。
+- 可添加水平/垂直参考线，输入精确画布像素位置并锁定；参考线只属于编辑器辅助层，不进入最终导出图。
+- 面板拖动可吸附到画布边缘/中心、参考线以及其他可见面板的边缘/中心，吸附阈值可在 1–100 px 间设置或完全关闭。
+- 多选面板可输入精确的相邻边界间距，并从最靠左或最靠上的面板开始应用水平/垂直排版；超出画布时阻止命令。
+- 画布背景支持 `#RRGGBB` / `#AARRGGBB` 自定义颜色或透明背景，预览、工程恢复、撤销和最终导出使用同一颜色值。
+- 面板编号可自动生成小写字母、大写字母或数字序列，也可关闭自动编号后手工编辑，并按画布阅读顺序一键重新编号。
+- 每个面板可输入“物理尺寸/源像素”、比例尺长度和单位（nm、µm、mm 或自定义单位），预览并导出经过校准的比例尺。
+- 比例尺长度超过裁剪宽度 80% 或校准值无效时阻止导出；软件不会猜测缺失的物理尺度。
+- 可添加文字、箭头、矩形和椭圆科研标注，并直接在画布拖动；每个标注可显示/隐藏、锁定、排序或移除。
+- 文字支持 4–72 pt、粗体和十六进制颜色；箭头与形状支持 0.25–10 pt 线宽及精确像素坐标。
+- 未完成的标注可以先保存到工程中继续编辑，但颜色、坐标、字号或线宽无效时会严格阻止最终导出。
+- 导出整张 TIFF、PNG、BMP 或 JPEG 拼版；最终渲染重新读取原始图像，不使用界面预览代理。
+- 300 dpi 导出使用像素坐标到 WPF 设备单位的精确换算，确保面板位置、标签与比例尺不会因系统 96 dpi 坐标而偏移。
+- 新建、保存、另存为和打开 `*.scicanvas` 工程。
+- 工程恢复源图引用、SHA-256、活动裁剪、模板、面板位置、图层顺序、显隐、锁定、比例尺、标注、参考线和吸附设置。
+- 连续保存采用同目录临时文件原子替换，并保留一个 `.scicanvas.bak` 上一版本备份。
+- 打开工程时重新计算全部源图指纹；文件缺失或内容变化时要求选择替代文件，只允许 SHA-256 完全一致的文件安全重新链接，否则停止打开。
+- 对确实需要采用的源图新版本，可执行受控接受流程：显示新旧 SHA-256 和尺寸、再次确认、检查全部裁剪边界、重新读取验证，并把变更写入工程审计轨迹。
+- 接受新版本不会写入源文件；为防止旧指纹被误当作可撤销状态，该操作会清空旧撤销历史，并将工程标记为必须手动保存。
+- 未保存状态显示在窗口标题中，关闭程序时会询问保存。
+- 最近 100 步文档编辑可撤销/重做；连续拖动合并为一步，导入源图不进入撤销栈。
+- 快捷键：`Ctrl+Z` 撤销、`Ctrl+Y` 或 `Ctrl+Shift+Z` 重做、`Ctrl+N` 新建、`Ctrl+O` 打开、`Ctrl+S` 保存、`Ctrl+Shift+S` 另存为、`Ctrl+I` 导入、`Ctrl+Enter` 加入拼版。
+- 编辑停止 10 秒后自动写入独立恢复副本；已保存工程使用同目录旁车文件，未命名工程使用本机 `%LocalAppData%\SciCanvas\Recovery`。
+- 启动或打开工程时检测较新的恢复副本，并由用户决定恢复或放弃；恢复后保持未保存状态，手动保存成功才清理副本。
+
+PDF/SVG 可编辑矢量导出、用户自定义模板导入与批量裁剪队列仍在后续迭代中。
+
+## 本地运行
+
+需要 Windows 10/11 与 [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)。
+
+```powershell
+dotnet run --project .\src\SciCanvas.App\SciCanvas.App.csproj
+```
+
+生成 Windows x64 目录版：
+
+```powershell
+dotnet publish .\src\SciCanvas.App\SciCanvas.App.csproj --configuration Release --runtime win-x64 --self-contained false --output .\artifacts\SciCanvas-win-x64
+```
+
+生成后可双击 `.\artifacts\SciCanvas-win-x64\SciCanvas.App.exe`。该目录版仍需要系统安装 .NET 10 Desktop Runtime；后续发布阶段会再制作自包含安装包。
+
+构建与测试：
+
+```powershell
+dotnet build .\SciCanvas.sln --configuration Debug
+dotnet test .\SciCanvas.sln --configuration Debug
+```
+
+## 已确定的产品方向
+
+- 深色精密工作台：左侧源图像库，中间像素级裁剪/拼版画布，右侧精确参数、对齐与分布、图层管理。
+- 固定尺寸裁剪：可从参考图创建裁剪模板，并在后续图片上保持相同宽高、自由移动位置。
+- 无损工程：裁剪、摆放、标注和显示调整只写入工程文件，源文件始终只读。
+- 材料科研模板：提供期刊尺寸预设和材料领域常见的证据链组图模板。
+- 可审计导出：导出结果附带源文件指纹、裁剪坐标、变换和导出参数。
+
+## 文档
+
+- [MVP 产品规格](docs/MVP_SPEC.md)
+- [技术架构](docs/ARCHITECTURE.md)
+- [模板系统](docs/TEMPLATE_SYSTEM.md)
+- [工程文件 JSON Schema](schemas/scicanvas-project.schema.json)
+- [组图模板 JSON Schema](schemas/scicanvas-template.schema.json)
+- [最小工程示例](examples/minimal.scicanvas)
+- [多尺度形貌模板示例](templates/builtin/multiscale-morphology.nature-double.json)
+- [通用 2×2 对照模板](templates/builtin/comparison-2x2.nature-double.json)
+- [制备—结构—性能模板](templates/builtin/synthesis-structure-performance.nature-double.json)
+- [储能电化学模板](templates/builtin/energy-storage-electrochemistry.nature-double.json)
+- [物相—结构—机理模板](templates/builtin/phase-structure-mechanism.nature-double.json)
+- [力学性能—断口模板](templates/builtin/mechanics-fracture.nature-double.json)
+- [已选主界面方向](docs/assets/scicanvas-selected-ui.png)
+
+## 建议技术栈
+
+- C# / .NET 10
+- WPF
+- SkiaSharp
+- NetVips / libvips
+- JSON Schema Draft 2020-12
+- xUnit
+
+## MVP 核心红线
+
+1. 软件不得写入、移动、重命名或删除源图像。
+2. 导出目标不得与任何源文件指向同一文件。
+3. 裁剪区域必须保存为源图像整数像素坐标。
+4. 预览代理不得被用于最终导出。
+5. 未经用户明确选择，不得进行缩放、插值、位深转换或颜色空间转换。

@@ -1,0 +1,113 @@
+{
+  "$schema": "../../schemas/scicanvas-template.schema.json",
+  "schemaVersion": "0.1",
+  "id": "materials.synthesis-structure-performance.nature-double",
+  "version": "0.1.0",
+  "name": "制备—结构—性能 · 证据链",
+  "description": "以制备路线为主叙事，依次连接成分、微观结构、机理和性能，适合材料类顶刊的非对称混合模态组图。",
+  "category": "structure-performance",
+  "publisherProfileId": "publisher.nature-like.double-column",
+  "publisherRulesVersion": "2026-08",
+  "canvas": {
+    "mode": "physical",
+    "widthMm": 183,
+    "heightMm": 160,
+    "dpi": 300,
+    "background": "white"
+  },
+  "grid": {
+    "columns": 12,
+    "rows": 8,
+    "gutterX": 2,
+    "gutterY": 2,
+    "margin": { "top": 2, "right": 2, "bottom": 2, "left": 2 }
+  },
+  "slots": [
+    {
+      "id": "synthesis-route",
+      "label": "a",
+      "role": "synthesis",
+      "rect": { "column": 1, "row": 1, "columnSpan": 7, "rowSpan": 3 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "主面板：制备路线、器件结构或研究概念图，推荐使用高分辨率导出。"
+    },
+    {
+      "id": "composition",
+      "label": "b",
+      "role": "composition",
+      "rect": { "column": 8, "row": 1, "columnSpan": 5, "rowSpan": 3 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "成分、物相、光谱或晶体学证据。"
+    },
+    {
+      "id": "structure",
+      "label": "c",
+      "role": "structure",
+      "rect": { "column": 1, "row": 4, "columnSpan": 4, "rowSpan": 5 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 300,
+      "requireScaleBar": true,
+      "helpText": "微观结构或形貌证据；如为显微图，请校准比例尺。"
+    },
+    {
+      "id": "mechanism",
+      "label": "d",
+      "role": "mechanism",
+      "rect": { "column": 5, "row": 4, "columnSpan": 4, "rowSpan": 5 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "机理、动力学、中间体或模拟结果。"
+    },
+    {
+      "id": "performance",
+      "label": "e",
+      "role": "performance",
+      "rect": { "column": 9, "row": 4, "columnSpan": 4, "rowSpan": 5 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "核心性能、稳定性或基准对比，承担结论验证。"
+    }
+  ],
+  "labelStyle": {
+    "sequence": "lowercase",
+    "fontFamily": "Arial",
+    "fontSizePt": 7,
+    "fontWeight": 700,
+    "position": "top-left-inside"
+  },
+  "validators": [
+    {
+      "rule": "resolution.minDpi",
+      "severity": "warning",
+      "parameters": { "minimum": 300 },
+      "message": "位图面板在最终版面下应保持至少 300 dpi。"
+    },
+    {
+      "rule": "scaleBar.required",
+      "severity": "warning",
+      "parameters": {},
+      "message": "显微图面板应使用经过校准的独立比例尺层。"
+    },
+    {
+      "rule": "source.integrity",
+      "severity": "error",
+      "parameters": {},
+      "message": "所有源文件必须通过完整性验证。"
+    }
+  ],
+  "provenance": [
+    {
+      "name": "Nature Research Figure Guide",
+      "url": "https://research-figure-guide.nature.com/figures/building-and-exporting-figure-panels/",
+      "accessedAt": "2026-08-20",
+      "notes": "尺寸、字号和紧凑排版依据官方指南；证据链布局为 SciCanvas 原创抽象模板。"
+    }
+  ],
+  "license": "CC0-1.0"
+}

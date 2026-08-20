@@ -1,0 +1,113 @@
+{
+  "$schema": "../../schemas/scicanvas-template.schema.json",
+  "schemaVersion": "0.1",
+  "id": "materials.mechanics-fracture.nature-double",
+  "version": "0.1.0",
+  "name": "力学性能—断口 · 五面板",
+  "description": "连接应力—应变主结果、统计/疲劳、低倍断口、高倍断口与变形机理，适合结构材料研究。",
+  "category": "mechanics",
+  "publisherProfileId": "publisher.nature-like.double-column",
+  "publisherRulesVersion": "2026-08",
+  "canvas": {
+    "mode": "physical",
+    "widthMm": 183,
+    "heightMm": 160,
+    "dpi": 300,
+    "background": "white"
+  },
+  "grid": {
+    "columns": 12,
+    "rows": 8,
+    "gutterX": 2,
+    "gutterY": 2,
+    "margin": { "top": 2, "right": 2, "bottom": 2, "left": 2 }
+  },
+  "slots": [
+    {
+      "id": "stress-strain",
+      "label": "a",
+      "role": "stress-strain",
+      "rect": { "column": 1, "row": 1, "columnSpan": 7, "rowSpan": 4 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "主应力—应变、载荷—位移或强韧性结果。"
+    },
+    {
+      "id": "statistics-fatigue",
+      "label": "b",
+      "role": "fatigue-statistics",
+      "rect": { "column": 8, "row": 1, "columnSpan": 5, "rowSpan": 4 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "重复性统计、S–N 曲线、循环响应或蠕变。"
+    },
+    {
+      "id": "fracture-overview",
+      "label": "c",
+      "role": "fracture-overview",
+      "rect": { "column": 1, "row": 5, "columnSpan": 4, "rowSpan": 4 },
+      "defaultFit": "cover",
+      "minimumEffectiveDpi": 300,
+      "requireScaleBar": true,
+      "helpText": "低倍断口或裂纹扩展路径。"
+    },
+    {
+      "id": "fracture-detail",
+      "label": "d",
+      "role": "fracture-detail",
+      "rect": { "column": 5, "row": 5, "columnSpan": 4, "rowSpan": 4 },
+      "defaultFit": "cover",
+      "minimumEffectiveDpi": 300,
+      "requireScaleBar": true,
+      "helpText": "高倍韧窝、解理、界面或疲劳条带。"
+    },
+    {
+      "id": "deformation-mechanism",
+      "label": "e",
+      "role": "deformation-mechanism",
+      "rect": { "column": 9, "row": 5, "columnSpan": 4, "rowSpan": 4 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "变形机理、位错模型、数字图像相关或有限元结果。"
+    }
+  ],
+  "labelStyle": {
+    "sequence": "lowercase",
+    "fontFamily": "Arial",
+    "fontSizePt": 7,
+    "fontWeight": 700,
+    "position": "top-left-inside"
+  },
+  "validators": [
+    {
+      "rule": "resolution.minDpi",
+      "severity": "warning",
+      "parameters": { "minimum": 300 },
+      "message": "断口图应保持至少 300 dpi；曲线和模型图优先使用矢量源。"
+    },
+    {
+      "rule": "scaleBar.required",
+      "severity": "warning",
+      "parameters": {},
+      "message": "断口显微图应使用经过校准的比例尺。"
+    },
+    {
+      "rule": "source.integrity",
+      "severity": "error",
+      "parameters": {},
+      "message": "所有源文件必须通过完整性验证。"
+    }
+  ],
+  "provenance": [
+    {
+      "name": "Nature Research Figure Guide",
+      "url": "https://research-figure-guide.nature.com/figures/building-and-exporting-figure-panels/",
+      "accessedAt": "2026-08-20",
+      "notes": "尺寸、字体与紧凑面板排列依据官方指南；力学证据链布局为 SciCanvas 原创。"
+    }
+  ],
+  "license": "CC0-1.0"
+}

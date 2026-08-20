@@ -1,0 +1,138 @@
+{
+  "$schema": "../../schemas/scicanvas-template.schema.json",
+  "schemaVersion": "0.1",
+  "id": "materials.multiscale-morphology.nature-double",
+  "version": "0.1.0",
+  "name": "多尺度形貌 · Nature类双栏",
+  "description": "从宏观或低倍图像逐步推进到高倍结构和元素分布。",
+  "category": "morphology",
+  "publisherProfileId": "publisher.nature-like.double-column",
+  "publisherRulesVersion": "2026-08",
+  "canvas": {
+    "mode": "physical",
+    "widthMm": 183,
+    "maxHeightMm": 170,
+    "dpi": 300,
+    "background": "white"
+  },
+  "grid": {
+    "columns": 12,
+    "rows": 8,
+    "gutterX": 2,
+    "gutterY": 2,
+    "margin": { "top": 2, "right": 2, "bottom": 2, "left": 2 }
+  },
+  "slots": [
+    {
+      "id": "overview",
+      "label": "a",
+      "role": "sem-overview",
+      "rect": { "column": 1, "row": 1, "columnSpan": 6, "rowSpan": 4 },
+      "acceptedTypes": ["png", "jpeg", "tiff"],
+      "requireScaleBar": true,
+      "preferVector": false,
+      "lockAspectRatio": true,
+      "defaultFit": "cover",
+      "minimumEffectiveDpi": 300,
+      "helpText": "放置低倍形貌，用于建立整体结构背景。"
+    },
+    {
+      "id": "detail",
+      "label": "b",
+      "role": "sem-detail",
+      "rect": { "column": 7, "row": 1, "columnSpan": 6, "rowSpan": 4 },
+      "acceptedTypes": ["png", "jpeg", "tiff"],
+      "requireScaleBar": true,
+      "preferVector": false,
+      "lockAspectRatio": true,
+      "defaultFit": "cover",
+      "minimumEffectiveDpi": 300,
+      "helpText": "放置同一样品的高倍结构细节。"
+    },
+    {
+      "id": "tem",
+      "label": "c",
+      "role": "tem",
+      "rect": { "column": 1, "row": 5, "columnSpan": 4, "rowSpan": 4 },
+      "acceptedTypes": ["png", "jpeg", "tiff"],
+      "requireScaleBar": true,
+      "preferVector": false,
+      "lockAspectRatio": true,
+      "defaultFit": "cover",
+      "minimumEffectiveDpi": 300
+    },
+    {
+      "id": "hrtem",
+      "label": "d",
+      "role": "hrtem",
+      "rect": { "column": 5, "row": 5, "columnSpan": 4, "rowSpan": 4 },
+      "acceptedTypes": ["png", "jpeg", "tiff"],
+      "requireScaleBar": true,
+      "preferVector": false,
+      "lockAspectRatio": true,
+      "defaultFit": "cover",
+      "minimumEffectiveDpi": 300
+    },
+    {
+      "id": "mapping",
+      "label": "e",
+      "role": "elemental-map",
+      "rect": { "column": 9, "row": 5, "columnSpan": 4, "rowSpan": 4 },
+      "acceptedTypes": ["png", "jpeg", "tiff"],
+      "requireScaleBar": true,
+      "preferVector": false,
+      "lockAspectRatio": true,
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 300
+    }
+  ],
+  "labelStyle": {
+    "sequence": "lowercase",
+    "fontFamily": "Arial",
+    "fontSizePt": 7,
+    "fontWeight": 700,
+    "position": "top-left-outside"
+  },
+  "validators": [
+    {
+      "rule": "resolution.minDpi",
+      "severity": "warning",
+      "parameters": { "minimum": 300 },
+      "message": "图像在最终版面下的有效分辨率低于300 dpi。"
+    },
+    {
+      "rule": "scaleBar.required",
+      "severity": "warning",
+      "parameters": {},
+      "message": "显微图插槽需要经过校准的比例尺。"
+    },
+    {
+      "rule": "transform.nonUniform",
+      "severity": "error",
+      "parameters": {},
+      "message": "显微图不得非等比拉伸。"
+    },
+    {
+      "rule": "source.integrity",
+      "severity": "error",
+      "parameters": {},
+      "message": "源文件未通过完整性验证。"
+    },
+    {
+      "rule": "layout.maxHeight",
+      "severity": "warning",
+      "parameters": { "maximumMm": 170 },
+      "message": "版面高度超过当前期刊预设。"
+    }
+  ],
+  "provenance": [
+    {
+      "name": "Nature Research Figure Guide",
+      "url": "https://research-figure-guide.nature.com/figures/building-and-exporting-figure-panels/",
+      "accessedAt": "2026-08-20",
+      "notes": "用于画布宽度、最大高度和最终字号范围；模板布局为SciCanvas原创抽象布局。"
+    }
+  ],
+  "license": "CC0-1.0"
+}
+

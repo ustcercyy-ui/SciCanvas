@@ -1,0 +1,401 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scicanvas.org/schemas/scicanvas-project.schema.json",
+  "title": "SciCanvas Project",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectId",
+    "createdAt",
+    "updatedAt",
+    "canvas",
+    "sources",
+    "layers",
+    "cropPresets",
+    "guides",
+    "exportProfiles"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "projectId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "canvas": {
+      "$ref": "#/$defs/canvas"
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/sourceAsset"
+      }
+    },
+    "layers": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/imageLayer" },
+          { "$ref": "#/$defs/textLayer" },
+          { "$ref": "#/$defs/scaleBarLayer" }
+        ]
+      }
+    },
+    "cropPresets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/cropPreset"
+      }
+    },
+    "guides": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/guide"
+      }
+    },
+    "exportProfiles": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/exportProfile"
+      }
+    },
+    "templateSnapshot": {
+      "anyOf": [
+        { "$ref": "#/$defs/templateSnapshot" },
+        { "type": "null" }
+      ]
+    },
+    "auditTrail": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/auditEntry"
+      }
+    }
+  },
+  "$defs": {
+    "canvas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "background"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "background": {
+          "type": "string",
+          "enum": ["transparent", "white", "black", "custom"]
+        },
+        "backgroundColor": {
+          "type": ["string", "null"],
+          "pattern": "^#[0-9A-Fa-f]{8}$"
+        }
+      }
+    },
+    "templateSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "templateId": { "type": "string" },
+        "workspaceMode": { "type": "string", "enum": ["crop", "figure"] },
+        "selectedSourceId": { "type": ["string", "null"], "format": "uuid" },
+        "activeCrop": {
+          "anyOf": [
+            { "$ref": "#/$defs/pixelRect" },
+            { "type": "null" }
+          ]
+        },
+        "lockCropSizeAcrossSources": { "type": "boolean" },
+        "cropOverlayVisible": { "type": "boolean" },
+        "snappingEnabled": { "type": "boolean" },
+        "snapTolerancePixels": { "type": "number", "minimum": 1, "maximum": 100 },
+        "exactSpacingPixels": { "type": "integer", "minimum": 0 },
+        "autoPanelLabelsEnabled": { "type": "boolean" },
+        "showPanelLabels": { "type": "boolean" },
+        "panelLabelSequence": {
+          "type": "string",
+          "enum": ["lowercase", "uppercase", "numeric"]
+        },
+        "layerSlots": {
+          "type": "object",
+          "propertyNames": { "format": "uuid" },
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "scaleBars": {
+          "type": "object",
+          "propertyNames": { "format": "uuid" },
+          "additionalProperties": { "$ref": "#/$defs/projectScaleBar" }
+        },
+        "annotations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/projectAnnotation" }
+        }
+      }
+    },
+    "projectScaleBar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled", "physicalUnitsPerSourcePixel", "physicalLength", "unit", "showLabel"
+      ],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "physicalUnitsPerSourcePixel": { "type": "number" },
+        "physicalLength": { "type": "number" },
+        "unit": { "type": "string" },
+        "showLabel": { "type": "boolean" }
+      }
+    },
+    "projectAnnotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "kind", "x", "y", "endX", "endY", "text", "color",
+        "fontSizePt", "strokeWidthPt", "isBold", "visible", "locked", "zIndex"
+      ],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "kind": { "type": "string", "enum": ["text", "arrow", "rectangle", "ellipse"] },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "endX": { "type": "number" },
+        "endY": { "type": "number" },
+        "text": { "type": "string" },
+        "color": { "type": "string" },
+        "fontSizePt": { "type": "number" },
+        "strokeWidthPt": { "type": "number" },
+        "isBold": { "type": "boolean" },
+        "visible": { "type": "boolean" },
+        "locked": { "type": "boolean" },
+        "zIndex": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "sourceAsset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "displayName",
+        "originalPath",
+        "fingerprint",
+        "metadata",
+        "linkState"
+      ],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "displayName": { "type": "string", "minLength": 1 },
+        "originalPath": { "type": "string", "minLength": 1 },
+        "projectRelativePath": { "type": ["string", "null"] },
+        "fingerprint": { "$ref": "#/$defs/fingerprint" },
+        "metadata": { "$ref": "#/$defs/imageMetadata" },
+        "linkState": {
+          "type": "string",
+          "enum": ["verified", "relocated", "modified", "missing", "unverified"]
+        }
+      }
+    },
+    "fingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["byteLength", "lastWriteTimeUtc", "sha256"],
+      "properties": {
+        "byteLength": { "type": "integer", "minimum": 0 },
+        "lastWriteTimeUtc": { "type": "string", "format": "date-time" },
+        "sha256": { "type": "string", "pattern": "^[0-9A-Fa-f]{64}$" },
+        "windowsFileId": { "type": ["string", "null"] }
+      }
+    },
+    "imageMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "channels", "bitsPerChannel", "pixelFormat"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "channels": { "type": "integer", "minimum": 1 },
+        "bitsPerChannel": { "type": "integer", "enum": [1, 8, 10, 12, 16, 32, 64] },
+        "pixelFormat": { "type": "string", "minLength": 1 },
+        "dpiX": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "dpiY": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "physicalSizeX": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "physicalSizeY": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "physicalUnit": { "type": ["string", "null"] },
+        "iccProfileName": { "type": ["string", "null"] }
+      }
+    },
+    "pixelRect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "integer", "minimum": 0 },
+        "y": { "type": "integer", "minimum": 0 },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "transform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "scaleX", "scaleY", "rotationQuarterTurns"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "scaleX": { "type": "number", "exclusiveMinimum": 0 },
+        "scaleY": { "type": "number", "exclusiveMinimum": 0 },
+        "rotationQuarterTurns": { "type": "integer", "minimum": 0, "maximum": 3 }
+      }
+    },
+    "layerBaseProperties": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1 },
+        "visible": { "type": "boolean" },
+        "locked": { "type": "boolean" },
+        "zIndex": { "type": "integer" },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "imageLayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type", "id", "name", "visible", "locked", "zIndex", "opacity",
+        "sourceAssetId", "sourceRect", "transform", "adjustments"
+      ],
+      "properties": {
+        "type": { "const": "image" },
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1 },
+        "panelLabel": { "type": ["string", "null"], "maxLength": 16 },
+        "visible": { "type": "boolean" },
+        "locked": { "type": "boolean" },
+        "zIndex": { "type": "integer" },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "sourceAssetId": { "type": "string", "format": "uuid" },
+        "sourceRect": { "$ref": "#/$defs/pixelRect" },
+        "transform": { "$ref": "#/$defs/transform" },
+        "adjustments": {
+          "type": "array",
+          "items": { "type": "object" }
+        }
+      }
+    },
+    "textLayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type", "id", "name", "visible", "locked", "zIndex", "opacity",
+        "text", "x", "y", "fontFamily", "fontSizePt", "color"
+      ],
+      "properties": {
+        "type": { "const": "text" },
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1 },
+        "visible": { "type": "boolean" },
+        "locked": { "type": "boolean" },
+        "zIndex": { "type": "integer" },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "text": { "type": "string" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "fontFamily": { "type": "string" },
+        "fontSizePt": { "type": "number", "exclusiveMinimum": 0 },
+        "fontWeight": { "type": "integer", "minimum": 100, "maximum": 900 },
+        "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{8}$" }
+      }
+    },
+    "scaleBarLayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type", "id", "name", "visible", "locked", "zIndex", "opacity",
+        "sourceAssetId", "x", "y", "physicalLength", "physicalUnit", "thickness"
+      ],
+      "properties": {
+        "type": { "const": "scaleBar" },
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1 },
+        "visible": { "type": "boolean" },
+        "locked": { "type": "boolean" },
+        "zIndex": { "type": "integer" },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "sourceAssetId": { "type": "string", "format": "uuid" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "physicalLength": { "type": "number", "exclusiveMinimum": 0 },
+        "physicalUnit": { "type": "string", "minLength": 1 },
+        "thickness": { "type": "number", "exclusiveMinimum": 0 },
+        "showLabel": { "type": "boolean" }
+      }
+    },
+    "cropPreset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "width", "height", "unit"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1 },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "unit": { "const": "px" }
+      }
+    },
+    "guide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["orientation", "position"],
+      "properties": {
+        "orientation": { "type": "string", "enum": ["horizontal", "vertical"] },
+        "position": { "type": "number" },
+        "locked": { "type": "boolean" }
+      }
+    },
+    "exportProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "format", "dpi", "writeAuditReport"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1 },
+        "format": { "type": "string", "enum": ["png", "tiff"] },
+        "dpi": { "type": "integer", "minimum": 1 },
+        "bitDepth": { "type": "integer", "enum": [8, 16] },
+        "colorMode": { "type": "string", "enum": ["gray", "rgb", "rgba"] },
+        "resampling": {
+          "type": ["string", "null"],
+          "enum": [null, "nearest", "bilinear", "bicubic", "lanczos3"]
+        },
+        "journalPresetId": { "type": ["string", "null"] },
+        "writeAuditReport": { "type": "boolean" }
+      }
+    },
+    "auditEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timestamp", "command", "parameters"],
+      "properties": {
+        "timestamp": { "type": "string", "format": "date-time" },
+        "command": { "type": "string", "minLength": 1 },
+        "parameters": { "type": "object" }
+      }
+    }
+  }
+}

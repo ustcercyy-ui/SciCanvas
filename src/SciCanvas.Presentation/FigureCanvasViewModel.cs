@@ -1,0 +1,1460 @@
+using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Windows;
+using System.Windows.Media;
+using SciCanvas.Core.Export;
+using SciCanvas.Core.Geometry;
+using SciCanvas.Templates;
+
+namespace SciCanvas.Presentation;
+
+public sealed class FigureCanvasViewModel : ObservableObject
+{
+    private readonly TemplateCanvasLayout _layout;
+    private FigurePanelViewModel? _selectedPanel;
+    private FigureAnnotationViewModel? _selectedAnnotation;
+    private FigureGuideViewModel? _selectedGuide;
+    private bool _isUpdatingPanelSelection;
+    private bool _isSnappingEnabled = true;
+    private double _snapTolerancePixels = 12;
+    private long _exactSpacingPixels = 24;
+    private string _backgroundColor;
+    private string _lastValidBackgroundColor;
+    private bool _autoPanelLabelsEnabled = true;
+    private bool _showPanelLabels = true;
+    private string _panelLabelSequence;
+
+    public event EventHandler? DocumentChanged;
+
+    public event EventHandler? EditCompleted;
+
+    public FigureCanvasViewModel(FigureTemplateDefinition template)
+    {
+        Template = template ?? throw new ArgumentNullException(nameof(template));
+        _layout = TemplateLayoutEngine.CreateLayout(template);
+        _backgroundColor = NormalizeTemplateBackground(template.Canvas.Background);
+        _lastValidBackgroundColor = _backgroundColor;
+        _panelLabelSequence = NormalizeLabelSequence(template.LabelStyle.Sequence);
+        RemoveSelectedCommand = new RelayCommand(RemoveSelected, () => SelectedPanel is not null);
+        MoveLayerUpCommand = new RelayCommand(MoveLayerUp, () => SelectedPanel is not null);
+        MoveLayerDownCommand = new RelayCommand(MoveLayerDown, () => SelectedPanel is not null);
+        SelectAllPanelsCommand = new RelayCommand(SelectAllPanels, () => Panels.Count > 0);
+        ClearPanelSelectionCommand = new RelayCommand(
+            () => SelectOnlyPanel(null),
+            () => SelectedPanelCount > 0);
+        AlignPanelLeftCommand = new RelayCommand(
+            () => AlignSelectedPanel(PanelAlignment.Left),
+            CanAlignSelectedPanel);
+        AlignPanelHorizontalCenterCommand = new RelayCommand(
+            () => AlignSelectedPanel(PanelAlignment.HorizontalCenter),
+            CanAlignSelectedPanel);
+        AlignPanelRightCommand = new RelayCommand(
+            () => AlignSelectedPanel(PanelAlignment.Right),
+            CanAlignSelectedPanel);
+        AlignPanelTopCommand = new RelayCommand(
+            () => AlignSelectedPanel(PanelAlignment.Top),
+            CanAlignSelectedPanel);
+        AlignPanelVerticalCenterCommand = new RelayCommand(
+            () => AlignSelectedPanel(PanelAlignment.VerticalCenter),
+            CanAlignSelectedPanel);
+        AlignPanelBottomCommand = new RelayCommand(
+            () => AlignSelectedPanel(PanelAlignment.Bottom),
+            CanAlignSelectedPanel);
+        AlignSelectionLeftCommand = new RelayCommand(
+            () => AlignPanelSelection(PanelAlignment.Left),
+            CanAlignPanelSelection);
+        AlignSelectionHorizontalCenterCommand = new RelayCommand(
+            () => AlignPanelSelection(PanelAlignment.HorizontalCenter),
+            CanAlignPanelSelection);
+        AlignSelectionRightCommand = new RelayCommand(
+            () => AlignPanelSelection(PanelAlignment.Right),
+            CanAlignPanelSelection);
+        AlignSelectionTopCommand = new RelayCommand(
+            () => AlignPanelSelection(PanelAlignment.Top),
+            CanAlignPanelSelection);
+        AlignSelectionVerticalCenterCommand = new RelayCommand(
+            () => AlignPanelSelection(PanelAlignment.VerticalCenter),
+            CanAlignPanelSelection);
+        AlignSelectionBottomCommand = new RelayCommand(
+            () => AlignPanelSelection(PanelAlignment.Bottom),
+            CanAlignPanelSelection);
+        DistributeSelectionHorizontallyCommand = new RelayCommand(
+            () => DistributePanelSelection(horizontal: true),
+            CanDistributePanelSelection);
+        DistributeSelectionVerticallyCommand = new RelayCommand(
+            () => DistributePanelSelection(horizontal: false),
+            CanDistributePanelSelection);
+        SetHorizontalSpacingCommand = new RelayCommand(
+            () => SetExactPanelSpacing(horizontal: true),
+            () => CanSetExactPanelSpacing(horizontal: true));
+        SetVerticalSpacingCommand = new RelayCommand(
+            () => SetExactPanelSpacing(horizontal: false),
+            () => CanSetExactPanelSpacing(horizontal: false));
+        AddVerticalGuideCommand = new RelayCommand(
+            () => AddGuide(FigureGuideOrientation.Vertical));
+        AddHorizontalGuideCommand = new RelayCommand(
+            () => AddGuide(FigureGuideOrientation.Horizontal));
+        RemoveSelectedGuideCommand = new RelayCommand(
+            RemoveSelectedGuide,
+            () => SelectedGuide is { IsLocked: false });
+        ResetBackgroundCommand = new RelayCommand(() => BackgroundColor = "#FFFFFFFF");
+        RenumberPanelLabelsCommand = new RelayCommand(
+            () => RenumberPanelLabels(force: true),
+            () => Panels.Count > 0);
+        AddTextAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Text));
+        AddArrowAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Arrow));
+        AddRectangleAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Rectangle));
+        AddEllipseAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Ellipse));
+        RemoveSelectedAnnotationCommand = new RelayCommand(
+            RemoveSelectedAnnotation,
+            () => SelectedAnnotation is not null);
+        MoveAnnotationUpCommand = new RelayCommand(
+            MoveAnnotationUp,
+            () => SelectedAnnotation is not null);
+        MoveAnnotationDownCommand = new RelayCommand(
+            MoveAnnotationDown,
+            () => SelectedAnnotation is not null);
+    }
+
+    public FigureTemplateDefinition Template { get; }
+
+    public ObservableCollection<FigurePanelViewModel> Panels { get; } = [];
+
+    public ObservableCollection<FigureAnnotationViewModel> Annotations { get; } = [];
+
+    public ObservableCollection<FigureGuideViewModel> Guides { get; } = [];
+
+    public RelayCommand RemoveSelectedCommand { get; }
+
+    public RelayCommand MoveLayerUpCommand { get; }
+
+    public RelayCommand MoveLayerDownCommand { get; }
+
+    public RelayCommand SelectAllPanelsCommand { get; }
+
+    public RelayCommand ClearPanelSelectionCommand { get; }
+
+    public RelayCommand AlignPanelLeftCommand { get; }
+
+    public RelayCommand AlignPanelHorizontalCenterCommand { get; }
+
+    public RelayCommand AlignPanelRightCommand { get; }
+
+    public RelayCommand AlignPanelTopCommand { get; }
+
+    public RelayCommand AlignPanelVerticalCenterCommand { get; }
+
+    public RelayCommand AlignPanelBottomCommand { get; }
+
+    public RelayCommand AlignSelectionLeftCommand { get; }
+
+    public RelayCommand AlignSelectionHorizontalCenterCommand { get; }
+
+    public RelayCommand AlignSelectionRightCommand { get; }
+
+    public RelayCommand AlignSelectionTopCommand { get; }
+
+    public RelayCommand AlignSelectionVerticalCenterCommand { get; }
+
+    public RelayCommand AlignSelectionBottomCommand { get; }
+
+    public RelayCommand DistributeSelectionHorizontallyCommand { get; }
+
+    public RelayCommand DistributeSelectionVerticallyCommand { get; }
+
+    public RelayCommand SetHorizontalSpacingCommand { get; }
+
+    public RelayCommand SetVerticalSpacingCommand { get; }
+
+    public RelayCommand AddVerticalGuideCommand { get; }
+
+    public RelayCommand AddHorizontalGuideCommand { get; }
+
+    public RelayCommand RemoveSelectedGuideCommand { get; }
+
+    public RelayCommand AddTextAnnotationCommand { get; }
+
+    public RelayCommand AddArrowAnnotationCommand { get; }
+
+    public RelayCommand AddRectangleAnnotationCommand { get; }
+
+    public RelayCommand AddEllipseAnnotationCommand { get; }
+
+    public RelayCommand RemoveSelectedAnnotationCommand { get; }
+
+    public RelayCommand MoveAnnotationUpCommand { get; }
+
+    public RelayCommand MoveAnnotationDownCommand { get; }
+
+    public RelayCommand ResetBackgroundCommand { get; }
+
+    public RelayCommand RenumberPanelLabelsCommand { get; }
+
+    public string TemplateName => _layout.TemplateName;
+
+    public string TemplateDescription => Template.Description;
+
+    public int CanvasWidth => _layout.WidthPixels;
+
+    public int CanvasHeight => _layout.HeightPixels;
+
+    public int Dpi => _layout.Dpi;
+
+    public string BackgroundColor
+    {
+        get => _backgroundColor;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (!SetProperty(ref _backgroundColor, normalized))
+            {
+                return;
+            }
+
+            if (TryNormalizeColor(normalized, out string validColor))
+            {
+                _lastValidBackgroundColor = validColor;
+            }
+
+            OnPropertyChanged(nameof(BackgroundBrush));
+            OnPropertyChanged(nameof(IsBackgroundColorValid));
+            OnPropertyChanged(nameof(BackgroundValidationMessage));
+            DocumentChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    public Brush BackgroundBrush
+    {
+        get
+        {
+            Color color = ParseColor(_lastValidBackgroundColor);
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+            return brush;
+        }
+    }
+
+    public bool IsBackgroundColorValid => TryNormalizeColor(BackgroundColor, out _);
+
+    public string BackgroundValidationMessage => IsBackgroundColorValid
+        ? $"导出背景：{NormalizedBackgroundColor}"
+        : "请输入 #RRGGBB 或 #AARRGGBB；修正前导出会被阻止。";
+
+    public string NormalizedBackgroundColor =>
+        TryNormalizeColor(BackgroundColor, out string normalized)
+            ? normalized
+            : throw new InvalidOperationException("画布背景颜色无效，请使用 #RRGGBB 或 #AARRGGBB。");
+
+    public bool AutoPanelLabelsEnabled
+    {
+        get => _autoPanelLabelsEnabled;
+        set
+        {
+            if (SetProperty(ref _autoPanelLabelsEnabled, value))
+            {
+                if (value)
+                {
+                    RenumberPanelLabels(force: true);
+                }
+
+                OnPropertyChanged(nameof(PanelLabelSettingsText));
+                DocumentChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public bool ShowPanelLabels
+    {
+        get => _showPanelLabels;
+        set
+        {
+            if (SetProperty(ref _showPanelLabels, value))
+            {
+                OnPropertyChanged(nameof(PanelLabelSettingsText));
+                DocumentChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public string PanelLabelSequence
+    {
+        get => _panelLabelSequence;
+        set
+        {
+            string normalized = NormalizeLabelSequence(value);
+            if (SetProperty(ref _panelLabelSequence, normalized))
+            {
+                if (AutoPanelLabelsEnabled)
+                {
+                    RenumberPanelLabels(force: true);
+                }
+
+                OnPropertyChanged(nameof(PanelLabelSettingsText));
+                DocumentChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public string PanelLabelSettingsText => !ShowPanelLabels
+        ? "最终导出不显示面板编号。"
+        : AutoPanelLabelsEnabled
+            ? "新增、删除或切换编号序列时自动更新；可按画布位置重新编号。"
+            : "自动编号已关闭，可直接编辑选中面板的编号。";
+
+    public int SlotCount => _layout.Slots.Count;
+
+    public string CanvasSizeText => $"{CanvasWidth:N0} × {CanvasHeight:N0} px · {Dpi} dpi";
+
+    public string PanelCountText => $"{Panels.Count} / {SlotCount} 个面板";
+
+    public IReadOnlyList<FigurePanelViewModel> SelectedPanels =>
+        Panels.Where(panel => panel.IsSelected).ToArray();
+
+    public int SelectedPanelCount => Panels.Count(panel => panel.IsSelected);
+
+    public string SelectedPanelCountText => $"已选择 {SelectedPanelCount} 个面板";
+
+    public Visibility MultiplePanelSelectionVisibility => SelectedPanelCount >= 2
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+
+    public string AnnotationCountText => $"{Annotations.Count} 个标注";
+
+    public string GuideCountText => $"{Guides.Count} 条";
+
+    public bool IsSnappingEnabled
+    {
+        get => _isSnappingEnabled;
+        set
+        {
+            if (SetProperty(ref _isSnappingEnabled, value))
+            {
+                OnPropertyChanged(nameof(SnapSettingsText));
+                DocumentChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public double SnapTolerancePixels
+    {
+        get => _snapTolerancePixels;
+        set
+        {
+            double normalized = double.IsFinite(value) ? Math.Clamp(value, 1, 100) : 12;
+            if (SetProperty(ref _snapTolerancePixels, normalized))
+            {
+                OnPropertyChanged(nameof(SnapSettingsText));
+                DocumentChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public long ExactSpacingPixels
+    {
+        get => _exactSpacingPixels;
+        set
+        {
+            long normalized = Math.Clamp(value, 0, Math.Max(CanvasWidth, CanvasHeight));
+            if (SetProperty(ref _exactSpacingPixels, normalized))
+            {
+                OnPropertyChanged(nameof(ExactSpacingStatusText));
+                NotifyPanelAlignmentCanExecuteChanged();
+                DocumentChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public string SnapSettingsText => IsSnappingEnabled
+        ? $"吸附已开启 · 阈值 {SnapTolerancePixels:0.##} px"
+        : "吸附已关闭";
+
+    public string ExactSpacingStatusText => SelectedPanelCount < 2
+        ? "至少选择 2 个未锁定面板。"
+        : SelectedPanels.Any(panel => panel.IsLocked)
+            ? "精确间距不移动锁定面板，请取消选择或解除锁定。"
+            : $"将相邻面板边界间距设为 {ExactSpacingPixels} px；超出画布的方向会禁用。";
+
+    public Visibility SelectedAnnotationVisibility => SelectedAnnotation is null
+        ? Visibility.Collapsed
+        : Visibility.Visible;
+
+    public Visibility SelectedGuideVisibility => SelectedGuide is null
+        ? Visibility.Collapsed
+        : Visibility.Visible;
+
+    public Visibility EmptyVisibility => Panels.Count == 0 && Annotations.Count == 0
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+
+    public FigurePanelViewModel? SelectedPanel
+    {
+        get => _selectedPanel;
+        set => SelectOnlyPanel(value);
+    }
+
+    public FigureAnnotationViewModel? SelectedAnnotation
+    {
+        get => _selectedAnnotation;
+        set
+        {
+            if (ReferenceEquals(_selectedAnnotation, value))
+            {
+                return;
+            }
+
+            if (_selectedAnnotation is not null)
+            {
+                _selectedAnnotation.IsSelected = false;
+            }
+
+            _selectedAnnotation = value;
+            if (_selectedAnnotation is not null)
+            {
+                _selectedAnnotation.IsSelected = true;
+            }
+
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SelectedAnnotationVisibility));
+            RemoveSelectedAnnotationCommand.NotifyCanExecuteChanged();
+            MoveAnnotationUpCommand.NotifyCanExecuteChanged();
+            MoveAnnotationDownCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    public FigureGuideViewModel? SelectedGuide
+    {
+        get => _selectedGuide;
+        set
+        {
+            if (ReferenceEquals(_selectedGuide, value))
+            {
+                return;
+            }
+
+            if (_selectedGuide is not null)
+            {
+                _selectedGuide.IsSelected = false;
+            }
+
+            _selectedGuide = value;
+            if (_selectedGuide is not null)
+            {
+                _selectedGuide.IsSelected = true;
+            }
+
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SelectedGuideVisibility));
+            RemoveSelectedGuideCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    public void SelectPanel(FigurePanelViewModel panel, bool toggle)
+    {
+        ArgumentNullException.ThrowIfNull(panel);
+        if (!Panels.Contains(panel))
+        {
+            throw new InvalidOperationException("只能选择当前拼版中的面板。");
+        }
+
+        if (!toggle)
+        {
+            if (panel.IsSelected && SelectedPanelCount > 1)
+            {
+                SetPrimaryPanel(panel);
+                return;
+            }
+
+            SelectOnlyPanel(panel);
+            return;
+        }
+
+        _isUpdatingPanelSelection = true;
+        try
+        {
+            panel.IsSelected = !panel.IsSelected;
+        }
+        finally
+        {
+            _isUpdatingPanelSelection = false;
+        }
+
+        SetPrimaryPanel(panel.IsSelected
+            ? panel
+            : SelectedPanels.LastOrDefault());
+        NotifyPanelSelectionChanged();
+    }
+
+    public void RestorePanelSelection(IEnumerable<Guid> selectedPanelIds, Guid? primaryPanelId)
+    {
+        ArgumentNullException.ThrowIfNull(selectedPanelIds);
+        HashSet<Guid> selectedIds = selectedPanelIds.ToHashSet();
+        _isUpdatingPanelSelection = true;
+        try
+        {
+            foreach (FigurePanelViewModel panel in Panels)
+            {
+                panel.IsSelected = selectedIds.Contains(panel.Id);
+            }
+        }
+        finally
+        {
+            _isUpdatingPanelSelection = false;
+        }
+
+        FigurePanelViewModel? primary = primaryPanelId is Guid primaryId
+            ? Panels.FirstOrDefault(panel => panel.Id == primaryId && panel.IsSelected)
+            : null;
+        SetPrimaryPanel(primary ?? SelectedPanels.LastOrDefault());
+        NotifyPanelSelectionChanged();
+    }
+
+    private void SelectAllPanels()
+    {
+        _isUpdatingPanelSelection = true;
+        try
+        {
+            foreach (FigurePanelViewModel panel in Panels)
+            {
+                panel.IsSelected = true;
+            }
+        }
+        finally
+        {
+            _isUpdatingPanelSelection = false;
+        }
+
+        SetPrimaryPanel(Panels.LastOrDefault());
+        NotifyPanelSelectionChanged();
+    }
+
+    public (long DeltaX, long DeltaY) MoveSelectedPanelsBy(long deltaX, long deltaY)
+    {
+        FigurePanelViewModel[] movable = SelectedPanels
+            .Where(panel => !panel.IsLocked)
+            .ToArray();
+        if (movable.Length == 0 || (deltaX == 0 && deltaY == 0))
+        {
+            return (0, 0);
+        }
+
+        long minX = movable.Min(panel => panel.X);
+        long minY = movable.Min(panel => panel.Y);
+        long maxRight = movable.Max(panel => panel.X + panel.Width);
+        long maxBottom = movable.Max(panel => panel.Y + panel.Height);
+        long clampedX = Math.Clamp(deltaX, -minX, CanvasWidth - maxRight);
+        long clampedY = Math.Clamp(deltaY, -minY, CanvasHeight - maxBottom);
+        (long snapX, long snapY) = CalculateSnapAdjustment(
+            movable,
+            clampedX,
+            clampedY);
+        long finalX = Math.Clamp(
+            clampedX + snapX,
+            -minX,
+            CanvasWidth - maxRight);
+        long finalY = Math.Clamp(
+            clampedY + snapY,
+            -minY,
+            CanvasHeight - maxBottom);
+        foreach (FigurePanelViewModel panel in movable)
+        {
+            panel.X += finalX;
+            panel.Y += finalY;
+        }
+
+        return (finalX, finalY);
+    }
+
+    private (long DeltaX, long DeltaY) CalculateSnapAdjustment(
+        IReadOnlyList<FigurePanelViewModel> movable,
+        long proposedDeltaX,
+        long proposedDeltaY)
+    {
+        if (!IsSnappingEnabled || movable.Count == 0)
+        {
+            return (0, 0);
+        }
+
+        double left = movable.Min(panel => panel.X) + proposedDeltaX;
+        double right = movable.Max(panel => panel.X + panel.Width) + proposedDeltaX;
+        double top = movable.Min(panel => panel.Y) + proposedDeltaY;
+        double bottom = movable.Max(panel => panel.Y + panel.Height) + proposedDeltaY;
+        double[] sourceX = [left, (left + right) / 2.0, right];
+        double[] sourceY = [top, (top + bottom) / 2.0, bottom];
+        List<double> targetX = [0, CanvasWidth / 2.0, CanvasWidth];
+        List<double> targetY = [0, CanvasHeight / 2.0, CanvasHeight];
+        targetX.AddRange(Guides
+            .Where(guide => guide.Orientation == FigureGuideOrientation.Vertical)
+            .Select(guide => guide.Position));
+        targetY.AddRange(Guides
+            .Where(guide => guide.Orientation == FigureGuideOrientation.Horizontal)
+            .Select(guide => guide.Position));
+
+        foreach (FigurePanelViewModel panel in Panels.Where(
+                     panel => !panel.IsSelected && panel.IsVisible))
+        {
+            targetX.Add(panel.X);
+            targetX.Add(panel.X + panel.Width / 2.0);
+            targetX.Add(panel.X + panel.Width);
+            targetY.Add(panel.Y);
+            targetY.Add(panel.Y + panel.Height / 2.0);
+            targetY.Add(panel.Y + panel.Height);
+        }
+
+        return (
+            FindNearestSnapDelta(sourceX, targetX),
+            FindNearestSnapDelta(sourceY, targetY));
+    }
+
+    private long FindNearestSnapDelta(
+        IReadOnlyList<double> sourcePositions,
+        IReadOnlyList<double> targetPositions)
+    {
+        double bestDelta = 0;
+        double bestDistance = SnapTolerancePixels + double.Epsilon;
+        foreach (double source in sourcePositions)
+        {
+            foreach (double target in targetPositions)
+            {
+                double delta = target - source;
+                double distance = Math.Abs(delta);
+                if (distance <= SnapTolerancePixels && distance < bestDistance)
+                {
+                    bestDelta = delta;
+                    bestDistance = distance;
+                }
+            }
+        }
+
+        return (long)Math.Round(bestDelta);
+    }
+
+    public FigureGuideViewModel RestoreGuide(
+        Guid id,
+        FigureGuideOrientation orientation,
+        double position,
+        bool isLocked)
+    {
+        var guide = new FigureGuideViewModel(
+            orientation,
+            CanvasWidth,
+            CanvasHeight,
+            position,
+            isLocked,
+            id);
+        guide.PropertyChanged += OnGuidePropertyChanged;
+        Guides.Add(guide);
+        SelectedGuide = guide;
+        NotifyGuideCollectionChanged();
+        return guide;
+    }
+
+    public FigurePanelViewModel? AddPanel(
+        SourceAssetItemViewModel source,
+        PixelRect64 sourceRect)
+    {
+        TemplateSlotLayout? slot = _layout.Slots.FirstOrDefault(
+            candidate => Panels.All(panel => panel.SlotId != candidate.Id));
+        if (slot is null)
+        {
+            return null;
+        }
+
+        var panel = new FigurePanelViewModel(source, sourceRect, slot, Panels.Count);
+        panel.PropertyChanged += OnPanelPropertyChanged;
+        Panels.Add(panel);
+        RenumberPanelLabels(force: false);
+        SelectedPanel = panel;
+        NotifyPanelCollectionChanged();
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+        return panel;
+    }
+
+    public FigurePanelViewModel? RestorePanel(
+        SourceAssetItemViewModel source,
+        PixelRect64 sourceRect,
+        string slotId,
+        Guid layerId,
+        PixelRect64 destinationRect,
+        bool isVisible,
+        bool isLocked,
+        int zIndex)
+    {
+        TemplateSlotLayout? slot = _layout.Slots.FirstOrDefault(
+            candidate => string.Equals(candidate.Id, slotId, StringComparison.Ordinal));
+        if (slot is null || Panels.Any(panel => panel.SlotId == slot.Id))
+        {
+            return null;
+        }
+
+        var panel = new FigurePanelViewModel(source, sourceRect, slot, zIndex, layerId)
+        {
+            X = destinationRect.X,
+            Y = destinationRect.Y,
+            Width = destinationRect.Width,
+            Height = destinationRect.Height,
+            IsVisible = isVisible,
+            IsLocked = isLocked,
+        };
+        panel.PropertyChanged += OnPanelPropertyChanged;
+        Panels.Add(panel);
+        SelectedPanel = panel;
+        NotifyPanelCollectionChanged();
+        return panel;
+    }
+
+    public void Clear()
+    {
+        foreach (FigurePanelViewModel panel in Panels)
+        {
+            panel.PropertyChanged -= OnPanelPropertyChanged;
+        }
+
+        Panels.Clear();
+        SelectedPanel = null;
+        foreach (FigureAnnotationViewModel annotation in Annotations)
+        {
+            annotation.PropertyChanged -= OnAnnotationPropertyChanged;
+        }
+
+        Annotations.Clear();
+        SelectedAnnotation = null;
+        foreach (FigureGuideViewModel guide in Guides)
+        {
+            guide.PropertyChanged -= OnGuidePropertyChanged;
+        }
+
+        Guides.Clear();
+        SelectedGuide = null;
+        NotifyPanelCollectionChanged();
+        NotifyAnnotationCollectionChanged();
+        NotifyGuideCollectionChanged();
+    }
+
+    public void MovePanel(FigurePanelViewModel panel, long x, long y)
+    {
+        ArgumentNullException.ThrowIfNull(panel);
+        if (panel.IsLocked)
+        {
+            return;
+        }
+
+        panel.X = Math.Clamp(x, 0, Math.Max(0, CanvasWidth - panel.Width));
+        panel.Y = Math.Clamp(y, 0, Math.Max(0, CanvasHeight - panel.Height));
+    }
+
+    public FigureExportDocument CreateExportDocument()
+    {
+        FigurePanelExportItem[] panels = Panels
+            .OrderBy(panel => panel.ZIndex)
+            .Select(panel => new FigurePanelExportItem(
+                panel.Source.Asset,
+                panel.SourceRect,
+                panel.DestinationRect,
+                ShowPanelLabels ? panel.Label : string.Empty,
+                panel.IsVisible,
+                panel.CreateScaleBarExportSpec()))
+            .ToArray();
+        FigureAnnotationExportItem[] annotations = Annotations
+            .OrderBy(annotation => annotation.ZIndex)
+            .Select(annotation => annotation.CreateExportItem())
+            .ToArray();
+        return new FigureExportDocument(
+            CanvasWidth,
+            CanvasHeight,
+            Dpi,
+            panels,
+            annotations,
+            NormalizedBackgroundColor);
+    }
+
+    public FigureAnnotationViewModel RestoreAnnotation(
+        Guid id,
+        FigureAnnotationKind kind,
+        double x,
+        double y,
+        double endX,
+        double endY,
+        string text,
+        string color,
+        double fontSizePt,
+        double strokeWidthPt,
+        bool isBold,
+        bool isVisible,
+        bool isLocked,
+        int zIndex)
+    {
+        var annotation = new FigureAnnotationViewModel(
+            kind,
+            CanvasWidth,
+            CanvasHeight,
+            Dpi,
+            zIndex,
+            id)
+        {
+            X = x,
+            Y = y,
+            EndX = endX,
+            EndY = endY,
+            Text = text,
+            Color = color,
+            FontSizePt = fontSizePt,
+            StrokeWidthPt = strokeWidthPt,
+            IsBold = isBold,
+            IsVisible = isVisible,
+            IsLocked = isLocked,
+        };
+        annotation.PropertyChanged += OnAnnotationPropertyChanged;
+        Annotations.Add(annotation);
+        SelectedAnnotation = annotation;
+        NotifyAnnotationCollectionChanged();
+        return annotation;
+    }
+
+    public void MoveAnnotation(FigureAnnotationViewModel annotation, double deltaX, double deltaY)
+    {
+        ArgumentNullException.ThrowIfNull(annotation);
+        annotation.MoveBy(deltaX, deltaY);
+    }
+
+    private void RemoveSelected()
+    {
+        FigurePanelViewModel[] selected = SelectedPanels.ToArray();
+        if (selected.Length == 0)
+        {
+            return;
+        }
+
+        int index = selected.Min(Panels.IndexOf);
+        foreach (FigurePanelViewModel panel in selected)
+        {
+            panel.PropertyChanged -= OnPanelPropertyChanged;
+            Panels.Remove(panel);
+        }
+
+        SelectedPanel = Panels.Count == 0
+            ? null
+            : Panels[Math.Clamp(index, 0, Panels.Count - 1)];
+        NormalizeZIndexes();
+        RenumberPanelLabels(force: false);
+        NotifyPanelCollectionChanged();
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void MoveLayerUp()
+    {
+        HashSet<FigurePanelViewModel> selected = SelectedPanels.ToHashSet();
+        if (selected.Count == 0)
+        {
+            return;
+        }
+
+        bool moved = false;
+        for (int index = Panels.Count - 2; index >= 0; index--)
+        {
+            if (selected.Contains(Panels[index]) && !selected.Contains(Panels[index + 1]))
+            {
+                Panels.Move(index, index + 1);
+                moved = true;
+            }
+        }
+
+        if (moved)
+        {
+            NormalizeZIndexes();
+            EditCompleted?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void MoveLayerDown()
+    {
+        HashSet<FigurePanelViewModel> selected = SelectedPanels.ToHashSet();
+        if (selected.Count == 0)
+        {
+            return;
+        }
+
+        bool moved = false;
+        for (int index = 1; index < Panels.Count; index++)
+        {
+            if (selected.Contains(Panels[index]) && !selected.Contains(Panels[index - 1]))
+            {
+                Panels.Move(index, index - 1);
+                moved = true;
+            }
+        }
+
+        if (moved)
+        {
+            NormalizeZIndexes();
+            EditCompleted?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void AddAnnotation(FigureAnnotationKind kind)
+    {
+        var annotation = new FigureAnnotationViewModel(
+            kind,
+            CanvasWidth,
+            CanvasHeight,
+            Dpi,
+            Annotations.Count);
+        annotation.PropertyChanged += OnAnnotationPropertyChanged;
+        Annotations.Add(annotation);
+        SelectedAnnotation = annotation;
+        NotifyAnnotationCollectionChanged();
+    }
+
+    private void AddGuide(FigureGuideOrientation orientation)
+    {
+        double position = orientation == FigureGuideOrientation.Vertical
+            ? CanvasWidth / 2.0
+            : CanvasHeight / 2.0;
+        var guide = new FigureGuideViewModel(
+            orientation,
+            CanvasWidth,
+            CanvasHeight,
+            position);
+        guide.PropertyChanged += OnGuidePropertyChanged;
+        Guides.Add(guide);
+        SelectedGuide = guide;
+        NotifyGuideCollectionChanged();
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void RemoveSelectedGuide()
+    {
+        if (SelectedGuide is null || SelectedGuide.IsLocked)
+        {
+            return;
+        }
+
+        int index = Guides.IndexOf(SelectedGuide);
+        SelectedGuide.PropertyChanged -= OnGuidePropertyChanged;
+        Guides.Remove(SelectedGuide);
+        SelectedGuide = Guides.Count == 0
+            ? null
+            : Guides[Math.Clamp(index, 0, Guides.Count - 1)];
+        NotifyGuideCollectionChanged();
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void RemoveSelectedAnnotation()
+    {
+        if (SelectedAnnotation is null)
+        {
+            return;
+        }
+
+        int index = Annotations.IndexOf(SelectedAnnotation);
+        SelectedAnnotation.PropertyChanged -= OnAnnotationPropertyChanged;
+        Annotations.Remove(SelectedAnnotation);
+        SelectedAnnotation = Annotations.Count == 0
+            ? null
+            : Annotations[Math.Clamp(index, 0, Annotations.Count - 1)];
+        NormalizeAnnotationZIndexes();
+        NotifyAnnotationCollectionChanged();
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void MoveAnnotationUp()
+    {
+        if (SelectedAnnotation is null)
+        {
+            return;
+        }
+
+        int index = Annotations.IndexOf(SelectedAnnotation);
+        if (index < Annotations.Count - 1)
+        {
+            Annotations.Move(index, index + 1);
+            NormalizeAnnotationZIndexes();
+            EditCompleted?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void MoveAnnotationDown()
+    {
+        if (SelectedAnnotation is null)
+        {
+            return;
+        }
+
+        int index = Annotations.IndexOf(SelectedAnnotation);
+        if (index > 0)
+        {
+            Annotations.Move(index, index - 1);
+            NormalizeAnnotationZIndexes();
+            EditCompleted?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void AlignSelectedPanel(PanelAlignment alignment)
+    {
+        if (SelectedPanel is null || SelectedPanel.IsLocked)
+        {
+            return;
+        }
+
+        long x = SelectedPanel.X;
+        long y = SelectedPanel.Y;
+        switch (alignment)
+        {
+            case PanelAlignment.Left:
+                x = 0;
+                break;
+            case PanelAlignment.HorizontalCenter:
+                x = Math.Max(0, (CanvasWidth - SelectedPanel.Width) / 2);
+                break;
+            case PanelAlignment.Right:
+                x = Math.Max(0, CanvasWidth - SelectedPanel.Width);
+                break;
+            case PanelAlignment.Top:
+                y = 0;
+                break;
+            case PanelAlignment.VerticalCenter:
+                y = Math.Max(0, (CanvasHeight - SelectedPanel.Height) / 2);
+                break;
+            case PanelAlignment.Bottom:
+                y = Math.Max(0, CanvasHeight - SelectedPanel.Height);
+                break;
+        }
+
+        MovePanel(SelectedPanel, x, y);
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private bool CanAlignSelectedPanel() => SelectedPanel is { IsLocked: false };
+
+    private void AlignPanelSelection(PanelAlignment alignment)
+    {
+        FigurePanelViewModel[] selected = SelectedPanels.ToArray();
+        if (selected.Length < 2)
+        {
+            return;
+        }
+
+        long left = selected.Min(panel => panel.X);
+        long top = selected.Min(panel => panel.Y);
+        long right = selected.Max(panel => panel.X + panel.Width);
+        long bottom = selected.Max(panel => panel.Y + panel.Height);
+        double horizontalCenter = (left + right) / 2.0;
+        double verticalCenter = (top + bottom) / 2.0;
+
+        foreach (FigurePanelViewModel panel in selected.Where(panel => !panel.IsLocked))
+        {
+            long x = panel.X;
+            long y = panel.Y;
+            switch (alignment)
+            {
+                case PanelAlignment.Left:
+                    x = left;
+                    break;
+                case PanelAlignment.HorizontalCenter:
+                    x = (long)Math.Round(horizontalCenter - panel.Width / 2.0);
+                    break;
+                case PanelAlignment.Right:
+                    x = right - panel.Width;
+                    break;
+                case PanelAlignment.Top:
+                    y = top;
+                    break;
+                case PanelAlignment.VerticalCenter:
+                    y = (long)Math.Round(verticalCenter - panel.Height / 2.0);
+                    break;
+                case PanelAlignment.Bottom:
+                    y = bottom - panel.Height;
+                    break;
+            }
+
+            MovePanel(panel, x, y);
+        }
+
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void DistributePanelSelection(bool horizontal)
+    {
+        FigurePanelViewModel[] selected = horizontal
+            ? SelectedPanels.OrderBy(panel => panel.X).ToArray()
+            : SelectedPanels.OrderBy(panel => panel.Y).ToArray();
+        if (selected.Length < 3 || selected.Any(panel => panel.IsLocked))
+        {
+            return;
+        }
+
+        if (horizontal)
+        {
+            double span = selected[^1].X + selected[^1].Width - selected[0].X;
+            double content = selected.Sum(panel => (double)panel.Width);
+            double gap = (span - content) / (selected.Length - 1);
+            double cursor = selected[0].X + selected[0].Width + gap;
+            for (int index = 1; index < selected.Length - 1; index++)
+            {
+                MovePanel(selected[index], (long)Math.Round(cursor), selected[index].Y);
+                cursor += selected[index].Width + gap;
+            }
+        }
+        else
+        {
+            double span = selected[^1].Y + selected[^1].Height - selected[0].Y;
+            double content = selected.Sum(panel => (double)panel.Height);
+            double gap = (span - content) / (selected.Length - 1);
+            double cursor = selected[0].Y + selected[0].Height + gap;
+            for (int index = 1; index < selected.Length - 1; index++)
+            {
+                MovePanel(selected[index], selected[index].X, (long)Math.Round(cursor));
+                cursor += selected[index].Height + gap;
+            }
+        }
+
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private bool CanAlignPanelSelection() =>
+        SelectedPanelCount >= 2 && SelectedPanels.Any(panel => !panel.IsLocked);
+
+    private bool CanDistributePanelSelection() =>
+        SelectedPanelCount >= 3 && SelectedPanels.All(panel => !panel.IsLocked);
+
+    private void SetExactPanelSpacing(bool horizontal)
+    {
+        FigurePanelViewModel[] selected = horizontal
+            ? SelectedPanels.OrderBy(panel => panel.X).ToArray()
+            : SelectedPanels.OrderBy(panel => panel.Y).ToArray();
+        if (!CanSetExactPanelSpacing(horizontal))
+        {
+            return;
+        }
+
+        long cursor = horizontal
+            ? selected[0].X + selected[0].Width + ExactSpacingPixels
+            : selected[0].Y + selected[0].Height + ExactSpacingPixels;
+        for (int index = 1; index < selected.Length; index++)
+        {
+            if (horizontal)
+            {
+                MovePanel(selected[index], cursor, selected[index].Y);
+                cursor += selected[index].Width + ExactSpacingPixels;
+            }
+            else
+            {
+                MovePanel(selected[index], selected[index].X, cursor);
+                cursor += selected[index].Height + ExactSpacingPixels;
+            }
+        }
+
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private bool CanSetExactPanelSpacing(bool horizontal)
+    {
+        FigurePanelViewModel[] selected = horizontal
+            ? SelectedPanels.OrderBy(panel => panel.X).ToArray()
+            : SelectedPanels.OrderBy(panel => panel.Y).ToArray();
+        if (selected.Length < 2 || selected.Any(panel => panel.IsLocked))
+        {
+            return false;
+        }
+
+        long totalSize = horizontal
+            ? selected.Sum(panel => panel.Width)
+            : selected.Sum(panel => panel.Height);
+        long requiredSpan = totalSize + ExactSpacingPixels * (selected.Length - 1L);
+        long start = horizontal ? selected[0].X : selected[0].Y;
+        long canvasSize = horizontal ? CanvasWidth : CanvasHeight;
+        return start + requiredSpan <= canvasSize;
+    }
+
+    private void SelectOnlyPanel(FigurePanelViewModel? panel)
+    {
+        if (panel is not null && !Panels.Contains(panel))
+        {
+            throw new InvalidOperationException("只能选择当前拼版中的面板。");
+        }
+
+        _isUpdatingPanelSelection = true;
+        try
+        {
+            foreach (FigurePanelViewModel candidate in Panels)
+            {
+                candidate.IsSelected = ReferenceEquals(candidate, panel);
+            }
+        }
+        finally
+        {
+            _isUpdatingPanelSelection = false;
+        }
+
+        SetPrimaryPanel(panel);
+        NotifyPanelSelectionChanged();
+    }
+
+    private void SetPrimaryPanel(FigurePanelViewModel? panel)
+    {
+        if (SetProperty(ref _selectedPanel, panel, nameof(SelectedPanel)))
+        {
+            RemoveSelectedCommand.NotifyCanExecuteChanged();
+            MoveLayerUpCommand.NotifyCanExecuteChanged();
+            MoveLayerDownCommand.NotifyCanExecuteChanged();
+            NotifyPanelAlignmentCanExecuteChanged();
+        }
+    }
+
+    private void NotifyPanelSelectionChanged()
+    {
+        OnPropertyChanged(nameof(SelectedPanels));
+        OnPropertyChanged(nameof(SelectedPanelCount));
+        OnPropertyChanged(nameof(SelectedPanelCountText));
+        OnPropertyChanged(nameof(MultiplePanelSelectionVisibility));
+        OnPropertyChanged(nameof(ExactSpacingStatusText));
+        RemoveSelectedCommand.NotifyCanExecuteChanged();
+        MoveLayerUpCommand.NotifyCanExecuteChanged();
+        MoveLayerDownCommand.NotifyCanExecuteChanged();
+        SelectAllPanelsCommand.NotifyCanExecuteChanged();
+        ClearPanelSelectionCommand.NotifyCanExecuteChanged();
+        NotifyPanelAlignmentCanExecuteChanged();
+    }
+
+    private void NormalizeZIndexes()
+    {
+        for (int index = 0; index < Panels.Count; index++)
+        {
+            Panels[index].ZIndex = index;
+        }
+    }
+
+    private void NormalizeAnnotationZIndexes()
+    {
+        for (int index = 0; index < Annotations.Count; index++)
+        {
+            Annotations[index].ZIndex = index;
+        }
+
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void NotifyPanelCollectionChanged()
+    {
+        OnPropertyChanged(nameof(PanelCountText));
+        OnPropertyChanged(nameof(EmptyVisibility));
+        NotifyPanelSelectionChanged();
+        RenumberPanelLabelsCommand.NotifyCanExecuteChanged();
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void NotifyAnnotationCollectionChanged()
+    {
+        OnPropertyChanged(nameof(AnnotationCountText));
+        OnPropertyChanged(nameof(EmptyVisibility));
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void NotifyGuideCollectionChanged()
+    {
+        OnPropertyChanged(nameof(GuideCountText));
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnPanelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(FigurePanelViewModel.X) or
+            nameof(FigurePanelViewModel.Y) or
+            nameof(FigurePanelViewModel.Width) or
+            nameof(FigurePanelViewModel.Height) or
+            nameof(FigurePanelViewModel.IsVisible) or
+            nameof(FigurePanelViewModel.IsLocked) or
+            nameof(FigurePanelViewModel.ZIndex) or
+            nameof(FigurePanelViewModel.ShowScaleBar) or
+            nameof(FigurePanelViewModel.PhysicalUnitsPerSourcePixel) or
+            nameof(FigurePanelViewModel.ScaleBarPhysicalLength) or
+            nameof(FigurePanelViewModel.ScaleBarUnit) or
+            nameof(FigurePanelViewModel.ScaleBarShowLabel) or
+            nameof(FigurePanelViewModel.Label))
+        {
+            DocumentChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        if (e.PropertyName is nameof(FigurePanelViewModel.X) or
+            nameof(FigurePanelViewModel.Y) or
+            nameof(FigurePanelViewModel.Width) or
+            nameof(FigurePanelViewModel.Height))
+        {
+            OnPropertyChanged(nameof(ExactSpacingStatusText));
+            SetHorizontalSpacingCommand.NotifyCanExecuteChanged();
+            SetVerticalSpacingCommand.NotifyCanExecuteChanged();
+        }
+
+        if (e.PropertyName == nameof(FigurePanelViewModel.IsLocked))
+        {
+            OnPropertyChanged(nameof(ExactSpacingStatusText));
+            NotifyPanelAlignmentCanExecuteChanged();
+        }
+
+        if (e.PropertyName == nameof(FigurePanelViewModel.IsSelected) &&
+            !_isUpdatingPanelSelection && sender is FigurePanelViewModel panel)
+        {
+            SetPrimaryPanel(panel.IsSelected
+                ? panel
+                : ReferenceEquals(panel, SelectedPanel)
+                    ? SelectedPanels.LastOrDefault()
+                    : SelectedPanel);
+            NotifyPanelSelectionChanged();
+        }
+    }
+
+    private void OnAnnotationPropertyChanged(
+        object? sender,
+        System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(FigureAnnotationViewModel.X) or
+            nameof(FigureAnnotationViewModel.Y) or
+            nameof(FigureAnnotationViewModel.EndX) or
+            nameof(FigureAnnotationViewModel.EndY) or
+            nameof(FigureAnnotationViewModel.Text) or
+            nameof(FigureAnnotationViewModel.Color) or
+            nameof(FigureAnnotationViewModel.FontSizePt) or
+            nameof(FigureAnnotationViewModel.StrokeWidthPt) or
+            nameof(FigureAnnotationViewModel.IsBold) or
+            nameof(FigureAnnotationViewModel.IsVisible) or
+            nameof(FigureAnnotationViewModel.IsLocked) or
+            nameof(FigureAnnotationViewModel.ZIndex))
+        {
+            DocumentChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void OnGuidePropertyChanged(
+        object? sender,
+        System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(FigureGuideViewModel.Position) or
+            nameof(FigureGuideViewModel.IsLocked))
+        {
+            DocumentChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        if (e.PropertyName == nameof(FigureGuideViewModel.IsLocked))
+        {
+            RemoveSelectedGuideCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    private void NotifyPanelAlignmentCanExecuteChanged()
+    {
+        AlignPanelLeftCommand.NotifyCanExecuteChanged();
+        AlignPanelHorizontalCenterCommand.NotifyCanExecuteChanged();
+        AlignPanelRightCommand.NotifyCanExecuteChanged();
+        AlignPanelTopCommand.NotifyCanExecuteChanged();
+        AlignPanelVerticalCenterCommand.NotifyCanExecuteChanged();
+        AlignPanelBottomCommand.NotifyCanExecuteChanged();
+        AlignSelectionLeftCommand.NotifyCanExecuteChanged();
+        AlignSelectionHorizontalCenterCommand.NotifyCanExecuteChanged();
+        AlignSelectionRightCommand.NotifyCanExecuteChanged();
+        AlignSelectionTopCommand.NotifyCanExecuteChanged();
+        AlignSelectionVerticalCenterCommand.NotifyCanExecuteChanged();
+        AlignSelectionBottomCommand.NotifyCanExecuteChanged();
+        DistributeSelectionHorizontallyCommand.NotifyCanExecuteChanged();
+        DistributeSelectionVerticallyCommand.NotifyCanExecuteChanged();
+        SetHorizontalSpacingCommand.NotifyCanExecuteChanged();
+        SetVerticalSpacingCommand.NotifyCanExecuteChanged();
+    }
+
+    public void RenumberPanelLabels(bool force)
+    {
+        if (!force && !AutoPanelLabelsEnabled)
+        {
+            return;
+        }
+
+        FigurePanelViewModel[] readingOrder = Panels
+            .OrderBy(panel => panel.Y)
+            .ThenBy(panel => panel.X)
+            .ThenBy(panel => panel.ZIndex)
+            .ToArray();
+        for (int index = 0; index < readingOrder.Length; index++)
+        {
+            readingOrder[index].Label = CreatePanelLabel(index, PanelLabelSequence);
+        }
+
+        OnPropertyChanged(nameof(PanelLabelSettingsText));
+        if (force && readingOrder.Length > 0)
+        {
+            EditCompleted?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private static string CreatePanelLabel(int index, string sequence)
+    {
+        if (sequence == "numeric")
+        {
+            return (index + 1).ToString(CultureInfo.InvariantCulture);
+        }
+
+        int value = index;
+        Span<char> buffer = stackalloc char[16];
+        int position = buffer.Length;
+        do
+        {
+            int digit = value % 26;
+            buffer[--position] = (char)('a' + digit);
+            value = value / 26 - 1;
+        }
+        while (value >= 0);
+
+        string label = new(buffer[position..]);
+        return sequence == "uppercase" ? label.ToUpperInvariant() : label;
+    }
+
+    private static string NormalizeLabelSequence(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "uppercase" => "uppercase",
+        "numeric" => "numeric",
+        _ => "lowercase",
+    };
+
+    private static string NormalizeTemplateBackground(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "black" => "#FF000000",
+        "transparent" => "#00FFFFFF",
+        _ => "#FFFFFFFF",
+    };
+
+    private static bool TryNormalizeColor(string? value, out string normalized)
+    {
+        string hex = value?.Trim().TrimStart('#') ?? string.Empty;
+        if (hex.Length == 6 && hex.All(Uri.IsHexDigit))
+        {
+            normalized = $"#FF{hex.ToUpperInvariant()}";
+            return true;
+        }
+
+        if (hex.Length == 8 && hex.All(Uri.IsHexDigit))
+        {
+            normalized = $"#{hex.ToUpperInvariant()}";
+            return true;
+        }
+
+        normalized = string.Empty;
+        return false;
+    }
+
+    private static Color ParseColor(string value)
+    {
+        _ = TryNormalizeColor(value, out string normalized);
+        return Color.FromArgb(
+            byte.Parse(normalized.AsSpan(1, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture),
+            byte.Parse(normalized.AsSpan(3, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture),
+            byte.Parse(normalized.AsSpan(5, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture),
+            byte.Parse(normalized.AsSpan(7, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture));
+    }
+
+    private enum PanelAlignment
+    {
+        Left,
+        HorizontalCenter,
+        Right,
+        Top,
+        VerticalCenter,
+        Bottom,
+    }
+}

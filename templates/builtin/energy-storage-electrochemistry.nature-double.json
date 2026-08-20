@@ -1,0 +1,123 @@
+{
+  "$schema": "../../schemas/scicanvas-template.schema.json",
+  "schemaVersion": "0.1",
+  "id": "materials.energy-storage-electrochemistry.nature-double",
+  "version": "0.1.0",
+  "name": "储能电化学 · 六面板证据链",
+  "description": "面向电池与超级电容研究，连接器件/材料示意、CV、GCD、倍率、循环和阻抗证据。",
+  "category": "energy-storage",
+  "publisherProfileId": "publisher.nature-like.double-column",
+  "publisherRulesVersion": "2026-08",
+  "canvas": {
+    "mode": "physical",
+    "widthMm": 183,
+    "heightMm": 165,
+    "dpi": 300,
+    "background": "white"
+  },
+  "grid": {
+    "columns": 12,
+    "rows": 9,
+    "gutterX": 2,
+    "gutterY": 2,
+    "margin": { "top": 2, "right": 2, "bottom": 2, "left": 2 }
+  },
+  "slots": [
+    {
+      "id": "device-overview",
+      "label": "a",
+      "role": "device-schematic",
+      "rect": { "column": 1, "row": 1, "columnSpan": 5, "rowSpan": 3 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "器件结构、材料构型或工作原理示意。"
+    },
+    {
+      "id": "cyclic-voltammetry",
+      "label": "b",
+      "role": "cyclic-voltammetry",
+      "rect": { "column": 6, "row": 1, "columnSpan": 4, "rowSpan": 3 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "CV 曲线或氧化还原动力学。"
+    },
+    {
+      "id": "charge-discharge",
+      "label": "c",
+      "role": "charge-discharge",
+      "rect": { "column": 10, "row": 1, "columnSpan": 3, "rowSpan": 3 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "恒流充放电或电压平台。"
+    },
+    {
+      "id": "rate-capability",
+      "label": "d",
+      "role": "rate-capability",
+      "rect": { "column": 1, "row": 4, "columnSpan": 4, "rowSpan": 6 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "倍率性能、容量保持或功率密度。"
+    },
+    {
+      "id": "cycling-stability",
+      "label": "e",
+      "role": "cycling-stability",
+      "rect": { "column": 5, "row": 4, "columnSpan": 4, "rowSpan": 6 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "长循环稳定性与库仑效率。"
+    },
+    {
+      "id": "impedance",
+      "label": "f",
+      "role": "impedance",
+      "rect": { "column": 9, "row": 4, "columnSpan": 4, "rowSpan": 6 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "EIS、DRT 或动力学拟合。"
+    }
+  ],
+  "labelStyle": {
+    "sequence": "lowercase",
+    "fontFamily": "Arial",
+    "fontSizePt": 7,
+    "fontWeight": 700,
+    "position": "top-left-inside"
+  },
+  "validators": [
+    {
+      "rule": "resolution.minDpi",
+      "severity": "warning",
+      "parameters": { "minimum": 300 },
+      "message": "位图在最终版面下应保持至少 300 dpi；曲线图优先使用矢量源。"
+    },
+    {
+      "rule": "labels.unique",
+      "severity": "error",
+      "parameters": {},
+      "message": "面板编号必须唯一并按阅读顺序排列。"
+    },
+    {
+      "rule": "source.integrity",
+      "severity": "error",
+      "parameters": {},
+      "message": "所有源文件必须通过完整性验证。"
+    }
+  ],
+  "provenance": [
+    {
+      "name": "Nature Research Figure Guide",
+      "url": "https://research-figure-guide.nature.com/figures/building-and-exporting-figure-panels/",
+      "accessedAt": "2026-08-20",
+      "notes": "画布尺寸、字体范围与阅读顺序依据官方指南；材料证据链布局为 SciCanvas 原创。"
+    }
+  ],
+  "license": "CC0-1.0"
+}

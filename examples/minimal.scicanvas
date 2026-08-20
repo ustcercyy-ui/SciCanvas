@@ -1,0 +1,106 @@
+{
+  "$schema": "../schemas/scicanvas-project.schema.json",
+  "schemaVersion": "0.1",
+  "projectId": "d9c61e90-4293-4ef8-bb42-2f6b2417034c",
+  "createdAt": "2026-08-20T00:00:00Z",
+  "updatedAt": "2026-08-20T00:00:00Z",
+  "title": "最小示例工程",
+  "canvas": {
+    "width": 2400,
+    "height": 1600,
+    "background": "white",
+    "backgroundColor": null
+  },
+  "sources": [
+    {
+      "id": "22338928-ebd7-4d3c-b62c-cd1f440b7b60",
+      "displayName": "sample.tif",
+      "originalPath": "C:\\research-data\\sample.tif",
+      "projectRelativePath": null,
+      "fingerprint": {
+        "byteLength": 25165824,
+        "lastWriteTimeUtc": "2026-08-20T00:00:00Z",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "windowsFileId": null
+      },
+      "metadata": {
+        "width": 2048,
+        "height": 1536,
+        "channels": 3,
+        "bitsPerChannel": 16,
+        "pixelFormat": "rgb16",
+        "dpiX": null,
+        "dpiY": null,
+        "physicalSizeX": 0.108,
+        "physicalSizeY": 0.108,
+        "physicalUnit": "µm",
+        "iccProfileName": null
+      },
+      "linkState": "unverified"
+    }
+  ],
+  "layers": [
+    {
+      "type": "image",
+      "id": "3e8f1d9f-da72-4726-8f41-08414b68be47",
+      "name": "裁剪区域 1",
+      "visible": true,
+      "locked": false,
+      "zIndex": 0,
+      "opacity": 1,
+      "sourceAssetId": "22338928-ebd7-4d3c-b62c-cd1f440b7b60",
+      "sourceRect": {
+        "x": 424,
+        "y": 312,
+        "width": 1200,
+        "height": 800
+      },
+      "transform": {
+        "x": 100,
+        "y": 100,
+        "scaleX": 1,
+        "scaleY": 1,
+        "rotationQuarterTurns": 0
+      },
+      "adjustments": []
+    }
+  ],
+  "cropPresets": [
+    {
+      "id": "30c3facc-c889-432f-a0c1-8214267985fc",
+      "name": "论文面板 1200×800",
+      "width": 1200,
+      "height": 800,
+      "unit": "px"
+    }
+  ],
+  "guides": [],
+  "exportProfiles": [
+    {
+      "id": "9246919f-1f9e-408e-a11e-7745e4f1a417",
+      "name": "无损TIFF",
+      "format": "tiff",
+      "dpi": 300,
+      "bitDepth": 16,
+      "colorMode": "rgb",
+      "resampling": null,
+      "journalPresetId": null,
+      "writeAuditReport": true
+    }
+  ],
+  "templateSnapshot": null,
+  "auditTrail": [
+    {
+      "timestamp": "2026-08-20T00:00:00Z",
+      "command": "AddCropToCanvas",
+      "parameters": {
+        "sourceAssetId": "22338928-ebd7-4d3c-b62c-cd1f440b7b60",
+        "x": 424,
+        "y": 312,
+        "width": 1200,
+        "height": 800
+      }
+    }
+  ]
+}
+

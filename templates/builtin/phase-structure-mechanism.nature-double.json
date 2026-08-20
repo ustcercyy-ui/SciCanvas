@@ -1,0 +1,123 @@
+{
+  "$schema": "../../schemas/scicanvas-template.schema.json",
+  "schemaVersion": "0.1",
+  "id": "materials.phase-structure-mechanism.nature-double",
+  "version": "0.1.0",
+  "name": "物相—结构—机理 · 六面板",
+  "description": "适合把衍射、光谱、表面化学、显微结构、元素分布和机理证据组织成紧凑的两行布局。",
+  "category": "structure-performance",
+  "publisherProfileId": "publisher.nature-like.double-column",
+  "publisherRulesVersion": "2026-08",
+  "canvas": {
+    "mode": "physical",
+    "widthMm": 183,
+    "heightMm": 155,
+    "dpi": 300,
+    "background": "white"
+  },
+  "grid": {
+    "columns": 12,
+    "rows": 8,
+    "gutterX": 2,
+    "gutterY": 2,
+    "margin": { "top": 2, "right": 2, "bottom": 2, "left": 2 }
+  },
+  "slots": [
+    {
+      "id": "diffraction",
+      "label": "a",
+      "role": "diffraction",
+      "rect": { "column": 1, "row": 1, "columnSpan": 4, "rowSpan": 4 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "XRD、SAED 或晶体学证据。"
+    },
+    {
+      "id": "spectroscopy",
+      "label": "b",
+      "role": "spectroscopy",
+      "rect": { "column": 5, "row": 1, "columnSpan": 4, "rowSpan": 4 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "Raman、FTIR、吸收或发光光谱。"
+    },
+    {
+      "id": "surface-chemistry",
+      "label": "c",
+      "role": "surface-chemistry",
+      "rect": { "column": 9, "row": 1, "columnSpan": 4, "rowSpan": 4 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "XPS、化学态或表面组分。"
+    },
+    {
+      "id": "microscopy",
+      "label": "d",
+      "role": "microscopy",
+      "rect": { "column": 1, "row": 5, "columnSpan": 4, "rowSpan": 4 },
+      "defaultFit": "cover",
+      "minimumEffectiveDpi": 300,
+      "requireScaleBar": true,
+      "helpText": "SEM/TEM 结构图；需校准比例尺。"
+    },
+    {
+      "id": "elemental-mapping",
+      "label": "e",
+      "role": "elemental-map",
+      "rect": { "column": 5, "row": 5, "columnSpan": 4, "rowSpan": 4 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 300,
+      "requireScaleBar": true,
+      "helpText": "EDS/EELS 元素分布或成分映射。"
+    },
+    {
+      "id": "mechanism-model",
+      "label": "f",
+      "role": "mechanism",
+      "rect": { "column": 9, "row": 5, "columnSpan": 4, "rowSpan": 4 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 600,
+      "requireScaleBar": false,
+      "helpText": "结构模型、反应路径、模拟或机理总结。"
+    }
+  ],
+  "labelStyle": {
+    "sequence": "lowercase",
+    "fontFamily": "Arial",
+    "fontSizePt": 7,
+    "fontWeight": 700,
+    "position": "top-left-inside"
+  },
+  "validators": [
+    {
+      "rule": "resolution.minDpi",
+      "severity": "warning",
+      "parameters": { "minimum": 300 },
+      "message": "显微位图应保持至少 300 dpi；线图与光谱优先使用矢量源。"
+    },
+    {
+      "rule": "scaleBar.required",
+      "severity": "warning",
+      "parameters": {},
+      "message": "显微与元素分布面板应使用经过校准的比例尺。"
+    },
+    {
+      "rule": "source.integrity",
+      "severity": "error",
+      "parameters": {},
+      "message": "所有源文件必须通过完整性验证。"
+    }
+  ],
+  "provenance": [
+    {
+      "name": "Nature Research Figure Guide",
+      "url": "https://research-figure-guide.nature.com/figures/preparing-figures-our-specifications/",
+      "accessedAt": "2026-08-20",
+      "notes": "分辨率、比例尺分层和 RGB 建议依据官方指南；布局为 SciCanvas 原创。"
+    }
+  ],
+  "license": "CC0-1.0"
+}

@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scicanvas.org/schemas/scicanvas-template.schema.json",
+  "title": "SciCanvas Figure Template",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "id", "version", "name", "category",
+    "canvas", "grid", "slots", "labelStyle", "validators", "provenance"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$" },
+    "id": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "category": {
+      "type": "string",
+      "enum": [
+        "general", "morphology", "structure-performance", "energy-storage",
+        "electrocatalysis", "optoelectronics", "mechanics", "thermal-transport",
+        "time-series", "comparison-matrix", "extended-data"
+      ]
+    },
+    "publisherProfileId": { "type": ["string", "null"] },
+    "publisherRulesVersion": { "type": ["string", "null"] },
+    "canvas": { "$ref": "#/$defs/canvas" },
+    "grid": { "$ref": "#/$defs/grid" },
+    "slots": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/slot" }
+    },
+    "labelStyle": { "$ref": "#/$defs/labelStyle" },
+    "validators": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/validator" }
+    },
+    "provenance": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/provenance" }
+    },
+    "license": { "type": "string", "default": "CC0-1.0" }
+  },
+  "$defs": {
+    "canvas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "background"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["physical", "pixels"] },
+        "widthMm": { "type": "number", "exclusiveMinimum": 0 },
+        "heightMm": { "type": "number", "exclusiveMinimum": 0 },
+        "maxHeightMm": { "type": "number", "exclusiveMinimum": 0 },
+        "widthPx": { "type": "integer", "minimum": 1 },
+        "heightPx": { "type": "integer", "minimum": 1 },
+        "dpi": { "type": "integer", "minimum": 1 },
+        "background": { "type": "string", "enum": ["transparent", "white", "black"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "physical" } } },
+          "then": { "required": ["widthMm", "dpi"] }
+        },
+        {
+          "if": { "properties": { "mode": { "const": "pixels" } } },
+          "then": { "required": ["widthPx", "heightPx"] }
+        }
+      ]
+    },
+    "grid": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["columns", "rows", "gutterX", "gutterY", "margin"],
+      "properties": {
+        "columns": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "rows": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "gutterX": { "type": "number", "minimum": 0 },
+        "gutterY": { "type": "number", "minimum": 0 },
+        "margin": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["top", "right", "bottom", "left"],
+          "properties": {
+            "top": { "type": "number", "minimum": 0 },
+            "right": { "type": "number", "minimum": 0 },
+            "bottom": { "type": "number", "minimum": 0 },
+            "left": { "type": "number", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "role", "rect", "defaultFit"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" },
+        "label": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "minLength": 1 },
+        "rect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["column", "row", "columnSpan", "rowSpan"],
+          "properties": {
+            "column": { "type": "integer", "minimum": 1 },
+            "row": { "type": "integer", "minimum": 1 },
+            "columnSpan": { "type": "integer", "minimum": 1 },
+            "rowSpan": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "acceptedTypes": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["png", "jpeg", "bmp", "tiff", "svg", "pdf"] },
+          "uniqueItems": true
+        },
+        "requireScaleBar": { "type": "boolean", "default": false },
+        "preferVector": { "type": "boolean", "default": false },
+        "lockAspectRatio": { "type": "boolean", "default": true },
+        "defaultFit": { "type": "string", "enum": ["contain", "cover", "none"] },
+        "minimumEffectiveDpi": { "type": "integer", "minimum": 1 },
+        "helpText": { "type": "string" }
+      }
+    },
+    "labelStyle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "fontFamily", "fontSizePt", "fontWeight", "position"],
+      "properties": {
+        "sequence": { "type": "string", "enum": ["lowercase", "uppercase", "numeric"] },
+        "fontFamily": { "type": "string", "minLength": 1 },
+        "fontSizePt": { "type": "number", "exclusiveMinimum": 0 },
+        "fontWeight": { "type": "integer", "minimum": 100, "maximum": 900 },
+        "position": { "type": "string", "enum": ["top-left-inside", "top-left-outside"] }
+      }
+    },
+    "validator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule", "severity"],
+      "properties": {
+        "rule": {
+          "type": "string",
+          "enum": [
+            "resolution.minDpi", "font.minPointSize", "scaleBar.required",
+            "source.duplicateRegion", "transform.nonUniform", "layer.rasterizedVector",
+            "source.integrity", "gel.boundaryDisclosure", "layout.maxHeight",
+            "labels.unique", "slots.sameDimensions"
+          ]
+        },
+        "severity": { "type": "string", "enum": ["error", "warning", "suggestion"] },
+        "parameters": { "type": "object" },
+        "message": { "type": "string" }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "url", "accessedAt"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "format": "uri" },
+        "accessedAt": { "type": "string", "format": "date" },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}

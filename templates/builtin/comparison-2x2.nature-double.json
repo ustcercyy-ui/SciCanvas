@@ -1,0 +1,103 @@
+{
+  "$schema": "../../schemas/scicanvas-template.schema.json",
+  "schemaVersion": "0.1",
+  "id": "materials.comparison-2x2.nature-double",
+  "version": "0.1.0",
+  "name": "通用对照 · 2×2 双栏",
+  "description": "适合样品、处理条件或实验前后的四面板对照，保持等权证据和一致留白。",
+  "category": "comparison-matrix",
+  "publisherProfileId": "publisher.nature-like.double-column",
+  "publisherRulesVersion": "2026-08",
+  "canvas": {
+    "mode": "physical",
+    "widthMm": 183,
+    "heightMm": 140,
+    "dpi": 300,
+    "background": "white"
+  },
+  "grid": {
+    "columns": 12,
+    "rows": 8,
+    "gutterX": 2,
+    "gutterY": 2,
+    "margin": { "top": 2, "right": 2, "bottom": 2, "left": 2 }
+  },
+  "slots": [
+    {
+      "id": "comparison-a",
+      "label": "a",
+      "role": "comparison",
+      "rect": { "column": 1, "row": 1, "columnSpan": 6, "rowSpan": 4 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 300,
+      "requireScaleBar": false,
+      "helpText": "放置第一组或基准条件。显微图可在面板检查器中启用比例尺。"
+    },
+    {
+      "id": "comparison-b",
+      "label": "b",
+      "role": "comparison",
+      "rect": { "column": 7, "row": 1, "columnSpan": 6, "rowSpan": 4 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 300,
+      "requireScaleBar": false,
+      "helpText": "放置与 a 直接比较的条件。"
+    },
+    {
+      "id": "comparison-c",
+      "label": "c",
+      "role": "comparison",
+      "rect": { "column": 1, "row": 5, "columnSpan": 6, "rowSpan": 4 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 300,
+      "requireScaleBar": false,
+      "helpText": "放置第三组、处理后或定量结果。"
+    },
+    {
+      "id": "comparison-d",
+      "label": "d",
+      "role": "comparison",
+      "rect": { "column": 7, "row": 5, "columnSpan": 6, "rowSpan": 4 },
+      "defaultFit": "contain",
+      "minimumEffectiveDpi": 300,
+      "requireScaleBar": false,
+      "helpText": "放置第四组、验证结果或汇总图。"
+    }
+  ],
+  "labelStyle": {
+    "sequence": "lowercase",
+    "fontFamily": "Arial",
+    "fontSizePt": 7,
+    "fontWeight": 700,
+    "position": "top-left-inside"
+  },
+  "validators": [
+    {
+      "rule": "resolution.minDpi",
+      "severity": "warning",
+      "parameters": { "minimum": 300 },
+      "message": "位图面板在最终版面下应保持至少 300 dpi。"
+    },
+    {
+      "rule": "labels.unique",
+      "severity": "error",
+      "parameters": {},
+      "message": "面板编号必须唯一并按阅读顺序排列。"
+    },
+    {
+      "rule": "slots.sameDimensions",
+      "severity": "suggestion",
+      "parameters": {},
+      "message": "等权对照面板建议使用一致的显示尺寸。"
+    }
+  ],
+  "provenance": [
+    {
+      "name": "Nature Research Figure Guide",
+      "url": "https://research-figure-guide.nature.com/figures/building-and-exporting-figure-panels/",
+      "accessedAt": "2026-08-20",
+      "notes": "尺寸、字号和面板顺序依据官方指南；2×2 布局为 SciCanvas 原创抽象模板。"
+    }
+  ],
+  "license": "CC0-1.0"
+}
