@@ -105,7 +105,7 @@ public sealed class JsonProjectStore : IProjectStore
 
     private static void Validate(SciCanvasProjectDocument document)
     {
-        if (!string.Equals(document.SchemaVersion, "0.1", StringComparison.Ordinal))
+        if (document.SchemaVersion is not ("0.1" or "0.9"))
         {
             throw new NotSupportedException($"暂不支持工程版本 {document.SchemaVersion}。");
         }

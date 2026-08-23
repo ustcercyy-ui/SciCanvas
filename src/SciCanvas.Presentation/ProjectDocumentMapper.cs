@@ -1,3 +1,5 @@
+using System.IO;
+using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
 using SciCanvas.Core.Sources;
@@ -76,21 +78,24 @@ internal static class ProjectDocumentMapper
                 Position = guide.Position,
                 Locked = guide.IsLocked,
             }).ToArray(),
-            ExportProfiles =
-            [
-                new ProjectExportProfileSnapshot
+            ExportProfiles = FigureExportProfile.BuiltIns
+                .Select(profile => new ProjectExportProfileSnapshot
                 {
-                    Id = Guid.Parse("4757F9DE-FE43-47F6-9675-690BE0A431E0"),
-                    Name = "300 dpi 无损 TIFF",
-                    Format = "tiff",
-                    Dpi = figure.Dpi,
+                    Id = GetStableExportProfileId(profile.Id),
+                    Name = profile.Name,
+                    Format = profile.Format,
+                    Dpi = profile.Dpi,
+                    Scale = profile.Scale,
+                    WidthPixels = profile.WidthPixels,
+                    HeightPixels = profile.HeightPixels,
+                    WriteProvenance = profile.WriteProvenance,
                     BitDepth = 8,
                     ColorMode = "rgb",
                     Resampling = null,
                     JournalPresetId = figure.Template.PublisherProfileId,
                     WriteAuditReport = true,
-                },
-            ],
+                })
+                .ToArray(),
             TemplateSnapshot = new ProjectTemplateSnapshot
             {
                 TemplateId = figure.Template.Id,
@@ -167,7 +172,8 @@ internal static class ProjectDocumentMapper
             snapshot.Metadata.PhysicalSizeX,
             snapshot.Metadata.PhysicalSizeY,
             snapshot.Metadata.PhysicalUnit,
-            snapshot.Metadata.IccProfileName),
+            snapshot.Metadata.IccProfileName,
+            snapshot.Metadata.FrameCount),
         ParseLinkState(snapshot.LinkState));
 
     public static PixelRect64 ToPixelRect(ProjectPixelRectSnapshot snapshot) => new(
@@ -187,6 +193,13 @@ internal static class ProjectDocumentMapper
             height);
     }
 
+    private static Guid GetStableExportProfileId(string profileId) => profileId switch
+    {
+        "main-tiff" => Guid.Parse("4757F9DE-FE43-47F6-9675-690BE0A431E0"),
+        "supplement-png" => Guid.Parse("B7D1C6D5-4B43-4C36-9A6F-7F6F2F4D5E22"),
+        "thumbnail-png" => Guid.Parse("F6A3B8E8-9B8D-4BA0-A9D9-5AF1BA58C44F"),
+        _ => throw new InvalidDataException($"未知的内置导出预设：{profileId}"),
+    };
     private static ProjectSourceSnapshot ToSnapshot(SourceAssetItemViewModel item)
     {
         SourceAsset source = item.Asset;
@@ -217,6 +230,7 @@ internal static class ProjectDocumentMapper
                 PhysicalSizeY = metadata.PhysicalSizeY,
                 PhysicalUnit = metadata.PhysicalUnit,
                 IccProfileName = metadata.IccProfileName,
+                FrameCount = metadata.FrameCount,
             },
             LinkState = source.LinkState.ToString().ToLowerInvariant(),
         };
@@ -234,6 +248,8 @@ internal static class ProjectDocumentMapper
         Opacity = 1,
         SourceAssetId = panel.Source.Asset.Id,
         SourceRect = ToSnapshot(panel.SourceRect),
+        FrameIndex = panel.FrameIndex,
+        LockAspectRatio = panel.IsAspectRatioLocked,
         Transform = new ProjectTransformSnapshot
         {
             X = panel.X,
@@ -242,7 +258,17 @@ internal static class ProjectDocumentMapper
             ScaleY = panel.Height / (double)panel.SourceRect.Height,
             RotationQuarterTurns = 0,
         },
-        Adjustments = [],
+        Adjustments = [new ProjectImageAdjustmentSnapshot
+        {
+            Brightness = panel.Adjustments.Brightness,
+            Contrast = panel.Adjustments.Contrast,
+            Gamma = panel.Adjustments.Gamma,
+            BlackPoint = panel.Adjustments.BlackPoint,
+            WhitePoint = panel.Adjustments.WhitePoint,
+            Invert = panel.Adjustments.Invert,
+            Grayscale = panel.Adjustments.Grayscale,
+            Channel = panel.Adjustments.Channel,
+        }],
     };
 
     private static ProjectPixelRectSnapshot ToSnapshot(PixelRect64 rect) => new()

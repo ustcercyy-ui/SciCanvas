@@ -134,6 +134,28 @@ public sealed class FigureCanvasMultiSelectionTests
         Assert.All(figure.CreateExportDocument().Panels, panel => Assert.Equal(string.Empty, panel.Label));
     }
 
+    [Fact]
+    public void PanelResize_PreservesSourceAspectRatioUntilUnlocked()
+    {
+        FigureCanvasViewModel figure = CreateFigure();
+        SourceAssetItemViewModel source = CreateSource(400, 200);
+        FigurePanelViewModel panel = Assert.IsType<FigurePanelViewModel>(
+            figure.AddPanel(source, new PixelRect64(0, 0, 400, 200)));
+
+        Assert.True(panel.IsAspectRatioLocked);
+        panel.Width = 300;
+        Assert.Equal(150, panel.Height);
+
+        panel.Height = 100;
+        Assert.Equal(200, panel.Width);
+
+        panel.ScalePercent = 50;
+        Assert.Equal((200L, 100L), (panel.Width, panel.Height));
+
+        panel.IsAspectRatioLocked = false;
+        panel.Width = 320;
+        Assert.Equal(100, panel.Height);
+    }
     private static FigureCanvasViewModel CreateFigure() => new(
         new BuiltInTemplateCatalog().LoadAll().Single(
             template => template.Id == "materials.multiscale-morphology.nature-double"));
@@ -157,13 +179,13 @@ public sealed class FigureCanvasMultiSelectionTests
         panel.Height = height;
     }
 
-    private static SourceAssetItemViewModel CreateSource()
+    private static SourceAssetItemViewModel CreateSource(int width = 100, int height = 100)
     {
-        int stride = 100 * 4;
-        byte[] pixels = new byte[stride * 100];
+        int stride = width * 4;
+        byte[] pixels = new byte[stride * height];
         BitmapSource preview = BitmapSource.Create(
-            100,
-            100,
+            width,
+            height,
             96,
             96,
             PixelFormats.Bgra32,
@@ -177,7 +199,7 @@ public sealed class FigureCanvasMultiSelectionTests
             "selection.png",
             new SourceFingerprint(0, DateTimeOffset.UtcNow, new string('0', 64), null),
             new SciCanvas.Core.Images.ImageMetadata(
-                new PixelSize64(100, 100),
+                new PixelSize64(width, height),
                 4,
                 8,
                 "Bgra32"),

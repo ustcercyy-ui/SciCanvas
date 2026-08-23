@@ -1,4 +1,5 @@
 using SciCanvas.Core.Geometry;
+using SciCanvas.Core.Images;
 using SciCanvas.Core.Sources;
 
 namespace SciCanvas.Core.Export;
@@ -15,7 +16,9 @@ public sealed record FigurePanelExportItem(
     PixelRect64 DestinationRect,
     string Label,
     bool IsVisible,
-    FigureScaleBarExportSpec? ScaleBar = null);
+    FigureScaleBarExportSpec? ScaleBar = null,
+    ImageAdjustmentParameters? Adjustments = null,
+    int FrameIndex = 0);
 
 public sealed record FigureAnnotationExportItem(
     string Kind,

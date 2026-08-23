@@ -2,6 +2,9 @@ using System.Windows.Media.Imaging;
 using System.Windows;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
+using SciCanvas.Core.Cropping;
+using SciCanvas.Core.Images;
+using SciCanvas.Imaging;
 using SciCanvas.Templates;
 
 namespace SciCanvas.Presentation;
@@ -21,8 +24,12 @@ public sealed class FigurePanelViewModel : ObservableObject
     private double _scaleBarPhysicalLength = 1;
     private string _scaleBarUnit = "µm";
     private bool _scaleBarShowLabel = true;
+    private bool _isAspectRatioLocked;
+    private bool _isUpdatingSize;
     private BitmapSource _preview;
     private string _label;
+    private ImageAdjustmentParameters _adjustments = new();
+    private int _frameIndex;
 
     public FigurePanelViewModel(
         SourceAssetItemViewModel source,
@@ -39,6 +46,7 @@ public sealed class FigurePanelViewModel : ObservableObject
         Role = slot.Role;
         MinimumEffectiveDpi = slot.MinimumEffectiveDpi;
         RequiresScaleBar = slot.RequireScaleBar;
+        _isAspectRatioLocked = slot.LockAspectRatio;
         HelpText = slot.HelpText;
         _x = slot.PixelRect.X;
         _y = slot.PixelRect.Y;
@@ -54,17 +62,138 @@ public sealed class FigurePanelViewModel : ObservableObject
             _scaleBarPhysicalLength = ChooseReadablePhysicalLength(
                 sourceRect.Width * _physicalUnitsPerSourcePixel * 0.2);
         }
-        _preview = CreateCropPreview(source, sourceRect);
+        _preview = CreateCropPreview(source, sourceRect, _adjustments, _frameIndex);
     }
 
-    public SourceAssetItemViewModel Source { get; }
+    public SourceAssetItemViewModel Source { get; private set; }
 
     public Guid Id { get; }
 
-    public PixelRect64 SourceRect { get; }
+    public PixelRect64 SourceRect { get; private set; }
+    public int FrameIndex
+    {
+        get => _frameIndex;
+        set
+        {
+            int normalized = Math.Clamp(value, 0, FrameCount - 1);
+            if (SetProperty(ref _frameIndex, normalized))
+            {
+                OnPropertyChanged(nameof(FrameNumber));
+                OnPropertyChanged(nameof(FrameStatusText));
+                RefreshPreview();
+            }
+        }
+    }
+
+    public int FrameNumber
+    {
+        get => FrameIndex + 1;
+        set => FrameIndex = value - 1;
+    }
+
+    public int FrameCount => Source.FrameCount;
+
+    public Visibility FrameSelectionVisibility =>
+        FrameCount > 1 ? Visibility.Visible : Visibility.Collapsed;
+
+    public string FrameStatusText => FrameCount > 1
+        ? $"多页图像 · 第 {FrameNumber}/{FrameCount} 帧（导出将使用此帧）"
+        : "单帧图像";
 
     public BitmapSource Preview => _preview;
 
+    public ImageAdjustmentParameters Adjustments
+    {
+        get => _adjustments;
+        set
+        {
+            ImageAdjustmentParameters normalized = (value ?? new()).Normalize();
+            if (Equals(_adjustments, normalized))
+            {
+                return;
+            }
+
+            _adjustments = normalized;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(Brightness));
+            OnPropertyChanged(nameof(BrightnessPercent));
+            OnPropertyChanged(nameof(Contrast));
+            OnPropertyChanged(nameof(ContrastPercent));
+            OnPropertyChanged(nameof(Gamma));
+            OnPropertyChanged(nameof(BlackPoint));
+            OnPropertyChanged(nameof(WhitePoint));
+            OnPropertyChanged(nameof(Invert));
+            OnPropertyChanged(nameof(Grayscale));
+            OnPropertyChanged(nameof(Channel));
+            OnPropertyChanged(nameof(AdjustmentStatusText));
+            RefreshPreview();
+        }
+    }
+
+    public double Brightness { get => _adjustments.Brightness; set => UpdateAdjustment(a => a with { Brightness = value }); }
+
+    /// <summary>Brightness expressed as a user-facing percentage from -100 to +100.</summary>
+    public double BrightnessPercent
+    {
+        get => Brightness * 100;
+        set => Brightness = value / 100;
+    }
+    public double Contrast { get => _adjustments.Contrast; set => UpdateAdjustment(a => a with { Contrast = value }); }
+
+    /// <summary>Contrast expressed as a user-facing percentage from -100 to +100.</summary>
+    public double ContrastPercent
+    {
+        get => Contrast * 100;
+        set => Contrast = value / 100;
+    }
+    public double Gamma { get => _adjustments.Gamma; set => UpdateAdjustment(a => a with { Gamma = value }); }
+    public double BlackPoint { get => _adjustments.BlackPoint; set => UpdateAdjustment(a => a with { BlackPoint = value }); }
+    public double WhitePoint { get => _adjustments.WhitePoint; set => UpdateAdjustment(a => a with { WhitePoint = value }); }
+    public bool Invert { get => _adjustments.Invert; set => UpdateAdjustment(a => a with { Invert = value }); }
+    public bool Grayscale { get => _adjustments.Grayscale; set => UpdateAdjustment(a => a with { Grayscale = value }); }
+    public string Channel { get => _adjustments.Channel; set => UpdateAdjustment(a => a with { Channel = value }); }
+
+    public string AdjustmentStatusText => _adjustments.ValidationMessage;
+
+    public void ReplaceSource(SourceAssetItemViewModel source, PixelRect64 sourceRect)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (!CropBoundsValidator.Validate(sourceRect, source.Asset.Metadata.PixelSize).IsValid)
+        {
+            throw new InvalidOperationException("替换面板时，裁剪区域必须位于新源图边界内。");
+        }
+
+        Source = source;
+        SourceRect = sourceRect;
+        _frameIndex = Math.Clamp(_frameIndex, 0, FrameCount - 1);
+        double physicalUnitsPerPixel = source.Asset.Metadata.PhysicalSizeX ?? 0;
+        _physicalUnitsPerSourcePixel = physicalUnitsPerPixel;
+        if (physicalUnitsPerPixel > 0)
+        {
+            _scaleBarUnit = string.IsNullOrWhiteSpace(source.Asset.Metadata.PhysicalUnit) ? "µm" : source.Asset.Metadata.PhysicalUnit;
+            _scaleBarPhysicalLength = ChooseReadablePhysicalLength(sourceRect.Width * physicalUnitsPerPixel * 0.2);
+        }
+        else
+        {
+            _showScaleBar = false;
+        }
+        _preview = CreateCropPreview(source, sourceRect, _adjustments, _frameIndex);
+        OnPropertyChanged(nameof(Source));
+        OnPropertyChanged(nameof(SourceRect));
+        OnPropertyChanged(nameof(AspectRatioText));
+        OnPropertyChanged(nameof(ScalePercent));
+        OnPropertyChanged(nameof(SizeStatusText));
+        OnPropertyChanged(nameof(FrameIndex));
+        OnPropertyChanged(nameof(FrameNumber));
+        OnPropertyChanged(nameof(FrameCount));
+        OnPropertyChanged(nameof(FrameSelectionVisibility));
+        OnPropertyChanged(nameof(FrameStatusText));
+        OnPropertyChanged(nameof(Preview));
+        OnPropertyChanged(nameof(EffectiveDpi));
+        OnPropertyChanged(nameof(EffectiveDpiText));
+        OnPropertyChanged(nameof(IsBelowMinimumDpi));
+        NotifyScaleBarGeometryChanged();
+    }
     public string SlotId { get; }
 
     public string Label
@@ -143,30 +272,52 @@ public sealed class FigurePanelViewModel : ObservableObject
     public long Width
     {
         get => _width;
-        set
-        {
-            if (SetProperty(ref _width, value))
-            {
-                OnPropertyChanged(nameof(EffectiveDpiText));
-                OnPropertyChanged(nameof(IsBelowMinimumDpi));
-                NotifyScaleBarGeometryChanged();
-            }
-        }
+        set => SetWidth(value);
     }
 
     public long Height
     {
         get => _height;
+        set => SetHeight(value);
+    }
+
+    /// <summary>Locks panel resizing to the source crop aspect ratio.</summary>
+    public bool IsAspectRatioLocked
+    {
+        get => _isAspectRatioLocked;
         set
         {
-            if (SetProperty(ref _height, value))
+            if (!SetProperty(ref _isAspectRatioLocked, value))
             {
-                OnPropertyChanged(nameof(EffectiveDpiText));
-                OnPropertyChanged(nameof(IsBelowMinimumDpi));
-                NotifyScaleBarGeometryChanged();
+                return;
             }
+
+            if (value)
+            {
+                SetDestinationSize(_width, CalculateHeightForWidth(_width));
+            }
+
+            OnPropertyChanged(nameof(SizeStatusText));
         }
     }
+
+    public double ScalePercent
+    {
+        get => SourceRect.Width <= 0 ? 100 : Width / (double)SourceRect.Width * 100;
+        set
+        {
+            double normalized = double.IsFinite(value) ? Math.Clamp(value, 1, 1000) : 100;
+            long width = ScaleDimension(SourceRect.Width, normalized / 100);
+            long height = ScaleDimension(SourceRect.Height, normalized / 100);
+            SetDestinationSize(width, height);
+        }
+    }
+
+    public string AspectRatioText => SourceRect.Width > 0 && SourceRect.Height > 0
+        ? $"源图比例 {SourceRect.Width:N0} : {SourceRect.Height:N0}"
+        : "源图比例未知";
+
+    public string SizeStatusText => $"{Width:N0} × {Height:N0} px · {ScalePercent:0.#}% · {(IsAspectRatioLocked ? "等比锁定" : "自由宽高")}";
 
     public bool IsVisible
     {
@@ -177,14 +328,29 @@ public sealed class FigurePanelViewModel : ObservableObject
     public bool IsLocked
     {
         get => _isLocked;
-        set => SetProperty(ref _isLocked, value);
+        set
+        {
+            if (SetProperty(ref _isLocked, value))
+            {
+                OnPropertyChanged(nameof(PanelResizeHandleVisibility));
+            }
+        }
     }
 
     public bool IsSelected
     {
         get => _isSelected;
-        set => SetProperty(ref _isSelected, value);
+        set
+        {
+            if (SetProperty(ref _isSelected, value))
+            {
+                OnPropertyChanged(nameof(PanelResizeHandleVisibility));
+            }
+        }
     }
+
+    public Visibility PanelResizeHandleVisibility =>
+        IsSelected && !IsLocked ? Visibility.Visible : Visibility.Collapsed;
 
     public int ZIndex
     {
@@ -363,13 +529,105 @@ public sealed class FigurePanelViewModel : ObservableObject
 
     internal void RefreshPreview()
     {
-        _preview = CreateCropPreview(Source, SourceRect);
+        _preview = CreateCropPreview(Source, SourceRect, _adjustments, _frameIndex);
         OnPropertyChanged(nameof(Preview));
         OnPropertyChanged(nameof(EffectiveDpi));
         OnPropertyChanged(nameof(EffectiveDpiText));
         OnPropertyChanged(nameof(IsBelowMinimumDpi));
         NotifyScaleBarGeometryChanged();
     }
+
+    private void UpdateAdjustment(Func<ImageAdjustmentParameters, ImageAdjustmentParameters> update)
+    {
+        Adjustments = update(_adjustments);
+    }
+
+    private void SetWidth(long value)
+    {
+        long normalized = NormalizeDimension(value);
+        SetDestinationSize(
+            normalized,
+            IsAspectRatioLocked ? CalculateHeightForWidth(normalized) : Height);
+    }
+
+    private void SetHeight(long value)
+    {
+        long normalized = NormalizeDimension(value);
+        SetDestinationSize(
+            IsAspectRatioLocked ? CalculateWidthForHeight(normalized) : Width,
+            normalized);
+    }
+
+    private void SetDestinationSize(long width, long height)
+    {
+        width = NormalizeDimension(width);
+        height = NormalizeDimension(height);
+        if (_isUpdatingSize || (_width == width && _height == height))
+        {
+            return;
+        }
+
+        _isUpdatingSize = true;
+        try
+        {
+            _width = width;
+            _height = height;
+        }
+        finally
+        {
+            _isUpdatingSize = false;
+        }
+
+        OnPropertyChanged(nameof(Width));
+        OnPropertyChanged(nameof(Height));
+        OnPropertyChanged(nameof(ScalePercent));
+        OnPropertyChanged(nameof(SizeStatusText));
+        OnPropertyChanged(nameof(EffectiveDpi));
+        OnPropertyChanged(nameof(EffectiveDpiText));
+        OnPropertyChanged(nameof(IsBelowMinimumDpi));
+        NotifyScaleBarGeometryChanged();
+    }
+
+    internal void RestoreDestinationSize(PixelRect64 destination, bool lockAspectRatio)
+    {
+        _isUpdatingSize = true;
+        try
+        {
+            _width = NormalizeDimension(destination.Width);
+            _height = NormalizeDimension(destination.Height);
+            _isAspectRatioLocked = lockAspectRatio;
+        }
+        finally
+        {
+            _isUpdatingSize = false;
+        }
+
+        OnPropertyChanged(nameof(Width));
+        OnPropertyChanged(nameof(Height));
+        OnPropertyChanged(nameof(IsAspectRatioLocked));
+        OnPropertyChanged(nameof(ScalePercent));
+        OnPropertyChanged(nameof(SizeStatusText));
+        OnPropertyChanged(nameof(EffectiveDpi));
+        OnPropertyChanged(nameof(EffectiveDpiText));
+        OnPropertyChanged(nameof(IsBelowMinimumDpi));
+        NotifyScaleBarGeometryChanged();
+    }
+
+    private long CalculateHeightForWidth(long width) =>
+        ScaleDimension(SourceRect.Height, width / (double)Math.Max(1, SourceRect.Width));
+
+    private long CalculateWidthForHeight(long height) =>
+        ScaleDimension(SourceRect.Width, height / (double)Math.Max(1, SourceRect.Height));
+
+    private static long ScaleDimension(long source, double scale)
+    {
+        double scaled = source * scale;
+        return !double.IsFinite(scaled) || scaled >= long.MaxValue
+            ? long.MaxValue
+            : Math.Max(1, (long)Math.Round(scaled));
+    }
+
+    private static long NormalizeDimension(long value) => Math.Max(1, value);
 
     private double ContainedScale => Math.Min(
         Width / (double)SourceRect.Width,
@@ -417,19 +675,22 @@ public sealed class FigurePanelViewModel : ObservableObject
 
     private static BitmapSource CreateCropPreview(
         SourceAssetItemViewModel source,
-        PixelRect64 crop)
+        PixelRect64 crop,
+        ImageAdjustmentParameters? adjustments = null,
+        int frameIndex = 0)
     {
-        double scaleX = source.Preview.PixelWidth / (double)source.Width;
-        double scaleY = source.Preview.PixelHeight / (double)source.Height;
-        int left = Math.Clamp((int)Math.Floor(crop.X * scaleX), 0, source.Preview.PixelWidth - 1);
-        int top = Math.Clamp((int)Math.Floor(crop.Y * scaleY), 0, source.Preview.PixelHeight - 1);
-        int right = Math.Clamp((int)Math.Ceiling(crop.Right * scaleX), left + 1, source.Preview.PixelWidth);
-        int bottom = Math.Clamp((int)Math.Ceiling(crop.Bottom * scaleY), top + 1, source.Preview.PixelHeight);
+        BitmapSource framePreview = source.GetFramePreview(frameIndex);
+        double scaleX = framePreview.PixelWidth / (double)source.Width;
+        double scaleY = framePreview.PixelHeight / (double)source.Height;
+        int left = Math.Clamp((int)Math.Floor(crop.X * scaleX), 0, framePreview.PixelWidth - 1);
+        int top = Math.Clamp((int)Math.Floor(crop.Y * scaleY), 0, framePreview.PixelHeight - 1);
+        int right = Math.Clamp((int)Math.Ceiling(crop.Right * scaleX), left + 1, framePreview.PixelWidth);
+        int bottom = Math.Clamp((int)Math.Ceiling(crop.Bottom * scaleY), top + 1, framePreview.PixelHeight);
 
         var preview = new CroppedBitmap(
-            source.Preview,
+            framePreview,
             new System.Windows.Int32Rect(left, top, right - left, bottom - top));
         preview.Freeze();
-        return preview;
+        return WpfImageAdjustmentProcessor.Apply(preview, adjustments);
     }
 }

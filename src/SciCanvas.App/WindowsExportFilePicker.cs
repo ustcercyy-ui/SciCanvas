@@ -20,4 +20,21 @@ public sealed class WindowsExportFilePicker : IExportFilePicker
 
         return dialog.ShowDialog() == true ? dialog.FileName : null;
     }
+
+    public string? PickNewFigureExportPath(string suggestedFileName)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "导出新的拼版文件（不覆盖已有文件）",
+            FileName = suggestedFileName,
+            DefaultExt = ".tif",
+            AddExtension = true,
+            CheckPathExists = true,
+            OverwritePrompt = false,
+            Filter =
+                "TIFF（推荐位图）|*.tif|PDF（可编辑矢量）|*.pdf|SVG（可编辑矢量）|*.svg|PNG|*.png|BMP|*.bmp|JPEG（有损）|*.jpg",
+        };
+
+        return dialog.ShowDialog() == true ? dialog.FileName : null;
+    }
 }

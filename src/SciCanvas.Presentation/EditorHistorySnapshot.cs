@@ -1,4 +1,5 @@
 using SciCanvas.Core.Geometry;
+using SciCanvas.Core.Images;
 
 namespace SciCanvas.Presentation;
 
@@ -39,7 +40,10 @@ internal sealed record PanelHistorySnapshot(
     double PhysicalUnitsPerSourcePixel,
     double ScaleBarPhysicalLength,
     string ScaleBarUnit,
-    bool ScaleBarShowLabel);
+    bool ScaleBarShowLabel,
+    int FrameIndex,
+    ImageAdjustmentParameters Adjustments,
+    bool IsAspectRatioLocked);
 
 internal sealed record AnnotationHistorySnapshot(
     Guid Id,

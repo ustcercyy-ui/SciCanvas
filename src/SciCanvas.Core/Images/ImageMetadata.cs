@@ -14,7 +14,8 @@ public sealed record ImageMetadata
         double? physicalSizeX = null,
         double? physicalSizeY = null,
         string? physicalUnit = null,
-        string? iccProfileName = null)
+        string? iccProfileName = null,
+        int frameCount = 1)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(channels);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bitsPerChannel);
@@ -30,6 +31,7 @@ public sealed record ImageMetadata
         PhysicalSizeY = physicalSizeY;
         PhysicalUnit = physicalUnit;
         IccProfileName = iccProfileName;
+        FrameCount = Math.Max(1, frameCount);
     }
 
     public PixelSize64 PixelSize { get; }
@@ -51,5 +53,7 @@ public sealed record ImageMetadata
     public string? PhysicalUnit { get; }
 
     public string? IccProfileName { get; }
+
+    public int FrameCount { get; }
 }
 

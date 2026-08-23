@@ -13,6 +13,11 @@ public partial class MainWindow : Window
     private double _moveOffsetY;
     private FigurePanelViewModel? _draggedFigurePanel;
     private Point _figureDragAnchor;
+    private FigurePanelViewModel? _resizingFigurePanel;
+    private FrameworkElement? _resizeHandleElement;
+    private Point _figureResizeAnchor;
+    private long _figureResizeStartWidth;
+    private long _figureResizeStartHeight;
     private FigureAnnotationViewModel? _draggedAnnotation;
     private Point _annotationDragAnchor;
     private bool _allowClose;
@@ -134,6 +139,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        // The resize handle is a child of the panel and owns its own preview gesture.
+        if (e.OriginalSource is FrameworkElement original && original.Cursor == Cursors.SizeNWSE)
+        {
+            return;
+        }
+
         bool toggle = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
         viewModel.Figure.SelectPanel(panel, toggle);
         if (!panel.IsSelected || panel.IsLocked)
@@ -151,6 +162,11 @@ public partial class MainWindow : Window
 
     private void FigurePanel_OnMouseMove(object sender, MouseEventArgs e)
     {
+        if (_resizingFigurePanel is not null)
+        {
+            return;
+        }
+
         if (_draggedFigurePanel is null ||
             e.LeftButton != MouseButtonState.Pressed ||
             DataContext is not MainWindowViewModel viewModel)
@@ -170,6 +186,11 @@ public partial class MainWindow : Window
 
     private void FigurePanel_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        if (_resizingFigurePanel is not null)
+        {
+            return;
+        }
+
         if (sender is FrameworkElement element && element.IsMouseCaptured)
         {
             element.ReleaseMouseCapture();
@@ -186,6 +207,87 @@ public partial class MainWindow : Window
     private void FigurePanel_OnLostMouseCapture(object sender, MouseEventArgs e)
     {
         _draggedFigurePanel = null;
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void FigurePanelResizeHandle_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: FigurePanelViewModel panel } element ||
+            DataContext is not MainWindowViewModel viewModel ||
+            panel.IsLocked)
+        {
+            return;
+        }
+
+        viewModel.Figure.SelectPanel(panel, toggle: false);
+        _resizingFigurePanel = panel;
+        _resizeHandleElement = element;
+        _figureResizeAnchor = e.GetPosition(FigureSurface);
+        _figureResizeStartWidth = panel.Width;
+        _figureResizeStartHeight = panel.Height;
+        element.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void FigurePanelResizeHandle_OnMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_resizingFigurePanel is null ||
+            e.LeftButton != MouseButtonState.Pressed ||
+            DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        Point position = e.GetPosition(FigureSurface);
+        long deltaX = (long)Math.Round(position.X - _figureResizeAnchor.X);
+        long deltaY = (long)Math.Round(position.Y - _figureResizeAnchor.Y);
+        long maxWidth = Math.Max(1, viewModel.Figure.CanvasWidth - _resizingFigurePanel.X);
+        long maxHeight = Math.Max(1, viewModel.Figure.CanvasHeight - _resizingFigurePanel.Y);
+
+        if (_resizingFigurePanel.IsAspectRatioLocked)
+        {
+            double aspect = _resizingFigurePanel.SourceRect.Width /
+                            (double)Math.Max(1, _resizingFigurePanel.SourceRect.Height);
+            long maxAspectWidth = Math.Max(1, Math.Min(
+                maxWidth,
+                (long)Math.Floor(maxHeight * aspect)));
+            long proposedWidth = Math.Abs(deltaX) >= Math.Abs(deltaY * aspect)
+                ? _figureResizeStartWidth + deltaX
+                : _figureResizeStartWidth + (long)Math.Round(deltaY * aspect);
+            _resizingFigurePanel.Width = Math.Clamp(proposedWidth, 1, maxAspectWidth);
+        }
+        else
+        {
+            _resizingFigurePanel.Width = Math.Clamp(_figureResizeStartWidth + deltaX, 1, maxWidth);
+            _resizingFigurePanel.Height = Math.Clamp(_figureResizeStartHeight + deltaY, 1, maxHeight);
+        }
+
+        e.Handled = true;
+    }
+
+    private void FigurePanelResizeHandle_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_resizeHandleElement?.IsMouseCaptured == true)
+        {
+            _resizeHandleElement.ReleaseMouseCapture();
+        }
+
+        _resizeHandleElement = null;
+        _resizingFigurePanel = null;
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.CompleteHistoryGesture();
+        }
+        e.Handled = true;
+    }
+
+    private void FigurePanelResizeHandle_OnLostMouseCapture(object sender, MouseEventArgs e)
+    {
+        _resizeHandleElement = null;
+        _resizingFigurePanel = null;
         if (DataContext is MainWindowViewModel viewModel)
         {
             viewModel.CompleteHistoryGesture();

@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using SciCanvas.Core.Export;
@@ -279,6 +280,74 @@ public sealed class WpfFigureExporterTests
         Assert.False(File.Exists(targetPath));
     }
 
+    [Fact]
+    public async Task ExportAsync_WritesEditableSvgWithIndependentImageAndAnnotationObjects()
+    {
+        using var workspace = new TestWorkspace();
+        string sourcePath = Path.Combine(workspace.Root, "source.png");
+        string targetPath = Path.Combine(workspace.Root, "figure.svg");
+        CreateSolidPng(sourcePath, 8, 6, Colors.Red);
+        FigureExportDocument document = new(
+            120,
+            80,
+            300,
+            [
+                new FigurePanelExportItem(
+                    CreateAsset(sourcePath, 8, 6),
+                    new PixelRect64(0, 0, 8, 6),
+                    new PixelRect64(5, 5, 50, 70),
+                    "a",
+                    true),
+            ],
+            [
+                new FigureAnnotationExportItem(
+                    "rectangle", 20, 20, 80, 60, string.Empty, "#FFFF0000",
+                    7, 2, IsBold: false, IsVisible: true, ZIndex: 0),
+            ]);
+
+        await new WpfFigureExporter().ExportAsync(document, targetPath);
+
+        string svg = await File.ReadAllTextAsync(targetPath);
+        Assert.StartsWith("<?xml", svg, StringComparison.Ordinal);
+        Assert.Contains("<image ", svg, StringComparison.Ordinal);
+        Assert.Contains("<rect ", svg, StringComparison.Ordinal);
+        Assert.Contains("data-source=\"source.png\"", svg, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExportAsync_WritesPdfWithIndependentImageXObjectAndVectorContent()
+    {
+        using var workspace = new TestWorkspace();
+        string sourcePath = Path.Combine(workspace.Root, "source.png");
+        string targetPath = Path.Combine(workspace.Root, "figure.pdf");
+        CreateSolidPng(sourcePath, 8, 6, Colors.Blue);
+        FigureExportDocument document = new(
+            120,
+            80,
+            300,
+            [
+                new FigurePanelExportItem(
+                    CreateAsset(sourcePath, 8, 6),
+                    new PixelRect64(0, 0, 8, 6),
+                    new PixelRect64(5, 5, 50, 70),
+                    "a",
+                    true),
+            ],
+            [
+                new FigureAnnotationExportItem(
+                    "arrow", 20, 40, 90, 40, string.Empty, "#FF00AA00",
+                    7, 2, IsBold: false, IsVisible: true, ZIndex: 0),
+            ]);
+
+        await new WpfFigureExporter().ExportAsync(document, targetPath);
+
+        byte[] pdf = await File.ReadAllBytesAsync(targetPath);
+        string header = Encoding.ASCII.GetString(pdf, 0, 8);
+        string body = Encoding.ASCII.GetString(pdf);
+        Assert.Equal("%PDF-1.7", header);
+        Assert.Contains("/Subtype /Image", body, StringComparison.Ordinal);
+        Assert.Contains("xref", body, StringComparison.Ordinal);
+    }
     private static SourceAsset CreateAsset(string path, int width, int height) => new(
         Guid.NewGuid(),
         Path.GetFileName(path),

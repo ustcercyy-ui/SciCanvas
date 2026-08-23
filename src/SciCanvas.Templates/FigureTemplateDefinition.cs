@@ -93,6 +93,9 @@ public sealed class TemplateSlotDefinition
 
     public bool RequireScaleBar { get; init; }
 
+    /// <summary>Whether a panel created from this slot keeps its source aspect ratio when resized.</summary>
+    public bool LockAspectRatio { get; init; } = true;
+
     public string? HelpText { get; init; }
 }
 

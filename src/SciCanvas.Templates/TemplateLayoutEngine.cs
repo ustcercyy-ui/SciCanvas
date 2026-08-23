@@ -9,6 +9,7 @@ public sealed record TemplateSlotLayout(
     PixelRect64 PixelRect,
     int MinimumEffectiveDpi,
     bool RequireScaleBar,
+    bool LockAspectRatio,
     string? HelpText);
 
 public sealed record TemplateCanvasLayout(
@@ -73,6 +74,7 @@ public static class TemplateLayoutEngine
                     Math.Max(1, pixelBottom - pixelTop)),
                 slot.MinimumEffectiveDpi,
                 slot.RequireScaleBar,
+                slot.LockAspectRatio,
                 slot.HelpText));
         }
 

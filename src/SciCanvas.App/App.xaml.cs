@@ -23,6 +23,15 @@ public partial class App : Application
             metadataProbe,
             new WindowsFileIdentityProvider());
 
+        var builtInTemplates = new BuiltInTemplateCatalog().LoadAll();
+        var userTemplateCatalog = new UserTemplateCatalog(
+            reservedTemplateIds: builtInTemplates.Select(template => template.Id));
+        IReadOnlyList<FigureTemplateDefinition> templates = builtInTemplates
+            .Concat(userTemplateCatalog.LoadInstalled())
+            .GroupBy(template => template.Id, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToArray();
+
         var viewModel = new MainWindowViewModel(
             new WindowsImageFilePicker(),
             sourceReader,
@@ -31,13 +40,16 @@ public partial class App : Application
             new WindowsPathSafetyPolicy(),
             new WpfImageCropExporter(),
             new WpfFigureExporter(),
-            new BuiltInTemplateCatalog().LoadAll(),
+            templates,
             new WindowsProjectFilePicker(),
             new JsonProjectStore(),
             new JsonProjectRecoveryStore(),
             new WindowsProjectRecoveryPrompt(),
             new WindowsSourceRelinkFilePicker(),
-            new WindowsSourceRevisionAcceptancePrompt());
+            new WindowsSourceRevisionAcceptancePrompt(),
+            new WindowsTemplateFilePicker(),
+            userTemplateCatalog,
+            new WindowsBatchExportFolderPicker());
 
         var window = new MainWindow
         {

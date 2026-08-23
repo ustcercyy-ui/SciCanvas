@@ -7,7 +7,7 @@ public sealed class SciCanvasProjectDocument
     [JsonPropertyName("$schema")]
     public string Schema { get; init; } = "https://scicanvas.org/schemas/scicanvas-project.schema.json";
 
-    public string SchemaVersion { get; init; } = "0.1";
+    public string SchemaVersion { get; init; } = "0.9";
 
     public Guid ProjectId { get; init; }
 
@@ -85,6 +85,8 @@ public sealed class ProjectImageMetadataSnapshot
 
     public string PixelFormat { get; init; } = string.Empty;
 
+    public int FrameCount { get; init; } = 1;
+
     public double? DpiX { get; init; }
 
     public double? DpiY { get; init; }
@@ -120,9 +122,26 @@ public sealed class ProjectImageLayerSnapshot
 
     public ProjectPixelRectSnapshot SourceRect { get; init; } = new();
 
+    public int FrameIndex { get; init; }
+
+    /// <summary>Whether editing this panel keeps its source crop aspect ratio.</summary>
+    public bool LockAspectRatio { get; init; } = true;
+
     public ProjectTransformSnapshot Transform { get; init; } = new();
 
-    public IReadOnlyList<object> Adjustments { get; init; } = [];
+    public IReadOnlyList<ProjectImageAdjustmentSnapshot> Adjustments { get; init; } = [];
+}
+
+public sealed class ProjectImageAdjustmentSnapshot
+{
+    public double Brightness { get; init; }
+    public double Contrast { get; init; }
+    public double Gamma { get; init; } = 1;
+    public double BlackPoint { get; init; }
+    public double WhitePoint { get; init; } = 1;
+    public bool Invert { get; init; }
+    public bool Grayscale { get; init; }
+    public string Channel { get; init; } = "rgb";
 }
 
 public sealed class ProjectPixelRectSnapshot
@@ -180,6 +199,14 @@ public sealed class ProjectExportProfileSnapshot
     public string Format { get; init; } = "tiff";
 
     public int Dpi { get; init; } = 300;
+
+    public double Scale { get; init; } = 1;
+
+    public int? WidthPixels { get; init; }
+
+    public int? HeightPixels { get; init; }
+
+    public bool WriteProvenance { get; init; } = true;
 
     public int? BitDepth { get; init; }
 

@@ -7,6 +7,7 @@ using System.Windows.Threading;
 using SciCanvas.Core.Cropping;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
+using SciCanvas.Core.Images;
 using SciCanvas.Core.Sources;
 using SciCanvas.Imaging;
 using SciCanvas.Persistence;
@@ -29,6 +30,9 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly IProjectRecoveryPrompt _projectRecoveryPrompt;
     private readonly ISourceRelinkFilePicker _sourceRelinkFilePicker;
     private readonly ISourceRevisionAcceptancePrompt _sourceRevisionAcceptancePrompt;
+    private readonly ITemplateFilePicker? _templateFilePicker;
+    private readonly IUserTemplateCatalog? _userTemplateCatalog;
+    private readonly IBatchExportFolderPicker? _batchExportFolderPicker;
     private readonly IReadOnlyList<FigureTemplateDefinition> _figureTemplates;
     private readonly EditorHistoryManager _history = new(100);
     private readonly List<ProjectAuditEntrySnapshot> _auditTrail = [];
@@ -36,12 +40,14 @@ public sealed class MainWindowViewModel : ObservableObject
     private FigureCanvasViewModel _figure;
     private FigureTemplateDefinition _selectedFigureTemplate;
     private SourceAssetItemViewModel? _selectedSource;
+    private BatchCropQueueItemViewModel? _selectedBatchCrop;
     private bool _isBusy;
     private string _statusMessage = "就绪";
     private string? _lastError;
     private bool _isCropOverlayVisible = true;
     private bool _lockCropSizeAcrossSources = true;
     private WorkspaceMode _workspaceMode = WorkspaceMode.Crop;
+    private bool _isLayersTabActive;
     private Guid _projectId = Guid.NewGuid();
     private DateTimeOffset _projectCreatedAt = DateTimeOffset.UtcNow;
     private string? _projectPath;
@@ -66,7 +72,10 @@ public sealed class MainWindowViewModel : ObservableObject
         IProjectRecoveryStore? projectRecoveryStore = null,
         IProjectRecoveryPrompt? projectRecoveryPrompt = null,
         ISourceRelinkFilePicker? sourceRelinkFilePicker = null,
-        ISourceRevisionAcceptancePrompt? sourceRevisionAcceptancePrompt = null)
+        ISourceRevisionAcceptancePrompt? sourceRevisionAcceptancePrompt = null,
+        ITemplateFilePicker? templateFilePicker = null,
+        IUserTemplateCatalog? userTemplateCatalog = null,
+        IBatchExportFolderPicker? batchExportFolderPicker = null)
     {
         _filePicker = filePicker ?? throw new ArgumentNullException(nameof(filePicker));
         _sourceReader = sourceReader ?? throw new ArgumentNullException(nameof(sourceReader));
@@ -79,6 +88,9 @@ public sealed class MainWindowViewModel : ObservableObject
         _projectStore = projectStore ?? throw new ArgumentNullException(nameof(projectStore));
         _projectRecoveryStore = projectRecoveryStore ?? new NullProjectRecoveryStore();
         _projectRecoveryPrompt = projectRecoveryPrompt ?? new DeclineProjectRecoveryPrompt();
+        _templateFilePicker = templateFilePicker;
+        _userTemplateCatalog = userTemplateCatalog;
+        _batchExportFolderPicker = batchExportFolderPicker;
         _sourceRelinkFilePicker = sourceRelinkFilePicker ?? new NullSourceRelinkFilePicker();
         _sourceRevisionAcceptancePrompt = sourceRevisionAcceptancePrompt ??
             new DeclineSourceRevisionAcceptancePrompt();
@@ -108,6 +120,22 @@ public sealed class MainWindowViewModel : ObservableObject
             ExportCropAsync,
             () => HasSelection && !IsBusy,
             HandleUnexpectedCommandError);
+        ExportBatchCropsCommand = new AsyncRelayCommand(
+            ExportBatchCropsAsync,
+            () => BatchCropQueue.Count > 0 && !IsBusy && _batchExportFolderPicker is not null,
+            HandleUnexpectedCommandError);
+        AddCurrentCropToBatchQueueCommand = new RelayCommand(
+            AddCurrentCropToBatchQueue,
+            () => HasSelection && Crop.TryGetCrop(out _) && !IsBusy);
+        RemoveSelectedBatchCropCommand = new RelayCommand(
+            RemoveSelectedBatchCrop,
+            () => SelectedBatchCrop is not null && !IsBusy);
+        ClearBatchCropQueueCommand = new RelayCommand(
+            ClearBatchCropQueue,
+            () => BatchCropQueue.Count > 0 && !IsBusy);
+        ImportTemplateCommand = new RelayCommand(
+            ImportTemplate,
+            () => _templateFilePicker is not null && _userTemplateCatalog is not null && !IsBusy);
         AcceptSourceRevisionCommand = new AsyncRelayCommand(
             AcceptSelectedSourceRevisionAsync,
             () => HasSelection && !IsBusy,
@@ -116,12 +144,22 @@ public sealed class MainWindowViewModel : ObservableObject
             ExportFigureAsync,
             () => Figure.Panels.Count > 0 && !IsBusy,
             HandleUnexpectedCommandError);
+        ExportFigureVariantsCommand = new AsyncRelayCommand(
+            ExportFigureVariantsAsync,
+            () => Figure.Panels.Count > 0 && !IsBusy && _batchExportFolderPicker is not null,
+            HandleUnexpectedCommandError);
         ShowCropWorkspaceCommand = new RelayCommand(() => WorkspaceMode = WorkspaceMode.Crop);
         ShowFigureWorkspaceCommand = new RelayCommand(() => WorkspaceMode = WorkspaceMode.Figure);
+        ShowInspectorTabCommand = new RelayCommand(() => IsLayersTabActive = false);
+        ShowLayersTabCommand = new RelayCommand(() => IsLayersTabActive = true);
+        ShowHelpCommand = new RelayCommand(() => StatusMessage = "SciCanvas v1.0.0-alpha · 快捷键：Ctrl+N/O/S/I/Enter，Ctrl+Z/Y");
         AddCurrentCropToFigureCommand = new RelayCommand(
             AddCurrentCropToFigure,
             () => HasSelection && Figure.Panels.Count < Figure.SlotCount &&
                   Crop.TryGetCrop(out _));
+        ReplaceSelectedPanelSourceCommand = new RelayCommand(
+            ReplaceSelectedPanelSource,
+            () => HasSelection && Figure.SelectedPanel is not null && Crop.TryGetCrop(out _) && !IsBusy);
         OpenProjectCommand = new AsyncRelayCommand(
             OpenProjectAsync,
             () => !IsBusy,
@@ -141,7 +179,33 @@ public sealed class MainWindowViewModel : ObservableObject
         _historyReady = true;
     }
 
+    public BatchCropQueueItemViewModel? SelectedBatchCrop
+    {
+        get => _selectedBatchCrop;
+        set
+        {
+            if (SetProperty(ref _selectedBatchCrop, value))
+            {
+                RemoveSelectedBatchCropCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    public string BatchCropQueueSummary => $"批量队列 · {BatchCropQueue.Count} 项";
+
+    public AsyncRelayCommand ExportBatchCropsCommand { get; }
+
+    public RelayCommand AddCurrentCropToBatchQueueCommand { get; }
+
+    public RelayCommand RemoveSelectedBatchCropCommand { get; }
+
+    public RelayCommand ClearBatchCropQueueCommand { get; }
+    public RelayCommand ImportTemplateCommand { get; }
+
+
     public ObservableCollection<SourceAssetItemViewModel> Sources { get; } = [];
+
+    public ObservableCollection<BatchCropQueueItemViewModel> BatchCropQueue { get; } = [];
 
     public CropEditorViewModel Crop { get; } = new();
 
@@ -185,13 +249,22 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public AsyncRelayCommand ExportFigureCommand { get; }
 
+    public AsyncRelayCommand ExportFigureVariantsCommand { get; }
+
     public AsyncRelayCommand AcceptSourceRevisionCommand { get; }
 
     public RelayCommand ShowCropWorkspaceCommand { get; }
 
     public RelayCommand ShowFigureWorkspaceCommand { get; }
 
+    public RelayCommand ShowInspectorTabCommand { get; }
+
+    public RelayCommand ShowLayersTabCommand { get; }
+    public RelayCommand ShowHelpCommand { get; }
+
     public RelayCommand AddCurrentCropToFigureCommand { get; }
+
+    public RelayCommand ReplaceSelectedPanelSourceCommand { get; }
 
     public AsyncRelayCommand OpenProjectCommand { get; }
 
@@ -231,8 +304,10 @@ public sealed class MainWindowViewModel : ObservableObject
                 OnPropertyChanged(nameof(HasSelection));
                 OnPropertyChanged(nameof(EmptyStateVisibility));
                 ExportCropCommand.NotifyCanExecuteChanged();
+                AddCurrentCropToBatchQueueCommand.NotifyCanExecuteChanged();
                 AcceptSourceRevisionCommand.NotifyCanExecuteChanged();
                 AddCurrentCropToFigureCommand.NotifyCanExecuteChanged();
+                ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
                 MarkDirty();
             }
         }
@@ -249,10 +324,17 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             if (SetProperty(ref _isBusy, value))
             {
+                ExportBatchCropsCommand.NotifyCanExecuteChanged();
+                AddCurrentCropToBatchQueueCommand.NotifyCanExecuteChanged();
+                RemoveSelectedBatchCropCommand.NotifyCanExecuteChanged();
+                ClearBatchCropQueueCommand.NotifyCanExecuteChanged();
+                ImportTemplateCommand.NotifyCanExecuteChanged();
                 OpenSourcesCommand.NotifyCanExecuteChanged();
                 ExportCropCommand.NotifyCanExecuteChanged();
                 ExportFigureCommand.NotifyCanExecuteChanged();
+                ExportFigureVariantsCommand.NotifyCanExecuteChanged();
                 AcceptSourceRevisionCommand.NotifyCanExecuteChanged();
+                ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
                 OpenProjectCommand.NotifyCanExecuteChanged();
                 SaveProjectCommand.NotifyCanExecuteChanged();
                 SaveProjectAsCommand.NotifyCanExecuteChanged();
@@ -319,6 +401,25 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public Visibility FigureWorkspaceVisibility =>
         WorkspaceMode == WorkspaceMode.Figure ? Visibility.Visible : Visibility.Collapsed;
+
+    public bool IsLayersTabActive
+    {
+        get => _isLayersTabActive;
+        set
+        {
+            if (SetProperty(ref _isLayersTabActive, value))
+            {
+                OnPropertyChanged(nameof(InspectorTabVisibility));
+                OnPropertyChanged(nameof(LayersTabVisibility));
+            }
+        }
+    }
+
+    public Visibility InspectorTabVisibility =>
+        IsLayersTabActive ? Visibility.Collapsed : Visibility.Visible;
+
+    public Visibility LayersTabVisibility =>
+        IsLayersTabActive ? Visibility.Visible : Visibility.Collapsed;
 
     public string WorkspaceModeText => WorkspaceMode == WorkspaceMode.Crop ? "裁剪视图" : "拼版视图";
 
@@ -461,6 +562,227 @@ public sealed class MainWindowViewModel : ObservableObject
         }
     }
 
+    private void AddCurrentCropToBatchQueue()
+    {
+        SourceAssetItemViewModel? selected = SelectedSource;
+        if (selected is null || !Crop.TryGetCrop(out PixelRect64 crop))
+        {
+            LastError = "请先选择有效裁剪区域。";
+            return;
+        }
+
+        if (BatchCropQueue.Any(item => ReferenceEquals(item.Source, selected) && item.Crop == crop))
+        {
+            LastError = "该源图像的相同裁剪已在批量队列中。";
+            return;
+        }
+
+        var item = new BatchCropQueueItemViewModel(selected, crop);
+        BatchCropQueue.Add(item);
+        SelectedBatchCrop = item;
+        OnPropertyChanged(nameof(BatchCropQueueSummary));
+        ExportBatchCropsCommand.NotifyCanExecuteChanged();
+        ClearBatchCropQueueCommand.NotifyCanExecuteChanged();
+        RemoveSelectedBatchCropCommand.NotifyCanExecuteChanged();
+        LastError = null;
+        StatusMessage = $"已加入批量裁剪队列 · {BatchCropQueue.Count} 项";
+    }
+
+    private void RemoveSelectedBatchCrop()
+    {
+        if (SelectedBatchCrop is not { } selected)
+        {
+            return;
+        }
+
+        int index = BatchCropQueue.IndexOf(selected);
+        BatchCropQueue.Remove(selected);
+        SelectedBatchCrop = BatchCropQueue.Count == 0
+            ? null
+            : BatchCropQueue[Math.Clamp(index, 0, BatchCropQueue.Count - 1)];
+        OnPropertyChanged(nameof(BatchCropQueueSummary));
+        ExportBatchCropsCommand.NotifyCanExecuteChanged();
+        ClearBatchCropQueueCommand.NotifyCanExecuteChanged();
+        StatusMessage = $"已从批量队列移除 · {BatchCropQueue.Count} 项";
+    }
+
+    private void ClearBatchCropQueue()
+    {
+        BatchCropQueue.Clear();
+        SelectedBatchCrop = null;
+        OnPropertyChanged(nameof(BatchCropQueueSummary));
+        ExportBatchCropsCommand.NotifyCanExecuteChanged();
+        ClearBatchCropQueueCommand.NotifyCanExecuteChanged();
+        StatusMessage = "批量裁剪队列已清空";
+    }
+
+    private void ImportTemplate()
+    {
+        if (_templateFilePicker is null || _userTemplateCatalog is null)
+        {
+            return;
+        }
+
+        string? sourcePath = _templateFilePicker.PickTemplatePath();
+        if (sourcePath is null)
+        {
+            return;
+        }
+
+        try
+        {
+            FigureTemplateDefinition template = _userTemplateCatalog.ImportFromFile(sourcePath);
+            if (AvailableTemplates.Any(item => string.Equals(item.Id, template.Id, StringComparison.Ordinal)))
+            {
+                LastError = $"模板 ID {template.Id} 已在当前模板库中。";
+                StatusMessage = "模板导入已停止 · ID 重复";
+                return;
+            }
+
+            AvailableTemplates.Add(template);
+            OnPropertyChanged(nameof(TemplateLibraryLabel));
+            if (IsTemplateSelectionEnabled)
+            {
+                ReplaceFigure(template);
+                StatusMessage = $"已导入并应用用户模板 · {template.Name}";
+            }
+            else
+            {
+                StatusMessage = $"已导入用户模板 · {template.Name} · 当前拼版未重排";
+            }
+
+            LastError = null;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidDataException or
+            System.Text.Json.JsonException or NotSupportedException)
+        {
+            LastError = exception.Message;
+            StatusMessage = "模板导入失败 · 当前拼版未改变";
+        }
+    }
+
+    private async Task ExportBatchCropsAsync()
+    {
+        if (_batchExportFolderPicker is null || BatchCropQueue.Count == 0)
+        {
+            return;
+        }
+
+        string? folder = _batchExportFolderPicker.PickExportFolder();
+        if (folder is null)
+        {
+            return;
+        }
+
+        if (!Directory.Exists(folder))
+        {
+            LastError = "批量输出文件夹不存在。";
+            StatusMessage = "批量导出已停止";
+            return;
+        }
+
+        BatchCropQueueItemViewModel[] items = BatchCropQueue.ToArray();
+        HashSet<string> plannedPaths = new(StringComparer.OrdinalIgnoreCase);
+        List<string> errors = [];
+        int completed = 0;
+        IsBusy = true;
+        LastError = null;
+        StatusMessage = $"正在准备批量裁剪 · {items.Length} 项…";
+
+        try
+        {
+            for (int index = 0; index < items.Length; index++)
+            {
+                BatchCropQueueItemViewModel item = items[index];
+                try
+                {
+                    item.MarkValidating();
+                    SourceVerification verification = await _sourceReader.VerifyAsync(item.Source.Asset);
+                    if (verification.State != SourceLinkState.Verified)
+                    {
+                        throw new InvalidDataException(
+                            verification.Message ?? "源文件自导入后已变化，已跳过该队列项。");
+                    }
+
+                    if (!CropBoundsValidator.Validate(
+                            item.Crop,
+                            item.Source.Asset.Metadata.PixelSize).IsValid)
+                    {
+                        throw new InvalidDataException("裁剪区域已超出当前源图像边界。");
+                    }
+
+                    string targetPath = CreateBatchTargetPath(folder, item, index + 1, plannedPaths);
+                    ExportPathDecision decision = await _pathSafetyPolicy.ValidateExportTargetAsync(
+                        targetPath,
+                        Sources.Select(source => source.Asset).ToArray());
+                    if (!decision.IsAllowed || decision.NormalizedTargetPath is null)
+                    {
+                        throw new InvalidOperationException(decision.Message);
+                    }
+
+                    if (File.Exists(decision.NormalizedTargetPath))
+                    {
+                        throw new IOException("目标文件已存在，为保护科研数据未覆盖它。");
+                    }
+
+                    item.MarkExporting(decision.NormalizedTargetPath);
+                    await _cropExporter.ExportAsync(
+                        item.Source.OriginalPath,
+                        decision.NormalizedTargetPath,
+                        item.Crop);
+                    item.MarkCompleted(decision.NormalizedTargetPath);
+                    completed++;
+                }
+                catch (Exception exception) when (
+                    exception is IOException or UnauthorizedAccessException or InvalidDataException or
+                    NotSupportedException or InvalidOperationException)
+                {
+                    item.MarkFailed(exception.Message);
+                    errors.Add($"{item.DisplayName}：{exception.Message}");
+                }
+
+                StatusMessage = $"批量裁剪 {index + 1}/{items.Length} · 已完成 {completed} 项";
+            }
+
+            LastError = errors.Count == 0 ? null : string.Join(Environment.NewLine, errors);
+            StatusMessage = errors.Count == 0
+                ? $"批量裁剪完成 · {completed}/{items.Length} 项 · 原图未修改"
+                : $"批量裁剪完成 · {completed}/{items.Length} 项成功 · 失败项已保留在队列";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private static string CreateBatchTargetPath(
+        string folder,
+        BatchCropQueueItemViewModel item,
+        int sequence,
+        ISet<string> plannedPaths)
+    {
+        HashSet<char> invalidCharacters = Path.GetInvalidFileNameChars().ToHashSet();
+        string stem = string.Concat(
+                Path.GetFileNameWithoutExtension(item.DisplayName).Select(
+                    character => invalidCharacters.Contains(character) ? '_' : character))
+            .Trim();
+        if (string.IsNullOrWhiteSpace(stem))
+        {
+            stem = "image";
+        }
+
+        stem = stem.Length > 80 ? stem[..80] : stem;
+        string baseName = $"{stem}_crop_{item.Crop.Width}x{item.Crop.Height}_{sequence:000}";
+        string candidate = Path.Combine(folder, $"{baseName}.tif");
+        int suffix = 2;
+        while (File.Exists(candidate) || !plannedPaths.Add(candidate))
+        {
+            candidate = Path.Combine(folder, $"{baseName}_{suffix++}.tif");
+        }
+
+        return candidate;
+    }
     internal async Task AcceptSelectedSourceRevisionAsync()
     {
         SourceAssetItemViewModel? selected = SelectedSource;
@@ -631,6 +953,29 @@ public sealed class MainWindowViewModel : ObservableObject
         ExportFigureCommand.NotifyCanExecuteChanged();
     }
 
+    private void ReplaceSelectedPanelSource()
+    {
+        FigurePanelViewModel? panel = Figure.SelectedPanel;
+        SourceAssetItemViewModel? source = SelectedSource;
+        if (panel is null || source is null || !Crop.TryGetCrop(out PixelRect64 crop))
+        {
+            LastError = "请选择源图和有效裁剪区域，再替换选中面板。";
+            return;
+        }
+
+        try
+        {
+            panel.ReplaceSource(source, crop);
+            LastError = null;
+            StatusMessage = $"已将面板 {panel.Label} 替换为 {source.DisplayName} · 原图未修改";
+            CompleteHistoryGesture();
+        }
+        catch (InvalidOperationException exception)
+        {
+            LastError = exception.Message;
+            StatusMessage = "面板替换已阻止";
+        }
+    }
     private async Task ExportFigureAsync()
     {
         if (Figure.Panels.Count == 0)
@@ -639,8 +984,8 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
-        string suggestedName = $"figure_{Figure.Template.Id.Split('.').Last()}_{DateTime.Now:yyyyMMdd_HHmm}.tif";
-        string? requestedPath = _exportFilePicker.PickNewExportPath(suggestedName);
+        string suggestedName = $"figure_{Figure.Template.Id.Split('.').Last()}_{DateTime.Now:yyyyMMdd_HHmm}";
+        string? requestedPath = _exportFilePicker.PickNewFigureExportPath(suggestedName);
         if (requestedPath is null)
         {
             return;
@@ -684,11 +1029,40 @@ public sealed class MainWindowViewModel : ObservableObject
                 return;
             }
 
+            FigureExportDocument exportDocument = Figure.CreateExportDocument();
+            FigurePreflightResult preflight = FigurePreflight.Check(
+                exportDocument,
+                Sources.Select(item => item.Asset).ToArray(),
+                IsDirty);
+            if (preflight.HasErrors)
+            {
+                LastError = string.Join(Environment.NewLine, preflight.Issues
+                    .Where(issue => issue.Severity == FigurePreflightSeverity.Error)
+                    .Select(issue => issue.Message));
+                StatusMessage = $"拼版导出已阻止 · {preflight.Summary}";
+                return;
+            }
+
             StatusMessage = $"正在以原始像素渲染 {Figure.Panels.Count} 个面板…";
-            await _figureExporter.ExportAsync(
-                Figure.CreateExportDocument(),
-                decision.NormalizedTargetPath);
-            StatusMessage = $"拼版导出完成 · {Path.GetFileName(decision.NormalizedTargetPath)} · 原图未修改";
+            await _figureExporter.ExportAsync(exportDocument, decision.NormalizedTargetPath);
+            string provenancePath = Path.ChangeExtension(decision.NormalizedTargetPath, ".provenance.json");
+            string reportPath = Path.ChangeExtension(decision.NormalizedTargetPath, ".export-report.html");
+            FigureProvenanceDocument provenance = FigureProvenanceWriter.Create(
+                exportDocument,
+                decision.NormalizedTargetPath,
+                typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "0.9.0",
+                Sources.Select(item => item.Asset).ToArray(),
+                preflight);
+            try
+            {
+                FigureProvenanceWriter.WriteJson(provenance, provenancePath);
+                FigureProvenanceWriter.WriteHtml(provenance, reportPath);
+            }
+            catch (IOException exception)
+            {
+                LastError = $"主图已导出，但溯源报告写入失败：{exception.Message}";
+            }
+            StatusMessage = $"拼版导出完成 · {Path.GetFileName(decision.NormalizedTargetPath)} · 已生成溯源报告 · 原图未修改";
         }
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException or NotSupportedException or InvalidOperationException)
@@ -702,6 +1076,163 @@ public sealed class MainWindowViewModel : ObservableObject
         }
     }
 
+    private async Task ExportFigureVariantsAsync()
+    {
+        if (_batchExportFolderPicker is null || Figure.Panels.Count == 0)
+        {
+            return;
+        }
+
+        string? folder = _batchExportFolderPicker.PickExportFolder();
+        if (folder is null)
+        {
+            return;
+        }
+
+        if (!Directory.Exists(folder))
+        {
+            LastError = "批量输出文件夹不存在。";
+            StatusMessage = "投稿版本导出已停止";
+            return;
+        }
+
+        SourceAsset[] figureSources = Figure.Panels
+            .Select(panel => panel.Source.Asset)
+            .DistinctBy(source => source.Id)
+            .ToArray();
+        FigureExportDocument baseDocument = Figure.CreateExportDocument();
+        HashSet<string> plannedPaths = new(StringComparer.OrdinalIgnoreCase);
+        List<string> errors = [];
+        List<string> warnings = [];
+        int completed = 0;
+        IsBusy = true;
+        LastError = null;
+        StatusMessage = $"正在准备 {FigureExportProfile.BuiltIns.Count} 个投稿版本…";
+
+        try
+        {
+            foreach (SourceAsset source in figureSources)
+            {
+                SourceVerification verification = await _sourceReader.VerifyAsync(source);
+                if (verification.State != SourceLinkState.Verified)
+                {
+                    LastError = $"{source.DisplayName}：{verification.Message ?? "源文件验证失败。"}";
+                    StatusMessage = "投稿版本导出已停止 · 源文件验证失败";
+                    return;
+                }
+            }
+
+            foreach (FigureExportProfile profile in FigureExportProfile.BuiltIns)
+            {
+                try
+                {
+                    FigureExportDocument variant = profile.Apply(baseDocument);
+                    FigurePreflightResult preflight = FigurePreflight.Check(
+                        variant,
+                        figureSources,
+                        IsDirty);
+                    if (preflight.HasErrors)
+                    {
+                        throw new InvalidDataException(string.Join(Environment.NewLine, preflight.Issues
+                            .Where(issue => issue.Severity == FigurePreflightSeverity.Error)
+                            .Select(issue => issue.Message)));
+                    }
+
+                    string requestedPath = CreateFigureVariantTargetPath(
+                        folder,
+                        Figure.Template.Id,
+                        profile,
+                        plannedPaths);
+                    ExportPathDecision decision = await _pathSafetyPolicy.ValidateExportTargetAsync(
+                        requestedPath,
+                        Sources.Select(item => item.Asset).ToArray());
+                    if (!decision.IsAllowed || decision.NormalizedTargetPath is null)
+                    {
+                        throw new InvalidOperationException(decision.Message);
+                    }
+
+                    if (File.Exists(decision.NormalizedTargetPath))
+                    {
+                        throw new IOException("目标文件已存在，为保护科研数据未覆盖它。");
+                    }
+
+                    StatusMessage = $"正在导出 {profile.Name} · {variant.WidthPixels:N0}×{variant.HeightPixels:N0} px…";
+                    await _figureExporter.ExportAsync(variant, decision.NormalizedTargetPath);
+                    if (profile.WriteProvenance)
+                    {
+                        FigureProvenanceDocument provenance = FigureProvenanceWriter.Create(
+                            variant,
+                            decision.NormalizedTargetPath,
+                            typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "0.9.0",
+                            figureSources,
+                            preflight,
+                            profile.Id,
+                            profile.Name);
+                        try
+                        {
+                            FigureProvenanceWriter.WriteJson(
+                                provenance,
+                                Path.ChangeExtension(decision.NormalizedTargetPath, ".provenance.json"));
+                            FigureProvenanceWriter.WriteHtml(
+                                provenance,
+                                Path.ChangeExtension(decision.NormalizedTargetPath, ".export-report.html"));
+                        }
+                        catch (IOException exception)
+                        {
+                            warnings.Add($"{profile.Name} 溯源报告写入失败：{exception.Message}");
+                        }
+                    }
+
+                    completed++;
+                }
+                catch (Exception exception) when (
+                    exception is IOException or UnauthorizedAccessException or InvalidDataException or
+                    NotSupportedException or InvalidOperationException)
+                {
+                    errors.Add($"{profile.Name}：{exception.Message}");
+                }
+            }
+
+            LastError = errors.Count == 0
+                ? warnings.Count == 0 ? null : string.Join(Environment.NewLine, warnings)
+                : string.Join(Environment.NewLine, errors.Concat(warnings));
+            StatusMessage = errors.Count == 0
+                ? $"投稿版本导出完成 · {completed}/{FigureExportProfile.BuiltIns.Count} 项 · 主图/补充图/缩略图均未覆盖原文件"
+                : $"投稿版本导出完成 · {completed}/{FigureExportProfile.BuiltIns.Count} 项成功 · 失败项已保留，原图未修改";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private static string CreateFigureVariantTargetPath(
+        string folder,
+        string templateId,
+        FigureExportProfile profile,
+        ISet<string> plannedPaths)
+    {
+        HashSet<char> invalidCharacters = Path.GetInvalidFileNameChars().ToHashSet();
+        string templateStem = string.Concat(templateId.Select(
+                character => invalidCharacters.Contains(character) ? '_' : character))
+            .Trim();
+        if (string.IsNullOrWhiteSpace(templateStem))
+        {
+            templateStem = "figure";
+        }
+
+        string suffix = string.Concat(profile.Id.Select(
+            character => invalidCharacters.Contains(character) ? '_' : character));
+        string baseName = $"figure_{templateStem}_{suffix}";
+        string candidate = Path.GetFullPath(Path.Combine(folder, baseName + profile.Extension));
+        int attempt = 2;
+        while (!plannedPaths.Add(candidate))
+        {
+            candidate = Path.GetFullPath(Path.Combine(folder, $"{baseName}_{attempt++}{profile.Extension}"));
+        }
+
+        return candidate;
+    }
     private async Task SaveProjectAsync()
     {
         if (_projectPath is null)
@@ -726,6 +1257,9 @@ public sealed class MainWindowViewModel : ObservableObject
         try
         {
             Sources.Clear();
+            BatchCropQueue.Clear();
+            SelectedBatchCrop = null;
+            OnPropertyChanged(nameof(BatchCropQueueSummary));
             ReplaceFigure(_selectedFigureTemplate, markDirty: false);
             SelectedSource = null;
             Crop.Reset();
@@ -1081,6 +1615,9 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             ReplaceFigure(projectTemplate, markDirty: false);
             Sources.Clear();
+            BatchCropQueue.Clear();
+            SelectedBatchCrop = null;
+            OnPropertyChanged(nameof(BatchCropQueueSummary));
             foreach (SourceAssetItemViewModel source in restoredSources)
             {
                 Sources.Add(source);
@@ -1104,6 +1641,11 @@ public sealed class MainWindowViewModel : ObservableObject
                     throw new InvalidDataException($"图层 {layer.Name} 的裁剪区域超出源图边界。");
                 }
 
+                if (layer.FrameIndex < 0 || layer.FrameIndex >= source.FrameCount)
+                {
+                    throw new InvalidDataException($"图层 {layer.Name} 引用了不存在的图像帧 {layer.FrameIndex + 1}。");
+                }
+
                 string? slotId = layerSlots.GetValueOrDefault(layer.Id) ??
                                  Figure.Template.Slots.ElementAtOrDefault(layerIndex)?.Id;
                 if (slotId is null)
@@ -1125,7 +1667,10 @@ public sealed class MainWindowViewModel : ObservableObject
                     destination,
                     layer.Visible,
                     layer.Locked,
-                    layer.ZIndex);
+                    layer.ZIndex,
+                    layer.Adjustments.Count == 0 ? null : ToAdjustment(layer.Adjustments[0]),
+                    layer.FrameIndex,
+                    layer.LockAspectRatio);
                 if (restored is null)
                 {
                     throw new InvalidDataException($"无法恢复图层 {layer.Name} 的模板插槽。");
@@ -1360,6 +1905,8 @@ public sealed class MainWindowViewModel : ObservableObject
             nameof(CropEditorViewModel.Width) or nameof(CropEditorViewModel.Height))
         {
             AddCurrentCropToFigureCommand.NotifyCanExecuteChanged();
+            AddCurrentCropToBatchQueueCommand.NotifyCanExecuteChanged();
+            ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
             MarkDirty();
         }
     }
@@ -1368,7 +1915,9 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(IsTemplateSelectionEnabled));
         ExportFigureCommand.NotifyCanExecuteChanged();
+        ExportFigureVariantsCommand.NotifyCanExecuteChanged();
         AddCurrentCropToFigureCommand.NotifyCanExecuteChanged();
+        ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
         MarkDirty();
     }
 
@@ -1379,14 +1928,25 @@ public sealed class MainWindowViewModel : ObservableObject
         string? templateId = document.TemplateSnapshot?.TemplateId;
         if (string.IsNullOrWhiteSpace(templateId))
         {
-            return _figureTemplates[0];
+            return AvailableTemplates[0];
         }
 
-        return _figureTemplates.FirstOrDefault(
+        return AvailableTemplates.FirstOrDefault(
                    template => string.Equals(template.Id, templateId, StringComparison.Ordinal))
                ?? throw new NotSupportedException($"工程使用模板 {templateId}，当前版本尚未安装该模板。");
     }
 
+    private static ImageAdjustmentParameters ToAdjustment(ProjectImageAdjustmentSnapshot snapshot) => new()
+    {
+        Brightness = snapshot.Brightness,
+        Contrast = snapshot.Contrast,
+        Gamma = snapshot.Gamma,
+        BlackPoint = snapshot.BlackPoint,
+        WhitePoint = snapshot.WhitePoint,
+        Invert = snapshot.Invert,
+        Grayscale = snapshot.Grayscale,
+        Channel = snapshot.Channel,
+    };
     private static FigureAnnotationKind ParseAnnotationKind(string? kind) =>
         kind?.ToLowerInvariant() switch
         {
@@ -1489,7 +2049,10 @@ public sealed class MainWindowViewModel : ObservableObject
                     panel.PhysicalUnitsPerSourcePixel,
                     panel.ScaleBarPhysicalLength,
                     panel.ScaleBarUnit,
-                    panel.ScaleBarShowLabel))
+                    panel.ScaleBarShowLabel,
+                    panel.FrameIndex,
+                    panel.Adjustments,
+                    panel.IsAspectRatioLocked))
                 .ToArray(),
             Figure.Annotations
                 .OrderBy(annotation => annotation.ZIndex)
@@ -1526,7 +2089,7 @@ public sealed class MainWindowViewModel : ObservableObject
             throw new InvalidOperationException("源图像集合已变化，不能应用这一步历史记录。");
         }
 
-        FigureTemplateDefinition template = _figureTemplates.FirstOrDefault(
+        FigureTemplateDefinition template = AvailableTemplates.FirstOrDefault(
                 item => string.Equals(item.Id, snapshot.TemplateId, StringComparison.Ordinal))
             ?? throw new InvalidDataException($"历史记录引用了未安装的模板 {snapshot.TemplateId}。");
         Dictionary<Guid, SourceAssetItemViewModel> sourceMap = Sources.ToDictionary(
@@ -1551,7 +2114,10 @@ public sealed class MainWindowViewModel : ObservableObject
                     panelSnapshot.DestinationRect,
                     panelSnapshot.IsVisible,
                     panelSnapshot.IsLocked,
-                    panelSnapshot.ZIndex)
+                    panelSnapshot.ZIndex,
+                    panelSnapshot.Adjustments,
+                    panelSnapshot.FrameIndex,
+                    panelSnapshot.IsAspectRatioLocked)
                     ?? throw new InvalidOperationException("无法恢复历史记录中的拼版面板。");
                 restored.PhysicalUnitsPerSourcePixel = panelSnapshot.PhysicalUnitsPerSourcePixel;
                 restored.Label = panelSnapshot.Label;

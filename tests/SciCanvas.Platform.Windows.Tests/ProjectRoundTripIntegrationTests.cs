@@ -39,6 +39,7 @@ public sealed class ProjectRoundTripIntegrationTests
         panel.X = 111;
         panel.Y = 222;
         panel.IsLocked = true;
+        panel.IsAspectRatioLocked = false;
         panel.IsVisible = false;
         panel.PhysicalUnitsPerSourcePixel = 0.25;
         panel.ScaleBarPhysicalLength = 2;
@@ -111,6 +112,7 @@ public sealed class ProjectRoundTripIntegrationTests
         Assert.Equal(111, restoredPanel.X);
         Assert.Equal(222, restoredPanel.Y);
         Assert.True(restoredPanel.IsLocked);
+        Assert.False(restoredPanel.IsAspectRatioLocked);
         Assert.False(restoredPanel.IsVisible);
         Assert.True(restoredPanel.ShowScaleBar);
         Assert.Equal(0.25, restoredPanel.PhysicalUnitsPerSourcePixel);

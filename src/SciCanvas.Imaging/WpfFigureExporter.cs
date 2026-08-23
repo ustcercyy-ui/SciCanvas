@@ -29,6 +29,13 @@ public sealed class WpfFigureExporter : IFigureExporter
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        string extension = Path.GetExtension(targetPath).ToLowerInvariant();
+        if (extension is ".svg" or ".pdf")
+        {
+            WpfEditableFigureExporter.Export(document, targetPath, extension, cancellationToken);
+            return;
+        }
+
 
         var visual = new DrawingVisual();
         using (DrawingContext drawing = visual.RenderOpen())
@@ -47,7 +54,8 @@ public sealed class WpfFigureExporter : IFigureExporter
                 cancellationToken.ThrowIfCancellationRequested();
                 ValidatePanel(panel, document);
 
-                BitmapSource cropped = LoadExactCrop(panel.Source.OriginalPath, panel.SourceRect);
+                BitmapSource cropped = LoadExactCrop(panel.Source.OriginalPath, panel.SourceRect, panel.FrameIndex);
+                cropped = WpfImageAdjustmentProcessor.Apply(cropped, panel.Adjustments);
                 Rect imageRect = CalculateContainedRect(
                     cropped.PixelWidth,
                     cropped.PixelHeight,
@@ -105,7 +113,7 @@ public sealed class WpfFigureExporter : IFigureExporter
         }
     }
 
-    private static BitmapSource LoadExactCrop(string sourcePath, PixelRect64 crop)
+    internal static BitmapSource LoadExactCrop(string sourcePath, PixelRect64 crop, int frameIndex = 0)
     {
         if (crop.X > int.MaxValue || crop.Y > int.MaxValue ||
             crop.Width > int.MaxValue || crop.Height > int.MaxValue)
@@ -126,7 +134,12 @@ public sealed class WpfFigureExporter : IFigureExporter
                 input,
                 BitmapCreateOptions.PreservePixelFormat,
                 BitmapCacheOption.OnLoad);
-            frame = decoder.Frames[0];
+            if (frameIndex < 0 || frameIndex >= decoder.Frames.Count)
+            {
+                throw new InvalidOperationException($"源图像只有 {decoder.Frames.Count} 帧，无法读取第 {frameIndex + 1} 帧。");
+            }
+
+            frame = decoder.Frames[frameIndex];
             frame.Freeze();
         }
 
@@ -142,7 +155,7 @@ public sealed class WpfFigureExporter : IFigureExporter
         return cropped;
     }
 
-    private static Rect CalculateContainedRect(
+    internal static Rect CalculateContainedRect(
         int imageWidth,
         int imageHeight,
         PixelRect64 destination)
@@ -336,7 +349,7 @@ public sealed class WpfFigureExporter : IFigureExporter
         drawing.DrawGeometry(brush, null, head);
     }
 
-    private static void ValidatePanel(FigurePanelExportItem panel, FigureExportDocument document)
+    internal static void ValidatePanel(FigurePanelExportItem panel, FigureExportDocument document)
     {
         if (panel.DestinationRect.Right > document.WidthPixels ||
             panel.DestinationRect.Bottom > document.HeightPixels)
@@ -357,7 +370,7 @@ public sealed class WpfFigureExporter : IFigureExporter
         }
     }
 
-    private static void ValidateAnnotation(
+    internal static void ValidateAnnotation(
         FigureAnnotationExportItem annotation,
         FigureExportDocument document)
     {
@@ -389,7 +402,7 @@ public sealed class WpfFigureExporter : IFigureExporter
         _ = ParseColor(annotation.Color);
     }
 
-    private static Color ParseColor(string value)
+    internal static Color ParseColor(string value)
     {
         string hex = value?.Trim().TrimStart('#') ?? string.Empty;
         if (hex.Length is not (6 or 8) ||

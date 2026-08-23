@@ -43,7 +43,7 @@ public sealed class BuiltInTemplateCatalog
         return templates;
     }
 
-    private static void Validate(FigureTemplateDefinition template)
+    internal static void Validate(FigureTemplateDefinition template)
     {
         if (string.IsNullOrWhiteSpace(template.Id) ||
             string.IsNullOrWhiteSpace(template.Name) ||

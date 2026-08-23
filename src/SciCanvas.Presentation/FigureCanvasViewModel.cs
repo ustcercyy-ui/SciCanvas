@@ -677,7 +677,10 @@ public sealed class FigureCanvasViewModel : ObservableObject
         PixelRect64 destinationRect,
         bool isVisible,
         bool isLocked,
-        int zIndex)
+        int zIndex,
+        SciCanvas.Core.Images.ImageAdjustmentParameters? adjustments = null,
+        int frameIndex = 0,
+        bool? lockAspectRatio = null)
     {
         TemplateSlotLayout? slot = _layout.Slots.FirstOrDefault(
             candidate => string.Equals(candidate.Id, slotId, StringComparison.Ordinal));
@@ -690,11 +693,12 @@ public sealed class FigureCanvasViewModel : ObservableObject
         {
             X = destinationRect.X,
             Y = destinationRect.Y,
-            Width = destinationRect.Width,
-            Height = destinationRect.Height,
             IsVisible = isVisible,
             IsLocked = isLocked,
+            Adjustments = adjustments ?? new(),
+            FrameIndex = frameIndex,
         };
+        panel.RestoreDestinationSize(destinationRect, lockAspectRatio ?? slot.LockAspectRatio);
         panel.PropertyChanged += OnPanelPropertyChanged;
         Panels.Add(panel);
         SelectedPanel = panel;
@@ -752,7 +756,9 @@ public sealed class FigureCanvasViewModel : ObservableObject
                 panel.DestinationRect,
                 ShowPanelLabels ? panel.Label : string.Empty,
                 panel.IsVisible,
-                panel.CreateScaleBarExportSpec()))
+                panel.CreateScaleBarExportSpec(),
+                panel.Adjustments,
+                panel.FrameIndex))
             .ToArray();
         FigureAnnotationExportItem[] annotations = Annotations
             .OrderBy(annotation => annotation.ZIndex)
@@ -1257,10 +1263,13 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
     private void OnPanelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(FigurePanelViewModel.X) or
+        if (e.PropertyName is nameof(FigurePanelViewModel.Source) or
+            nameof(FigurePanelViewModel.SourceRect) or
+            nameof(FigurePanelViewModel.X) or
             nameof(FigurePanelViewModel.Y) or
             nameof(FigurePanelViewModel.Width) or
             nameof(FigurePanelViewModel.Height) or
+            nameof(FigurePanelViewModel.IsAspectRatioLocked) or
             nameof(FigurePanelViewModel.IsVisible) or
             nameof(FigurePanelViewModel.IsLocked) or
             nameof(FigurePanelViewModel.ZIndex) or
@@ -1269,12 +1278,23 @@ public sealed class FigureCanvasViewModel : ObservableObject
             nameof(FigurePanelViewModel.ScaleBarPhysicalLength) or
             nameof(FigurePanelViewModel.ScaleBarUnit) or
             nameof(FigurePanelViewModel.ScaleBarShowLabel) or
+            nameof(FigurePanelViewModel.Adjustments) or
+            nameof(FigurePanelViewModel.Brightness) or
+            nameof(FigurePanelViewModel.Contrast) or
+            nameof(FigurePanelViewModel.Gamma) or
+            nameof(FigurePanelViewModel.BlackPoint) or
+            nameof(FigurePanelViewModel.WhitePoint) or
+            nameof(FigurePanelViewModel.Invert) or
+            nameof(FigurePanelViewModel.Grayscale) or
+            nameof(FigurePanelViewModel.Channel) or
             nameof(FigurePanelViewModel.Label))
         {
             DocumentChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        if (e.PropertyName is nameof(FigurePanelViewModel.X) or
+        if (e.PropertyName is nameof(FigurePanelViewModel.Source) or
+            nameof(FigurePanelViewModel.SourceRect) or
+            nameof(FigurePanelViewModel.X) or
             nameof(FigurePanelViewModel.Y) or
             nameof(FigurePanelViewModel.Width) or
             nameof(FigurePanelViewModel.Height))
