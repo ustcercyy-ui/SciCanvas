@@ -105,7 +105,7 @@ public sealed class JsonProjectStore : IProjectStore
 
     private static void Validate(SciCanvasProjectDocument document)
     {
-        if (document.SchemaVersion is not ("0.1" or "0.9"))
+        if (document.SchemaVersion is not ("0.1" or "0.9" or "1.1" or "1.2"))
         {
             throw new NotSupportedException($"暂不支持工程版本 {document.SchemaVersion}。");
         }
@@ -148,6 +148,50 @@ public sealed class JsonProjectStore : IProjectStore
             }
         }
 
+        foreach (ProjectCalibrationSnapshot calibration in document.Calibrations)
+        {
+            if (!sourceIds.Contains(calibration.SourceAssetId) ||
+                !double.IsFinite(calibration.UnitsPerPixelX) || calibration.UnitsPerPixelX < 0 ||
+                !double.IsFinite(calibration.UnitsPerPixelY) || calibration.UnitsPerPixelY < 0 ||
+                string.IsNullOrWhiteSpace(calibration.Unit))
+            {
+                throw new InvalidDataException("工程包含无效的源图尺度标定记录。");
+            }
+        }
+
+        if (document.Calibrations.Select(item => item.SourceAssetId).Distinct().Count() !=
+            document.Calibrations.Count)
+        {
+            throw new InvalidDataException("同一源图像存在重复的尺度标定记录。");
+        }
+
+        foreach (ProjectMeasurementSnapshot measurement in document.Measurements)
+        {
+            bool coordinatesFinite =
+                double.IsFinite(measurement.X1) && double.IsFinite(measurement.Y1) &&
+                double.IsFinite(measurement.X2) && double.IsFinite(measurement.Y2) &&
+                (!measurement.X3.HasValue || double.IsFinite(measurement.X3.Value)) &&
+                (!measurement.Y3.HasValue || double.IsFinite(measurement.Y3.Value));
+            bool pathValid = measurement.Points.All(point =>
+                double.IsFinite(point.X) && double.IsFinite(point.Y));
+            if (measurement.Id == Guid.Empty ||
+                !sourceIds.Contains(measurement.SourceAssetId) ||
+                !coordinatesFinite ||
+                !pathValid ||
+                (string.Equals(measurement.Kind, "polyline", StringComparison.OrdinalIgnoreCase) &&
+                 measurement.Points.Count < 2) ||
+                !double.IsFinite(measurement.StrokeWidthPixels) ||
+                measurement.StrokeWidthPixels is < 1 or > 12)
+            {
+                throw new InvalidDataException("工程包含无效的科学测量记录。");
+            }
+        }
+
+        if (document.Measurements.Select(item => item.Id).Distinct().Count() != document.Measurements.Count)
+        {
+            throw new InvalidDataException("工程包含重复的科学测量 ID。");
+        }
+
         foreach (ProjectGuideSnapshot guide in document.Guides)
         {
             bool vertical = string.Equals(guide.Orientation, "vertical", StringComparison.OrdinalIgnoreCase);
@@ -168,6 +212,36 @@ public sealed class JsonProjectStore : IProjectStore
         {
             throw new InvalidDataException("工程包含无效的吸附或精确间距设置。");
         }
+
+        if (document.TemplateSnapshot?.GlobalStyle is { } style &&
+            (string.IsNullOrWhiteSpace(style.FontFamily) || style.FontFamily.Length > 128 ||
+             !double.IsFinite(style.FontSizePt) || style.FontSizePt is < 4 or > 72 ||
+             !double.IsFinite(style.StrokeWidthPt) || style.StrokeWidthPt is < 0.25 or > 10 ||
+             !IsHexColor(style.TextColor) || !IsHexColor(style.ShapeColor) ||
+             !IsHexColor(style.ScaleBarColor)))
+        {
+            throw new InvalidDataException("工程包含无效的全局图样式。字体须为 4–72 pt，线宽须为 0.25–10 pt，颜色须为 HEX。 ");
+        }
+
+        ProjectScientificColorSnapshot[] scientificColors =
+            document.TemplateSnapshot?.ScientificColors.ToArray() ?? [];
+        if (scientificColors.Any(color =>
+                color.Id == Guid.Empty ||
+                string.IsNullOrWhiteSpace(color.Name) ||
+                color.Name.Trim().Length > 64 ||
+                !IsHexColor(color.Color)) ||
+            scientificColors.Select(color => color.Id).Distinct().Count() != scientificColors.Length ||
+            scientificColors.Select(color => color.Name.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() != scientificColors.Length)
+        {
+            throw new InvalidDataException("工程包含无效或重复的科研颜色字典条目。");
+        }
+    }
+
+    private static bool IsHexColor(string? value)
+    {
+        string hex = value?.Trim().TrimStart('#') ?? string.Empty;
+        return hex.Length is 6 or 8 && hex.All(Uri.IsHexDigit);
     }
 
     private static void TryDeleteTemporaryFile(string path)

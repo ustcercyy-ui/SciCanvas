@@ -11,6 +11,7 @@ public partial class MainWindow : Window
     private Point _anchor;
     private double _moveOffsetX;
     private double _moveOffsetY;
+    private bool _scientificGestureActive;
     private FigurePanelViewModel? _draggedFigurePanel;
     private Point _figureDragAnchor;
     private FigurePanelViewModel? _resizingFigurePanel;
@@ -35,6 +36,21 @@ public partial class MainWindow : Window
         }
 
         Point position = ClampToSource(e.GetPosition(ImageCanvas), viewModel);
+        if (viewModel.ActiveScienceTool != ScientificToolMode.Crop)
+        {
+            _scientificGestureActive = viewModel.BeginScientificGesture(
+                position.X,
+                position.Y,
+                finishMultiPoint: e.ClickCount > 1);
+            if (_scientificGestureActive)
+            {
+                ImageCanvas.CaptureMouse();
+            }
+
+            e.Handled = true;
+            return;
+        }
+
         bool moveExisting = ReferenceEquals(e.OriginalSource, CropOverlay);
 
         if (moveExisting)
@@ -59,6 +75,16 @@ public partial class MainWindow : Window
 
     private void ImageCanvas_OnMouseMove(object sender, MouseEventArgs e)
     {
+        if (_scientificGestureActive &&
+            e.LeftButton == MouseButtonState.Pressed &&
+            DataContext is MainWindowViewModel { SelectedSource: not null } scienceViewModel)
+        {
+            Point sciencePosition = ClampToSource(e.GetPosition(ImageCanvas), scienceViewModel);
+            scienceViewModel.UpdateScientificGesture(sciencePosition.X, sciencePosition.Y);
+            e.Handled = true;
+            return;
+        }
+
         if (_gesture == CropGesture.None ||
             e.LeftButton != MouseButtonState.Pressed ||
             DataContext is not MainWindowViewModel { SelectedSource: not null } viewModel)
@@ -95,12 +121,30 @@ public partial class MainWindow : Window
 
     private void ImageCanvas_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        if (_scientificGestureActive)
+        {
+            EndScientificGesture();
+            e.Handled = true;
+            return;
+        }
+
         EndGesture();
         e.Handled = true;
     }
 
     private void ImageCanvas_OnLostMouseCapture(object sender, MouseEventArgs e)
     {
+        if (_scientificGestureActive)
+        {
+            _scientificGestureActive = false;
+            if (DataContext is MainWindowViewModel scienceViewModel)
+            {
+                scienceViewModel.CompleteScientificGesture();
+            }
+
+            return;
+        }
+
         _gesture = CropGesture.None;
         if (DataContext is MainWindowViewModel viewModel)
         {
@@ -119,6 +163,20 @@ public partial class MainWindow : Window
         if (DataContext is MainWindowViewModel viewModel)
         {
             viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void EndScientificGesture()
+    {
+        _scientificGestureActive = false;
+        if (ImageCanvas.IsMouseCaptured)
+        {
+            ImageCanvas.ReleaseMouseCapture();
+        }
+
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.CompleteScientificGesture();
         }
     }
 

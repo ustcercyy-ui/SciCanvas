@@ -7,7 +7,7 @@ public sealed class SciCanvasProjectDocument
     [JsonPropertyName("$schema")]
     public string Schema { get; init; } = "https://scicanvas.org/schemas/scicanvas-project.schema.json";
 
-    public string SchemaVersion { get; init; } = "0.9";
+    public string SchemaVersion { get; init; } = "1.2";
 
     public Guid ProjectId { get; init; }
 
@@ -28,6 +28,10 @@ public sealed class SciCanvasProjectDocument
     public IReadOnlyList<ProjectGuideSnapshot> Guides { get; init; } = [];
 
     public IReadOnlyList<ProjectExportProfileSnapshot> ExportProfiles { get; init; } = [];
+
+    public IReadOnlyList<ProjectCalibrationSnapshot> Calibrations { get; init; } = [];
+
+    public IReadOnlyList<ProjectMeasurementSnapshot> Measurements { get; init; } = [];
 
     public ProjectTemplateSnapshot? TemplateSnapshot { get; init; }
 
@@ -98,6 +102,26 @@ public sealed class ProjectImageMetadataSnapshot
     public string? PhysicalUnit { get; init; }
 
     public string? IccProfileName { get; init; }
+    public ProjectOmeMetadataSnapshot? Ome { get; init; }
+}
+
+public sealed class ProjectOmeMetadataSnapshot
+{
+    public string DimensionOrder { get; init; } = string.Empty;
+    public string PixelType { get; init; } = string.Empty;
+    public int SizeZ { get; init; } = 1;
+    public int SizeC { get; init; } = 1;
+    public int SizeT { get; init; } = 1;
+    public double? PhysicalSizeX { get; init; }
+    public double? PhysicalSizeY { get; init; }
+    public double? PhysicalSizeZ { get; init; }
+    public string? PhysicalSizeXUnit { get; init; }
+    public string? PhysicalSizeYUnit { get; init; }
+    public string? PhysicalSizeZUnit { get; init; }
+    public double? TimeIncrement { get; init; }
+    public string? TimeIncrementUnit { get; init; }
+    public IReadOnlyList<string> ChannelNames { get; init; } = [];
+    public string XmlSha256 { get; init; } = string.Empty;
 }
 
 public sealed class ProjectImageLayerSnapshot
@@ -126,6 +150,8 @@ public sealed class ProjectImageLayerSnapshot
 
     /// <summary>Whether editing this panel keeps its source crop aspect ratio.</summary>
     public bool LockAspectRatio { get; init; } = true;
+
+    public Guid? CropLinkGroupId { get; init; }
 
     public ProjectTransformSnapshot Transform { get; init; } = new();
 
@@ -219,6 +245,65 @@ public sealed class ProjectExportProfileSnapshot
     public bool WriteAuditReport { get; init; }
 }
 
+public sealed class ProjectCalibrationSnapshot
+{
+    public Guid SourceAssetId { get; init; }
+
+    public double UnitsPerPixelX { get; init; }
+
+    public double UnitsPerPixelY { get; init; }
+
+    public string Unit { get; init; } = "µm";
+
+    public string Origin { get; init; } = "none";
+
+    public double? ReferencePixelLength { get; init; }
+
+    public double? ReferencePhysicalLength { get; init; }
+
+    public double ReferenceStartX { get; init; }
+
+    public double ReferenceStartY { get; init; }
+
+    public double ReferenceEndX { get; init; }
+
+    public double ReferenceEndY { get; init; }
+}
+
+public sealed class ProjectMeasurementSnapshot
+{
+    public Guid Id { get; init; }
+
+    public Guid SourceAssetId { get; init; }
+
+    public string Kind { get; init; } = "length";
+
+    public double X1 { get; init; }
+
+    public double Y1 { get; init; }
+
+    public double X2 { get; init; }
+
+    public double Y2 { get; init; }
+
+    public double? X3 { get; init; }
+
+    public double? Y3 { get; init; }
+
+    public string StrokeColor { get; init; } = "#FF22C7E8";
+
+    public double StrokeWidthPixels { get; init; } = 3;
+
+    public IReadOnlyList<ProjectMeasurementPointSnapshot> Points { get; init; } = [];
+}
+
+public sealed class ProjectMeasurementPointSnapshot
+{
+    public double X { get; init; }
+
+    public double Y { get; init; }
+}
+
 public sealed class ProjectTemplateSnapshot
 {
     public string TemplateId { get; init; } = string.Empty;
@@ -252,6 +337,34 @@ public sealed class ProjectTemplateSnapshot
         new Dictionary<Guid, ProjectScaleBarSnapshot>();
 
     public IReadOnlyList<ProjectAnnotationSnapshot> Annotations { get; init; } = [];
+
+    public ProjectGlobalStyleSnapshot? GlobalStyle { get; init; }
+
+    public IReadOnlyList<ProjectScientificColorSnapshot> ScientificColors { get; init; } = [];
+}
+
+public sealed class ProjectGlobalStyleSnapshot
+{
+    public string FontFamily { get; init; } = "Arial";
+
+    public double FontSizePt { get; init; } = 7;
+
+    public double StrokeWidthPt { get; init; } = 1.25;
+
+    public string TextColor { get; init; } = "#FF111111";
+
+    public string ShapeColor { get; init; } = "#FFE53935";
+
+    public string ScaleBarColor { get; init; } = "#FFFFFFFF";
+}
+
+public sealed class ProjectScientificColorSnapshot
+{
+    public Guid Id { get; init; }
+
+    public string Name { get; init; } = string.Empty;
+
+    public string Color { get; init; } = "#FF000000";
 }
 
 public sealed class ProjectScaleBarSnapshot

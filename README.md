@@ -2,7 +2,7 @@
 
 SciCanvas 是一款面向材料科学与实验研究人员的 Windows 本地图像裁剪、拼接和论文组图软件。它以像素准确、非破坏编辑、源文件保护和可追溯导出为首要原则。
 
-当前仓库已经包含可运行的 WPF 工作台、科研比例尺、文字/箭头/形状标注层、面板多选排版、材料组图模板库，以及产品规格、工程架构、模板 Schema 和自动化测试。
+当前仓库已经包含可运行的 WPF 工作台、源图级 X/Y 标定、科学测量与统计、Figure QC、可审计辅助分析、项目科研颜色字典、投稿导出、CLI 和 Windows 安装器。
 
 ## 当前可用
 
@@ -28,7 +28,8 @@ SciCanvas 是一款面向材料科学与实验研究人员的 Windows 本地图�
 - 面板拖动可吸附到画布边缘/中心、参考线以及其他可见面板的边缘/中心，吸附阈值可在 1–100 px 间设置或完全关闭。
 - 多选面板可输入精确的相邻边界间距，并从最靠左或最靠上的面板开始应用水平/垂直排版；超出画布时阻止命令。
 - 主窗口的源图像栏、画布栏和检查器栏可通过两条拖拽分隔条独立调整宽度；右侧检查器保留滚动区域。
-- 选中拼版面板时显示青色右下角缩放手柄；拖动即可调整每个面板尺寸，启用等比锁定时自动保持源图比例。- 顶部文件、编辑、视图、图像、裁剪、拼版和工具菜单均绑定到实际命令；右侧“检查器 / 图层”页签可切换，图层页支持显隐、锁定、选择、排序和移除。
+- 选中拼版面板时显示青色右下角缩放手柄；拖动即可调整每个面板尺寸，启用等比锁定时自动保持源图比例。
+- 顶部文件、编辑、视图、图像、裁剪、拼版和工具菜单均绑定到实际命令；右侧“检查器 / 图层”页签可切换，图层页支持显隐、锁定、选择、排序和移除。
 - 亮度与对比度支持 `-100—+100` 连续滑块无极调节，并与数字输入框双向同步。
 - 画布背景支持 `#RRGGBB` / `#AARRGGBB` 自定义颜色或透明背景，预览、工程恢复、撤销和最终导出使用同一颜色值。
 - 面板编号可自动生成小写字母、大写字母或数字序列，也可关闭自动编号后手工编辑，并按画布阅读顺序一键重新编号。
@@ -75,6 +76,45 @@ SciCanvas 是一款面向材料科学与实验研究人员的 Windows 本地图�
 - 导出预设现在包含格式、DPI、缩放/目标尺寸和溯源开关，并写入工程 `exportProfiles`；只设置一个目标尺寸时保持画布纵横比。
 - 批量版本的溯源 sidecar 额外记录预设 ID/名称和多页帧索引，便于复核同一工程的不同投稿输出。
 
+## v1.1 OME、16-bit 与自动化导出
+
+当前下一阶段新增四条可审计链路：
+
+- OME-TIFF 导入会从 TIFF `ImageDescription` 安全解析 OME-XML，记录维度顺序、像素类型、Z/C/T 尺寸、物理像素尺寸、时间间隔、通道名称和 XML SHA-256；这些字段进入素材摘要、工程 `1.1` 文件和导出溯源报告。
+- 主图预设默认输出真正的 16-bit RGB48 TIFF。图像平面在 16-bit 缓冲中进行双线性合成和非破坏参数处理，文字、比例尺与科研标注作为单独覆盖层合成；不会先把整张组图量化为 8-bit。透明画布会被明确阻止，避免静默扁平化。
+- 右侧拼版检查器新增可编辑投稿预设，可新增、移除和恢复默认，并编辑格式、DPI、缩放、目标宽高、位深和溯源开关；设置随工程保存、自动恢复和重开。
+- 新增 `SciCanvas.Cli`，可在无界面批处理、脚本或课题组工作站中读取同一个 `.scicanvas` 工程，复核所有源图 SHA-256、运行投稿预检、拒绝覆盖已有文件，并使用工程内预设批量导出。
+
+CLI 示例：
+
+```powershell
+# 查看工程内预设
+.\SciCanvas.Cli.exe export --project .\paper.scicanvas --list-profiles
+
+# 按工程内全部预设导出
+.\SciCanvas.Cli.exe export --project .\paper.scicanvas --output-dir .\submission
+
+# 只导出指定预设；可重复传入 --profile
+.\SciCanvas.Cli.exe export --project .\paper.scicanvas --output-dir .\submission --profile main-tiff
+```
+
+CLI 退出码：`0` 成功、`2` 参数错误、`3` 工程或源图验证失败、`4` 部分或全部导出失败。默认仍生成溯源 JSON/HTML；只有明确传入 `--no-provenance` 才关闭。
+
+## v1.2 科学工作流与可审计辅助分析
+
+`v1.2.0-alpha` 按分阶段升级路线补齐了从标定到投稿的主工作流：
+
+- 源图级 X/Y Calibration、metadata/手动标定、Length/Angle/Rectangle/Circle/Polyline 测量、真实单位优先显示、面积/周长、统计直方图、强度剖面，以及 CSV/XLSX/复制表格。
+- Calibration 同时驱动 Measurement 与同源 Figure Scale Bar；数据进入 `1.2` 工程、自动恢复、撤销/重做和审计轨迹。
+- Match Width/Height/Frame/Aspect、Line 标注、项目全局样式、Inset 局部放大、动态 ROI、同源 Linked Crop 和矢量 Inset 边框。
+- 独立 Figure QC 面板检查源图完整性、有效 DPI、边界/重叠、标签、标尺、标注样式、背景和未保存状态，并可定位到问题面板。
+- 科研颜色字典在工程内固定“物理对象 → HEX 颜色”，支持名称唯一性和红绿色觉缺陷近似检查，可应用到选中标注或全局图形样式。
+- 可解释辅助区域分析直接读取原始像素，提供亮/暗颗粒、晶粒区域、孔隙、相区、裂纹和片层候选；记录 ROI、阈值、最小面积和算法版本。候选默认不写入测量，必须人工接受/拒绝后才能转换为等效直径、裂纹长度或片层宽度测量。
+- 辅助布局、样式协调和科研诚信检查均使用明确规则并可撤销；软件不提供生成式填充、克隆、局部擦除或对象移除。
+- Figure 可继续输出 16-bit TIFF、PNG/JPEG、可编辑 PDF/SVG，并生成 provenance JSON / HTML 报告；CLI 使用相同工程与预检规则。
+
+完整阶段、验收条件和边界见 [升级路线](docs/UPGRADE_ROADMAP.md)。
+
 ## 本地运行
 
 需要 Windows 10/11 与 [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)。
@@ -83,19 +123,20 @@ SciCanvas 是一款面向材料科学与实验研究人员的 Windows 本地图�
 dotnet run --project .\src\SciCanvas.App\SciCanvas.App.csproj
 ```
 
-生成 Windows x64 目录版：
+生成 Windows x64 目录版（GUI 与 CLI）：
 
 ```powershell
 dotnet publish .\src\SciCanvas.App\SciCanvas.App.csproj --configuration Release --runtime win-x64 --self-contained false --output .\artifacts\SciCanvas-win-x64
+dotnet publish .\src\SciCanvas.Cli\SciCanvas.Cli.csproj --configuration Release --runtime win-x64 --self-contained false --output .\artifacts\SciCanvas-win-x64
 ```
 
-生成后可双击 `.\artifacts\SciCanvas-win-x64\SciCanvas.App.exe`。该目录版仍需要系统安装 .NET 10 Desktop Runtime。
+生成后可双击 `.\artifacts\SciCanvas-win-x64\SciCanvas.App.exe`，或在终端运行同目录的 `SciCanvas.Cli.exe`。该目录版仍需要系统安装 .NET 10 Desktop Runtime。
 
 当前已生成可直接交付的自包含 Windows x64 包：
 
-- `artifacts\SciCanvas-v1.0.0-alpha-Setup.exe`：双击安装到当前用户目录，不需要管理员权限。
-- `artifacts\SciCanvas-v1.0.0-alpha-Portable.zip`：解压后运行 `SciCanvas.App.exe`，不需要安装 .NET。
-- `artifacts\SciCanvas-v1.0.0-alpha-SHA256.txt`：安装包与便携包的 SHA-256 校验值。
+- `artifacts\SciCanvas-v1.2.0-alpha-Setup.exe`：双击安装到当前用户目录，不需要管理员权限，同时安装 GUI 与 CLI。
+- `artifacts\SciCanvas-v1.2.0-alpha-Portable.zip`：解压后运行 `SciCanvas.App.exe` 或 `SciCanvas.Cli.exe`，不需要安装 .NET。
+- `artifacts\SciCanvas-v1.2.0-alpha-SHA256.txt`：安装包与便携包的 SHA-256 校验值。
 
 构建与测试：
 
@@ -116,6 +157,8 @@ dotnet test .\SciCanvas.sln --configuration Debug
 
 - [MVP 产品规格](docs/MVP_SPEC.md)
 - [技术架构](docs/ARCHITECTURE.md)
+- [分阶段升级路线与验收](docs/UPGRADE_ROADMAP.md)
+- [v1.2 发布验收与视觉台账](docs/RELEASE_1.2_QA.md)
 - [模板系统](docs/TEMPLATE_SYSTEM.md)
 - [工程文件 JSON Schema](schemas/scicanvas-project.schema.json)
 - [组图模板 JSON Schema](schemas/scicanvas-template.schema.json)

@@ -41,7 +41,8 @@ public sealed class WpfImageMetadataProbe : IImageMetadataProbe
             format.ToString(),
             NormalizeDpi(frame.DpiX),
             NormalizeDpi(frame.DpiY),
-            frameCount: decoder.Frames.Count));
+            frameCount: decoder.Frames.Count,
+            ome: OmeMetadataParser.TryParse(frame)));
     }
 
     private static int DetermineChannelCount(PixelFormat format)

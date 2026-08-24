@@ -37,4 +37,20 @@ public sealed class WindowsExportFilePicker : IExportFilePicker
 
         return dialog.ShowDialog() == true ? dialog.FileName : null;
     }
+
+    public string? PickNewMeasurementExportPath(string suggestedFileName)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "导出新的测量表（不覆盖已有文件）",
+            FileName = suggestedFileName,
+            DefaultExt = ".csv",
+            AddExtension = true,
+            CheckPathExists = true,
+            OverwritePrompt = false,
+            Filter = "CSV 测量表|*.csv|Excel 工作簿|*.xlsx",
+        };
+
+        return dialog.ShowDialog() == true ? dialog.FileName : null;
+    }
 }

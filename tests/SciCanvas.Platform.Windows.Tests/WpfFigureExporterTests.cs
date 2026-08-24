@@ -303,7 +303,12 @@ public sealed class WpfFigureExporterTests
                 new FigureAnnotationExportItem(
                     "rectangle", 20, 20, 80, 60, string.Empty, "#FFFF0000",
                     7, 2, IsBold: false, IsVisible: true, ZIndex: 0),
-            ]);
+                new FigureAnnotationExportItem(
+                    "line", 10, 70, 100, 70, string.Empty, "#FF00AA88",
+                    7, 1.5, IsBold: false, IsVisible: true, ZIndex: 1),
+            ],
+            globalStyle: new FigureGlobalStyle(
+                "Segoe UI", 8, 1.5, "#FF223344", "#FF00AA88", "#FFFFFFFF"));
 
         await new WpfFigureExporter().ExportAsync(document, targetPath);
 
@@ -311,7 +316,41 @@ public sealed class WpfFigureExporterTests
         Assert.StartsWith("<?xml", svg, StringComparison.Ordinal);
         Assert.Contains("<image ", svg, StringComparison.Ordinal);
         Assert.Contains("<rect ", svg, StringComparison.Ordinal);
+        Assert.Contains("<line ", svg, StringComparison.Ordinal);
+        Assert.Contains("font-family=\"Segoe UI\"", svg, StringComparison.Ordinal);
+        Assert.Contains("#223344", svg, StringComparison.Ordinal);
         Assert.Contains("data-source=\"source.png\"", svg, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExportAsync_WritesVectorBorderForInsetPanel()
+    {
+        using var workspace = new TestWorkspace();
+        string sourcePath = Path.Combine(workspace.Root, "source.png");
+        string targetPath = Path.Combine(workspace.Root, "inset.svg");
+        CreateSolidPng(sourcePath, 8, 6, Colors.Red);
+        FigureExportDocument document = new(
+            120,
+            80,
+            300,
+            [
+                new FigurePanelExportItem(
+                    CreateAsset(sourcePath, 8, 6),
+                    new PixelRect64(0, 0, 8, 6),
+                    new PixelRect64(10, 10, 80, 60),
+                    string.Empty,
+                    true,
+                    IsInset: true),
+            ],
+            globalStyle: new FigureGlobalStyle(
+                "Arial", 7, 1, "#FF000000", "#FF123456", "#FFFFFFFF"));
+
+        await new WpfFigureExporter().ExportAsync(document, targetPath);
+
+        string svg = await File.ReadAllTextAsync(targetPath);
+        Assert.Equal(2, svg.Split("<rect ", StringSplitOptions.None).Length - 1);
+        Assert.Contains("stroke=\"#123456\"", svg, StringComparison.Ordinal);
+        Assert.Contains("stroke-width=\"2.083\"", svg, StringComparison.Ordinal);
     }
 
     [Fact]

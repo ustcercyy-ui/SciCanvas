@@ -20,7 +20,8 @@ public sealed record FigureProvenanceSource(
     double? DpiX,
     double? DpiY,
     string? PhysicalUnit,
-    int FrameCount);
+    int FrameCount,
+    OmeImageMetadata? Ome = null);
 
 public sealed record FigureProvenancePanel(
     string Label,
@@ -40,6 +41,7 @@ public sealed record FigureProvenanceDocument(
     int WidthPixels,
     int HeightPixels,
     int Dpi,
+    int BitDepth,
     string BackgroundColor,
     IReadOnlyList<FigureProvenanceSource> Sources,
     IReadOnlyList<FigureProvenancePanel> Panels,
@@ -93,6 +95,7 @@ public static class FigureProvenanceWriter
             document.WidthPixels,
             document.HeightPixels,
             document.Dpi,
+            document.BitDepth,
             document.BackgroundColor,
             sources.Select(source => new FigureProvenanceSource(
                 source.Id,
@@ -108,7 +111,8 @@ public static class FigureProvenanceWriter
                 source.Metadata.DpiX,
                 source.Metadata.DpiY,
                 source.Metadata.PhysicalUnit,
-                source.Metadata.FrameCount)).ToArray(),
+                source.Metadata.FrameCount,
+                source.Metadata.Ome)).ToArray(),
             document.Panels.Select(panel => new FigureProvenancePanel(
                 panel.Label,
                 panel.Source.Id,

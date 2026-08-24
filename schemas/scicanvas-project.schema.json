@@ -77,6 +77,18 @@
         "$ref": "#/$defs/exportProfile"
       }
     },
+    "calibrations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/calibration"
+      }
+    },
+    "measurements": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/measurement"
+      }
+    },
     "templateSnapshot": {
       "anyOf": [
         { "$ref": "#/$defs/templateSnapshot" },
@@ -145,7 +157,42 @@
         "annotations": {
           "type": "array",
           "items": { "$ref": "#/$defs/projectAnnotation" }
+        },
+        "globalStyle": {
+          "anyOf": [
+            { "$ref": "#/$defs/globalStyle" },
+            { "type": "null" }
+          ]
+        },
+        "scientificColors": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/scientificColor" }
         }
+      }
+    },
+    "globalStyle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fontFamily", "fontSizePt", "strokeWidthPt", "textColor", "shapeColor", "scaleBarColor"
+      ],
+      "properties": {
+        "fontFamily": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "fontSizePt": { "type": "number", "minimum": 4, "maximum": 72 },
+        "strokeWidthPt": { "type": "number", "minimum": 0.25, "maximum": 10 },
+        "textColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "shapeColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "scaleBarColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" }
+      }
+    },
+    "scientificColor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "color"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "color": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" }
       }
     },
     "projectScaleBar": {
@@ -171,7 +218,7 @@
       ],
       "properties": {
         "id": { "type": "string", "format": "uuid" },
-        "kind": { "type": "string", "enum": ["text", "arrow", "rectangle", "ellipse"] },
+        "kind": { "type": "string", "enum": ["text", "arrow", "line", "rectangle", "ellipse"] },
         "x": { "type": "number" },
         "y": { "type": "number" },
         "endX": { "type": "number" },
@@ -237,7 +284,44 @@
         "physicalSizeX": { "type": ["number", "null"], "exclusiveMinimum": 0 },
         "physicalSizeY": { "type": ["number", "null"], "exclusiveMinimum": 0 },
         "physicalUnit": { "type": ["string", "null"] },
-        "iccProfileName": { "type": ["string", "null"] }
+        "iccProfileName": { "type": ["string", "null"] },
+        "ome": {
+          "anyOf": [
+            { "$ref": "#/$defs/omeMetadata" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "omeMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dimensionOrder", "pixelType", "sizeZ", "sizeC", "sizeT", "channelNames", "xmlSha256"],
+      "properties": {
+        "dimensionOrder": {
+          "type": "string",
+          "enum": ["XYZCT", "XYZTC", "XYCZT", "XYCTZ", "XYTCZ", "XYTZC"]
+        },
+        "pixelType": { "type": "string", "minLength": 1 },
+        "sizeZ": { "type": "integer", "minimum": 1 },
+        "sizeC": { "type": "integer", "minimum": 1 },
+        "sizeT": { "type": "integer", "minimum": 1 },
+        "physicalSizeX": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "physicalSizeY": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "physicalSizeZ": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "physicalSizeXUnit": { "type": ["string", "null"] },
+        "physicalSizeYUnit": { "type": ["string", "null"] },
+        "physicalSizeZUnit": { "type": ["string", "null"] },
+        "timeIncrement": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "timeIncrementUnit": { "type": ["string", "null"] },
+        "channelNames": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "xmlSha256": {
+          "type": "string",
+          "pattern": "^[0-9A-Fa-f]{64}$"
+        }
       }
     },
     "pixelRect": {
@@ -293,6 +377,7 @@
         "sourceAssetId": { "type": "string", "format": "uuid" },
         "frameIndex": { "type": "integer", "minimum": 0 },
         "lockAspectRatio": { "type": "boolean", "default": true },
+        "cropLinkGroupId": { "type": ["string", "null"], "format": "uuid" },
         "sourceRect": { "$ref": "#/$defs/pixelRect" },
         "transform": { "$ref": "#/$defs/transform" },
         "adjustments": { "type": "array", "items": { "$ref": "#/$defs/imageAdjustment" } }
@@ -390,7 +475,7 @@
       "properties": {
         "id": { "type": "string", "format": "uuid" },
         "name": { "type": "string", "minLength": 1 },
-        "format": { "type": "string", "enum": ["png", "tiff"] },
+        "format": { "type": "string", "enum": ["png", "tiff", "jpg", "pdf", "svg"] },
         "dpi": { "type": "integer", "minimum": 1 },
         "scale": { "type": "number", "exclusiveMinimum": 0 },
         "widthPixels": { "type": ["integer", "null"], "minimum": 1 },
@@ -404,6 +489,60 @@
         },
         "journalPresetId": { "type": ["string", "null"] },
         "writeAuditReport": { "type": "boolean" }
+      }
+    },
+    "calibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceAssetId", "unitsPerPixelX", "unitsPerPixelY", "unit", "origin",
+        "referenceStartX", "referenceStartY", "referenceEndX", "referenceEndY"
+      ],
+      "properties": {
+        "sourceAssetId": { "type": "string", "format": "uuid" },
+        "unitsPerPixelX": { "type": "number", "minimum": 0 },
+        "unitsPerPixelY": { "type": "number", "minimum": 0 },
+        "unit": { "type": "string", "minLength": 1 },
+        "origin": { "type": "string", "enum": ["none", "metadata", "manual", "linked"] },
+        "referencePixelLength": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "referencePhysicalLength": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "referenceStartX": { "type": "number" },
+        "referenceStartY": { "type": "number" },
+        "referenceEndX": { "type": "number" },
+        "referenceEndY": { "type": "number" }
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "sourceAssetId", "kind", "x1", "y1", "x2", "y2",
+        "strokeColor", "strokeWidthPixels"
+      ],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "sourceAssetId": { "type": "string", "format": "uuid" },
+        "kind": { "type": "string", "enum": ["length", "angle", "rectangleRoi", "circleRoi", "polyline"] },
+        "x1": { "type": "number" },
+        "y1": { "type": "number" },
+        "x2": { "type": "number" },
+        "y2": { "type": "number" },
+        "x3": { "type": ["number", "null"] },
+        "y3": { "type": ["number", "null"] },
+        "strokeColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{8}$" },
+        "strokeWidthPixels": { "type": "number", "minimum": 1, "maximum": 12 },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["x", "y"],
+            "properties": {
+              "x": { "type": "number" },
+              "y": { "type": "number" }
+            }
+          }
+        }
       }
     },
     "auditEntry": {

@@ -108,6 +108,55 @@ public sealed class FigureCanvasMultiSelectionTests
     }
 
     [Fact]
+    public void MatchFrame_UsesPrimarySelectionAndSkipsLockedPanels()
+    {
+        FigureCanvasViewModel figure = CreateFigure();
+        SourceAssetItemViewModel source = CreateSource(400, 200);
+        FigurePanelViewModel target = AddPanel(figure, source);
+        FigurePanelViewModel locked = AddPanel(figure, source);
+        FigurePanelViewModel reference = AddPanel(figure, source);
+        target.IsAspectRatioLocked = false;
+        locked.IsAspectRatioLocked = false;
+        reference.IsAspectRatioLocked = false;
+        Configure(target, 100, 100, 120, 80);
+        Configure(locked, 400, 100, 90, 90);
+        Configure(reference, 700, 100, 240, 160);
+        locked.IsLocked = true;
+        figure.SelectPanel(target, toggle: false);
+        figure.SelectPanel(locked, toggle: true);
+        figure.SelectPanel(reference, toggle: true);
+
+        figure.MatchSelectionFrameCommand.Execute(null);
+
+        Assert.Equal((240L, 160L), (target.Width, target.Height));
+        Assert.Equal((90L, 90L), (locked.Width, locked.Height));
+        Assert.Equal((240L, 160L), (reference.Width, reference.Height));
+        Assert.False(target.IsAspectRatioLocked);
+    }
+
+    [Fact]
+    public void MatchAspectRatio_PreservesTargetWidthAndClampsInsideCanvas()
+    {
+        FigureCanvasViewModel figure = CreateFigure();
+        SourceAssetItemViewModel source = CreateSource(400, 200);
+        FigurePanelViewModel target = AddPanel(figure, source);
+        FigurePanelViewModel reference = AddPanel(figure, source);
+        target.IsAspectRatioLocked = false;
+        reference.IsAspectRatioLocked = false;
+        Configure(target, figure.CanvasWidth - 150, figure.CanvasHeight - 150, 300, 300);
+        Configure(reference, 100, 100, 400, 200);
+        figure.SelectPanel(target, toggle: false);
+        figure.SelectPanel(reference, toggle: true);
+
+        figure.MatchSelectionAspectRatioCommand.Execute(null);
+
+        Assert.Equal(2d, target.Width / (double)target.Height, 8);
+        Assert.True(target.X + target.Width <= figure.CanvasWidth);
+        Assert.True(target.Y + target.Height <= figure.CanvasHeight);
+        Assert.Equal((400L, 200L), (reference.Width, reference.Height));
+    }
+
+    [Fact]
     public void CanvasBackgroundAndPanelNumbering_AreAppliedToExportDocument()
     {
         FigureCanvasViewModel figure = CreateFigure();
@@ -135,6 +184,49 @@ public sealed class FigureCanvasMultiSelectionTests
     }
 
     [Fact]
+    public void GlobalStyle_AppliesTypedDefaultsAndFlowsIntoExportDocument()
+    {
+        FigureCanvasViewModel figure = CreateFigure();
+        figure.AddTextAnnotationCommand.Execute(null);
+        FigureAnnotationViewModel text = Assert.IsType<FigureAnnotationViewModel>(figure.SelectedAnnotation);
+        figure.AddLineAnnotationCommand.Execute(null);
+        FigureAnnotationViewModel line = Assert.IsType<FigureAnnotationViewModel>(figure.SelectedAnnotation);
+        figure.GlobalFontFamily = "Segoe UI";
+        figure.GlobalFontSizePt = 8;
+        figure.GlobalStrokeWidthPt = 1.75;
+        figure.GlobalTextColor = "#FF223344";
+        figure.GlobalShapeColor = "#FF22AA88";
+        figure.GlobalScaleBarColor = "#FFFFFFFF";
+
+        figure.ApplyGlobalStyleCommand.Execute(null);
+
+        Assert.Equal(8, text.FontSizePt);
+        Assert.Equal("#FF223344", text.Color);
+        Assert.Equal(1.75, line.StrokeWidthPt);
+        Assert.Equal("#FF22AA88", line.Color);
+        FigureGlobalStyle exported = figure.CreateExportDocument().GlobalStyle;
+        Assert.Equal("Segoe UI", exported.FontFamily);
+        Assert.Equal(8, exported.FontSizePt);
+        Assert.Equal("#FFFFFFFF", exported.ScaleBarColor);
+    }
+
+    [Fact]
+    public void ScientificColorDictionary_AppliesSelectedPhysicalObjectColorToAnnotation()
+    {
+        FigureCanvasViewModel figure = CreateFigure();
+        figure.AddRectangleAnnotationCommand.Execute(null);
+        FigureAnnotationViewModel annotation = Assert.IsType<FigureAnnotationViewModel>(
+            figure.SelectedAnnotation);
+        ScientificColorEntryViewModel color = figure.ScientificColors[1];
+        figure.SelectedScientificColor = color;
+
+        figure.ApplySelectedScientificColorCommand.Execute(null);
+
+        Assert.Equal(color.Color, annotation.Color);
+        Assert.Contains("项目颜色", figure.ScientificColorStatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PanelResize_PreservesSourceAspectRatioUntilUnlocked()
     {
         FigureCanvasViewModel figure = CreateFigure();
@@ -156,6 +248,57 @@ public sealed class FigureCanvasMultiSelectionTests
         panel.Width = 320;
         Assert.Equal(100, panel.Height);
     }
+
+    [Fact]
+    public void CreateInset_CreatesCenteredDetailCropAndMarksExportPanel()
+    {
+        FigureCanvasViewModel figure = CreateFigure();
+        SourceAssetItemViewModel source = CreateSource(400, 200);
+        FigurePanelViewModel reference = Assert.IsType<FigurePanelViewModel>(
+            figure.AddPanel(source, new PixelRect64(40, 20, 320, 160)));
+
+        figure.CreateInsetCommand.Execute(null);
+
+        FigurePanelViewModel inset = Assert.Single(figure.Panels, panel => panel.IsInset);
+        Assert.Equal(new PixelRect64(120, 60, 160, 80), inset.SourceRect);
+        Assert.Same(source, inset.Source);
+        Assert.Equal(reference.Adjustments, inset.Adjustments);
+        Assert.True(inset.DestinationRect.Right <= figure.CanvasWidth);
+        Assert.True(inset.DestinationRect.Bottom <= figure.CanvasHeight);
+        FigurePanelExportItem exportedInset = Assert.Single(
+            figure.CreateExportDocument().Panels,
+            panel => panel.IsInset);
+        Assert.Equal(inset.SourceRect, exportedInset.SourceRect);
+        Assert.StartsWith("inset:", inset.SlotId, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LinkedCrops_PropagateNewSourceRectAndCanBeUnlinked()
+    {
+        FigureCanvasViewModel figure = CreateFigure();
+        SourceAssetItemViewModel source = CreateSource(400, 200);
+        FigurePanelViewModel first = Assert.IsType<FigurePanelViewModel>(
+            figure.AddPanel(source, new PixelRect64(0, 0, 100, 100)));
+        FigurePanelViewModel second = Assert.IsType<FigurePanelViewModel>(
+            figure.AddPanel(source, new PixelRect64(100, 0, 100, 100)));
+        figure.SelectPanel(first, toggle: false);
+        figure.SelectPanel(second, toggle: true);
+
+        figure.LinkSelectedPanelCropsCommand.Execute(null);
+        Guid groupId = Assert.IsType<Guid>(first.CropLinkGroupId);
+        Assert.Equal(groupId, second.CropLinkGroupId);
+
+        var synchronizedCrop = new PixelRect64(20, 30, 160, 80);
+        first.ReplaceSource(source, synchronizedCrop);
+
+        Assert.Equal(synchronizedCrop, second.SourceRect);
+        figure.UnlinkSelectedPanelCropsCommand.Execute(null);
+        Assert.Null(first.CropLinkGroupId);
+        Assert.Null(second.CropLinkGroupId);
+        first.ReplaceSource(source, new PixelRect64(0, 0, 80, 80));
+        Assert.Equal(synchronizedCrop, second.SourceRect);
+    }
+
     private static FigureCanvasViewModel CreateFigure() => new(
         new BuiltInTemplateCatalog().LoadAll().Single(
             template => template.Id == "materials.multiscale-morphology.nature-double"));

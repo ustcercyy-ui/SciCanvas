@@ -4,6 +4,7 @@ using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Cropping;
 using SciCanvas.Core.Images;
+using SciCanvas.Core.Science;
 using SciCanvas.Imaging;
 using SciCanvas.Templates;
 
@@ -30,6 +31,7 @@ public sealed class FigurePanelViewModel : ObservableObject
     private string _label;
     private ImageAdjustmentParameters _adjustments = new();
     private int _frameIndex;
+    private Guid? _cropLinkGroupId;
 
     public FigurePanelViewModel(
         SourceAssetItemViewModel source,
@@ -70,6 +72,27 @@ public sealed class FigurePanelViewModel : ObservableObject
     public Guid Id { get; }
 
     public PixelRect64 SourceRect { get; private set; }
+
+    public bool IsInset => SlotId.StartsWith("inset:", StringComparison.Ordinal);
+
+    public Guid? CropLinkGroupId
+    {
+        get => _cropLinkGroupId;
+        set
+        {
+            if (SetProperty(ref _cropLinkGroupId, value))
+            {
+                OnPropertyChanged(nameof(IsCropLinked));
+                OnPropertyChanged(nameof(CropLinkStatusText));
+            }
+        }
+    }
+
+    public bool IsCropLinked => CropLinkGroupId.HasValue;
+
+    public string CropLinkStatusText => CropLinkGroupId.HasValue
+        ? $"关联裁剪 · {CropLinkGroupId.Value.ToString("N")[..8]}"
+        : "独立裁剪";
     public int FrameIndex
     {
         get => _frameIndex;
@@ -227,6 +250,7 @@ public sealed class FigurePanelViewModel : ObservableObject
         "tem" => "TEM",
         "hrtem" => "HRTEM",
         "elemental-map" => "元素分布",
+        "inset" => "Inset 局部放大",
         "comparison" => "对照图",
         "synthesis" => "制备路线",
         "composition" => "成分/物相",
@@ -527,6 +551,31 @@ public sealed class FigurePanelViewModel : ObservableObject
             ScaleBarShowLabel);
     }
 
+    public void ApplySpatialCalibration(SpatialCalibration calibration)
+    {
+        ArgumentNullException.ThrowIfNull(calibration);
+        if (calibration.SourceAssetId != Source.Asset.Id)
+        {
+            throw new InvalidOperationException("不能把其他源图像的标定应用到当前面板。");
+        }
+
+        if (!calibration.IsValid)
+        {
+            PhysicalUnitsPerSourcePixel = 0;
+            ShowScaleBar = false;
+            return;
+        }
+
+        PhysicalUnitsPerSourcePixel = calibration.UnitsPerPixelX;
+        ScaleBarUnit = calibration.Unit;
+        if (!double.IsFinite(ScaleBarPhysicalLength) || ScaleBarPhysicalLength <= 0 ||
+            ScaleBarSourcePixelLength > SourceRect.Width * 0.8)
+        {
+            ScaleBarPhysicalLength = ChooseReadablePhysicalLength(
+                SourceRect.Width * calibration.UnitsPerPixelX * 0.2);
+        }
+    }
+
     internal void RefreshPreview()
     {
         _preview = CreateCropPreview(Source, SourceRect, _adjustments, _frameIndex);
@@ -611,6 +660,28 @@ public sealed class FigurePanelViewModel : ObservableObject
         OnPropertyChanged(nameof(EffectiveDpiText));
         OnPropertyChanged(nameof(IsBelowMinimumDpi));
         NotifyScaleBarGeometryChanged();
+    }
+
+    public void SetMatchedFrameSize(long width, long height)
+    {
+        _isAspectRatioLocked = false;
+        SetDestinationSize(width, height);
+        OnPropertyChanged(nameof(IsAspectRatioLocked));
+        OnPropertyChanged(nameof(SizeStatusText));
+    }
+
+    public void MatchAspectRatio(double aspectRatio)
+    {
+        if (!double.IsFinite(aspectRatio) || aspectRatio <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(aspectRatio));
+        }
+
+        _isAspectRatioLocked = false;
+        long height = NormalizeDimension((long)Math.Round(Width / aspectRatio));
+        SetDestinationSize(Width, height);
+        OnPropertyChanged(nameof(IsAspectRatioLocked));
+        OnPropertyChanged(nameof(SizeStatusText));
     }
 
     private long CalculateHeightForWidth(long width) =>

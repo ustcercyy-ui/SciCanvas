@@ -54,6 +54,8 @@ public sealed class EditorHistoryManagerTests
         true,
         true,
         "lowercase",
+        SciCanvas.Core.Export.FigureGlobalStyle.Default,
+        [],
         null,
         [],
         null,
@@ -61,6 +63,8 @@ public sealed class EditorHistoryManagerTests
         true,
         12,
         24,
+        [],
+        [],
         [],
         [],
         []);

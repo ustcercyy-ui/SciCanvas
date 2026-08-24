@@ -1,13 +1,16 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using System.Text;
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using SciCanvas.Core.Cropping;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
+using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
 using SciCanvas.Imaging;
 using SciCanvas.Persistence;
@@ -34,6 +37,8 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly IUserTemplateCatalog? _userTemplateCatalog;
     private readonly IBatchExportFolderPicker? _batchExportFolderPicker;
     private readonly IReadOnlyList<FigureTemplateDefinition> _figureTemplates;
+    private readonly IIntensityProfileAnalyzer _intensityProfileAnalyzer;
+    private readonly IAssistedRegionAnalyzer _assistedRegionAnalyzer;
     private readonly EditorHistoryManager _history = new(100);
     private readonly List<ProjectAuditEntrySnapshot> _auditTrail = [];
     private readonly DispatcherTimer _autosaveTimer;
@@ -41,6 +46,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private FigureTemplateDefinition _selectedFigureTemplate;
     private SourceAssetItemViewModel? _selectedSource;
     private BatchCropQueueItemViewModel? _selectedBatchCrop;
+    private ExportProfileEditorViewModel? _selectedExportProfile;
     private bool _isBusy;
     private string _statusMessage = "就绪";
     private string? _lastError;
@@ -57,6 +63,23 @@ public sealed class MainWindowViewModel : ObservableObject
     private bool _autosaveInProgress;
     private bool _autosavePending;
     private string _autosaveStatusText = "自动保存待命";
+    private ScientificToolMode _activeScienceTool = ScientificToolMode.Crop;
+    private ScientificMeasurementViewModel? _pendingMeasurement;
+    private int _pendingAngleStep;
+    private FigureQcIssueViewModel? _selectedFigureQcIssue;
+    private string _figureQcStatusText = "尚未运行 Figure QC";
+    private bool _isFigureQcStale = true;
+    private IntensityProfileResult? _intensityProfile;
+    private PointCollection _intensityProfilePoints = [];
+    private string _intensityProfileStatusText = "请选择长度测量后运行强度剖面";
+    private AssistedRegionAnalysisResult? _assistedRegionResult;
+    private AssistedRegionCandidateViewModel? _selectedAssistedRegion;
+    private AssistedRegionMode _assistedRegionMode = AssistedRegionMode.BrightParticles;
+    private bool _useAutomaticRegionThreshold = true;
+    private double _regionThresholdPercent = 50;
+    private int _minimumRegionAreaPixels = 16;
+    private string _assistedRegionStatusText = "在当前裁剪 ROI 中生成可人工复核的候选区域";
+    private string _smartAssistStatusText = "可解释规则会给出布局、样式、QC 与科研诚信建议；建议默认不自动成为事实。";
 
     public MainWindowViewModel(
         IImageFilePicker filePicker,
@@ -75,7 +98,9 @@ public sealed class MainWindowViewModel : ObservableObject
         ISourceRevisionAcceptancePrompt? sourceRevisionAcceptancePrompt = null,
         ITemplateFilePicker? templateFilePicker = null,
         IUserTemplateCatalog? userTemplateCatalog = null,
-        IBatchExportFolderPicker? batchExportFolderPicker = null)
+        IBatchExportFolderPicker? batchExportFolderPicker = null,
+        IIntensityProfileAnalyzer? intensityProfileAnalyzer = null,
+        IAssistedRegionAnalyzer? assistedRegionAnalyzer = null)
     {
         _filePicker = filePicker ?? throw new ArgumentNullException(nameof(filePicker));
         _sourceReader = sourceReader ?? throw new ArgumentNullException(nameof(sourceReader));
@@ -94,6 +119,8 @@ public sealed class MainWindowViewModel : ObservableObject
         _sourceRelinkFilePicker = sourceRelinkFilePicker ?? new NullSourceRelinkFilePicker();
         _sourceRevisionAcceptancePrompt = sourceRevisionAcceptancePrompt ??
             new DeclineSourceRevisionAcceptancePrompt();
+        _intensityProfileAnalyzer = intensityProfileAnalyzer ?? new WpfIntensityProfileAnalyzer();
+        _assistedRegionAnalyzer = assistedRegionAnalyzer ?? new WpfAssistedRegionAnalyzer();
         ArgumentNullException.ThrowIfNull(figureTemplates);
         if (figureTemplates.Count == 0)
         {
@@ -104,6 +131,13 @@ public sealed class MainWindowViewModel : ObservableObject
         AvailableTemplates = new ObservableCollection<FigureTemplateDefinition>(_figureTemplates);
         _selectedFigureTemplate = _figureTemplates[0];
         _figure = new FigureCanvasViewModel(_selectedFigureTemplate);
+        foreach (FigureExportProfile profile in FigureExportProfile.BuiltIns)
+        {
+            var editor = new ExportProfileEditorViewModel(profile);
+            editor.PropertyChanged += OnExportProfilePropertyChanged;
+            ExportProfiles.Add(editor);
+        }
+        _selectedExportProfile = ExportProfiles[0];
         _autosaveTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromSeconds(10),
@@ -148,11 +182,64 @@ public sealed class MainWindowViewModel : ObservableObject
             ExportFigureVariantsAsync,
             () => Figure.Panels.Count > 0 && !IsBusy && _batchExportFolderPicker is not null,
             HandleUnexpectedCommandError);
+        RunFigureQcCommand = new RelayCommand(RunFigureQc, () => !IsBusy);
+        ApplySmartLayoutCommand = new RelayCommand(ApplySmartLayout, () => !IsBusy);
+        HarmonizeFigureStyleCommand = new RelayCommand(HarmonizeFigureStyle, () => !IsBusy);
+        RunAssistedFigureReviewCommand = new RelayCommand(RunAssistedFigureReview, () => !IsBusy);
+        NavigateToSelectedQcIssueCommand = new RelayCommand(
+            NavigateToSelectedQcIssue,
+            () => SelectedFigureQcIssue?.CanNavigate == true && !IsBusy);
+        AddExportProfileCommand = new RelayCommand(AddExportProfile, () => !IsBusy);
+        RemoveSelectedExportProfileCommand = new RelayCommand(
+            RemoveSelectedExportProfile,
+            () => SelectedExportProfile is not null && ExportProfiles.Count > 1 && !IsBusy);
+        ResetExportProfilesCommand = new RelayCommand(
+            () => ResetExportProfilesToBuiltIns(markDirty: true), () => !IsBusy);
         ShowCropWorkspaceCommand = new RelayCommand(() => WorkspaceMode = WorkspaceMode.Crop);
         ShowFigureWorkspaceCommand = new RelayCommand(() => WorkspaceMode = WorkspaceMode.Figure);
         ShowInspectorTabCommand = new RelayCommand(() => IsLayersTabActive = false);
         ShowLayersTabCommand = new RelayCommand(() => IsLayersTabActive = true);
-        ShowHelpCommand = new RelayCommand(() => StatusMessage = "SciCanvas v1.0.0-alpha · 快捷键：Ctrl+N/O/S/I/Enter，Ctrl+Z/Y");
+        SelectCropToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Crop);
+        SelectCalibrationToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Calibration);
+        SelectLengthToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Length);
+        SelectAngleToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Angle);
+        SelectRectangleRoiToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.RectangleRoi);
+        SelectCircleRoiToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.CircleRoi);
+        SelectPolylineToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Polyline);
+        DeleteSelectedMeasurementCommand = new RelayCommand(
+            DeleteSelectedMeasurement,
+            () => SelectedSource?.SelectedMeasurement is not null && !IsBusy);
+        CopyMeasurementsCommand = new RelayCommand(
+            CopyMeasurements,
+            () => SelectedSource?.Measurements.Count > 0 && !IsBusy);
+        ExportMeasurementsCommand = new AsyncRelayCommand(
+            ExportMeasurementsAsync,
+            () => SelectedSource?.Measurements.Count > 0 && !IsBusy,
+            HandleUnexpectedCommandError);
+        AnalyzeIntensityProfileCommand = new AsyncRelayCommand(
+            AnalyzeIntensityProfileAsync,
+            () => SelectedSource?.Measurements.Count > 0 && !IsBusy,
+            HandleUnexpectedCommandError);
+        AnalyzeAssistedRegionsCommand = new AsyncRelayCommand(
+            AnalyzeAssistedRegionsAsync,
+            () => SelectedSource is not null && Crop.TryGetCrop(out _) && !IsBusy,
+            HandleUnexpectedCommandError);
+        AcceptAllAssistedRegionsCommand = new RelayCommand(
+            AcceptAllAssistedRegions,
+            () => AssistedRegions.Any(candidate => !candidate.IsCommitted) && !IsBusy);
+        RejectSelectedAssistedRegionCommand = new RelayCommand(
+            RejectSelectedAssistedRegion,
+            () => SelectedAssistedRegion is { IsCommitted: false } && !IsBusy);
+        CommitAcceptedAssistedRegionsCommand = new RelayCommand(
+            CommitAcceptedAssistedRegions,
+            () => AssistedRegions.Any(candidate => candidate.IsAccepted && !candidate.IsCommitted) && !IsBusy);
+        ClearAssistedRegionsCommand = new RelayCommand(
+            ClearAssistedRegionAnalysis,
+            () => AssistedRegions.Count > 0 && !IsBusy);
+        ApplyCalibrationToFigurePanelsCommand = new RelayCommand(
+            ApplyCalibrationToFigurePanels,
+            () => SelectedSource?.Calibration.IsCalibrated == true && !IsBusy);
+        ShowHelpCommand = new RelayCommand(() => StatusMessage = "SciCanvas v1.2.0-alpha · 科学测量/Figure QC/全局样式 · 快捷键：Ctrl+N/O/S/I/Enter，Ctrl+Z/Y");
         AddCurrentCropToFigureCommand = new RelayCommand(
             AddCurrentCropToFigure,
             () => HasSelection && Figure.Panels.Count < Figure.SlotCount &&
@@ -207,6 +294,171 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public ObservableCollection<BatchCropQueueItemViewModel> BatchCropQueue { get; } = [];
 
+    public ObservableCollection<ExportProfileEditorViewModel> ExportProfiles { get; } = [];
+
+    public ObservableCollection<FigureQcIssueViewModel> FigureQcIssues { get; } = [];
+
+    public ObservableCollection<AssistedRegionCandidateViewModel> AssistedRegions { get; } = [];
+
+    public IReadOnlyList<AssistedRegionModeOption> AssistedRegionModes { get; } =
+    [
+        new(AssistedRegionMode.BrightParticles, "亮颗粒", "识别亮于阈值的颗粒候选"),
+        new(AssistedRegionMode.DarkParticles, "暗颗粒", "识别暗于阈值的颗粒候选"),
+        new(AssistedRegionMode.DarkPores, "孔隙 / 暗区", "以暗区面积分数辅助孔隙率复核"),
+        new(AssistedRegionMode.BrightPhase, "亮相区", "以亮区面积分数辅助相分数复核"),
+        new(AssistedRegionMode.GrainRegions, "晶粒区域候选", "阈值分割晶粒内部并统计等效圆直径"),
+        new(AssistedRegionMode.DarkCracks, "裂纹候选", "仅保留长宽比 ≥ 3 的暗区候选"),
+        new(AssistedRegionMode.BrightLamellae, "片层候选", "仅保留长宽比 ≥ 3 的亮区候选"),
+    ];
+
+    public FigureQcIssueViewModel? SelectedFigureQcIssue
+    {
+        get => _selectedFigureQcIssue;
+        set
+        {
+            if (SetProperty(ref _selectedFigureQcIssue, value))
+            {
+                NavigateToSelectedQcIssueCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    public string FigureQcStatusText
+    {
+        get => _figureQcStatusText;
+        private set => SetProperty(ref _figureQcStatusText, value);
+    }
+
+    public string FigureQcCountText =>
+        $"{FigureQcIssues.Count(issue => issue.Severity == FigurePreflightSeverity.Error)} 错误 · " +
+        $"{FigureQcIssues.Count(issue => issue.Severity == FigurePreflightSeverity.Warning)} 提醒 · " +
+        $"{FigureQcIssues.Count(issue => issue.Severity == FigurePreflightSeverity.Info)} 信息";
+
+    public IntensityProfileResult? IntensityProfile
+    {
+        get => _intensityProfile;
+        private set
+        {
+            if (SetProperty(ref _intensityProfile, value))
+            {
+                OnPropertyChanged(nameof(IntensityProfileVisibility));
+            }
+        }
+    }
+
+    public PointCollection IntensityProfilePoints
+    {
+        get => _intensityProfilePoints;
+        private set => SetProperty(ref _intensityProfilePoints, value);
+    }
+
+    public string IntensityProfileStatusText
+    {
+        get => _intensityProfileStatusText;
+        private set => SetProperty(ref _intensityProfileStatusText, value);
+    }
+
+    public Visibility IntensityProfileVisibility => IntensityProfile is null
+        ? Visibility.Collapsed
+        : Visibility.Visible;
+
+    public AssistedRegionMode AssistedRegionMode
+    {
+        get => _assistedRegionMode;
+        set
+        {
+            if (SetProperty(ref _assistedRegionMode, value))
+            {
+                MarkAssistedRegionAnalysisStale();
+            }
+        }
+    }
+
+    public bool UseAutomaticRegionThreshold
+    {
+        get => _useAutomaticRegionThreshold;
+        set
+        {
+            if (SetProperty(ref _useAutomaticRegionThreshold, value))
+            {
+                MarkAssistedRegionAnalysisStale();
+            }
+        }
+    }
+
+    public double RegionThresholdPercent
+    {
+        get => _regionThresholdPercent;
+        set
+        {
+            double normalized = double.IsFinite(value) ? Math.Clamp(value, 0, 100) : 50;
+            if (SetProperty(ref _regionThresholdPercent, normalized))
+            {
+                MarkAssistedRegionAnalysisStale();
+            }
+        }
+    }
+
+    public int MinimumRegionAreaPixels
+    {
+        get => _minimumRegionAreaPixels;
+        set
+        {
+            int normalized = Math.Clamp(value, 1, 10_000_000);
+            if (SetProperty(ref _minimumRegionAreaPixels, normalized))
+            {
+                MarkAssistedRegionAnalysisStale();
+            }
+        }
+    }
+
+    public AssistedRegionCandidateViewModel? SelectedAssistedRegion
+    {
+        get => _selectedAssistedRegion;
+        set
+        {
+            if (SetProperty(ref _selectedAssistedRegion, value))
+            {
+                RejectSelectedAssistedRegionCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    public string AssistedRegionStatusText
+    {
+        get => _assistedRegionStatusText;
+        private set => SetProperty(ref _assistedRegionStatusText, value);
+    }
+
+    public string AssistedRegionDecisionText =>
+        $"接受 {AssistedRegions.Count(candidate => candidate.IsAccepted)} · " +
+        $"拒绝 {AssistedRegions.Count(candidate => !candidate.IsAccepted)} · " +
+        $"已写入 {AssistedRegions.Count(candidate => candidate.IsCommitted)}";
+
+    public Visibility AssistedRegionResultsVisibility => AssistedRegions.Count == 0
+        ? Visibility.Collapsed
+        : Visibility.Visible;
+
+    public string SmartAssistStatusText
+    {
+        get => _smartAssistStatusText;
+        private set => SetProperty(ref _smartAssistStatusText, value);
+    }
+
+    public ExportProfileEditorViewModel? SelectedExportProfile
+    {
+        get => _selectedExportProfile;
+        set
+        {
+            if (SetProperty(ref _selectedExportProfile, value))
+            {
+                RemoveSelectedExportProfileCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    public string ExportProfileSummary => $"投稿预设 · {ExportProfiles.Count} 项";
+
     public CropEditorViewModel Crop { get; } = new();
 
     public ObservableCollection<FigureTemplateDefinition> AvailableTemplates { get; }
@@ -251,6 +503,19 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public AsyncRelayCommand ExportFigureVariantsCommand { get; }
 
+    public RelayCommand RunFigureQcCommand { get; }
+    public RelayCommand ApplySmartLayoutCommand { get; }
+    public RelayCommand HarmonizeFigureStyleCommand { get; }
+    public RelayCommand RunAssistedFigureReviewCommand { get; }
+
+    public RelayCommand NavigateToSelectedQcIssueCommand { get; }
+
+    public RelayCommand AddExportProfileCommand { get; }
+
+    public RelayCommand RemoveSelectedExportProfileCommand { get; }
+
+    public RelayCommand ResetExportProfilesCommand { get; }
+
     public AsyncRelayCommand AcceptSourceRevisionCommand { get; }
 
     public RelayCommand ShowCropWorkspaceCommand { get; }
@@ -260,6 +525,23 @@ public sealed class MainWindowViewModel : ObservableObject
     public RelayCommand ShowInspectorTabCommand { get; }
 
     public RelayCommand ShowLayersTabCommand { get; }
+    public RelayCommand SelectCropToolCommand { get; }
+    public RelayCommand SelectCalibrationToolCommand { get; }
+    public RelayCommand SelectLengthToolCommand { get; }
+    public RelayCommand SelectAngleToolCommand { get; }
+    public RelayCommand SelectRectangleRoiToolCommand { get; }
+    public RelayCommand SelectCircleRoiToolCommand { get; }
+    public RelayCommand SelectPolylineToolCommand { get; }
+    public RelayCommand DeleteSelectedMeasurementCommand { get; }
+    public RelayCommand CopyMeasurementsCommand { get; }
+    public AsyncRelayCommand ExportMeasurementsCommand { get; }
+    public AsyncRelayCommand AnalyzeIntensityProfileCommand { get; }
+    public AsyncRelayCommand AnalyzeAssistedRegionsCommand { get; }
+    public RelayCommand AcceptAllAssistedRegionsCommand { get; }
+    public RelayCommand RejectSelectedAssistedRegionCommand { get; }
+    public RelayCommand CommitAcceptedAssistedRegionsCommand { get; }
+    public RelayCommand ClearAssistedRegionsCommand { get; }
+    public RelayCommand ApplyCalibrationToFigurePanelsCommand { get; }
     public RelayCommand ShowHelpCommand { get; }
 
     public RelayCommand AddCurrentCropToFigureCommand { get; }
@@ -301,13 +583,26 @@ public sealed class MainWindowViewModel : ObservableObject
                         preserveSize: LockCropSizeAcrossSources);
                 }
 
+                CancelPendingScientificMeasurement();
+
                 OnPropertyChanged(nameof(HasSelection));
                 OnPropertyChanged(nameof(EmptyStateVisibility));
+                OnPropertyChanged(nameof(MeasurementDockVisibility));
+                OnPropertyChanged(nameof(ActiveScienceToolHint));
+                OnPropertyChanged(nameof(CropOverlayVisibility));
                 ExportCropCommand.NotifyCanExecuteChanged();
                 AddCurrentCropToBatchQueueCommand.NotifyCanExecuteChanged();
                 AcceptSourceRevisionCommand.NotifyCanExecuteChanged();
                 AddCurrentCropToFigureCommand.NotifyCanExecuteChanged();
                 ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
+                DeleteSelectedMeasurementCommand.NotifyCanExecuteChanged();
+                CopyMeasurementsCommand.NotifyCanExecuteChanged();
+                ExportMeasurementsCommand.NotifyCanExecuteChanged();
+                AnalyzeIntensityProfileCommand.NotifyCanExecuteChanged();
+                AnalyzeAssistedRegionsCommand.NotifyCanExecuteChanged();
+                ApplyCalibrationToFigurePanelsCommand.NotifyCanExecuteChanged();
+                ClearIntensityProfile();
+                ClearAssistedRegionAnalysis();
                 MarkDirty();
             }
         }
@@ -316,6 +611,57 @@ public sealed class MainWindowViewModel : ObservableObject
     public bool HasSelection => SelectedSource is not null;
 
     public Visibility EmptyStateVisibility => HasSelection ? Visibility.Collapsed : Visibility.Visible;
+
+    public Visibility MeasurementDockVisibility =>
+        WorkspaceMode == WorkspaceMode.Crop && HasSelection
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+    public ScientificToolMode ActiveScienceTool
+    {
+        get => _activeScienceTool;
+        set
+        {
+            if (SetProperty(ref _activeScienceTool, value))
+            {
+                CancelPendingScientificMeasurement();
+                WorkspaceMode = WorkspaceMode.Crop;
+                OnPropertyChanged(nameof(IsCropToolActive));
+                OnPropertyChanged(nameof(IsCalibrationToolActive));
+                OnPropertyChanged(nameof(IsLengthToolActive));
+                OnPropertyChanged(nameof(IsAngleToolActive));
+                OnPropertyChanged(nameof(IsRectangleRoiToolActive));
+                OnPropertyChanged(nameof(IsCircleRoiToolActive));
+                OnPropertyChanged(nameof(IsPolylineToolActive));
+                OnPropertyChanged(nameof(ActiveScienceToolHint));
+                OnPropertyChanged(nameof(CropOverlayVisibility));
+            }
+        }
+    }
+
+    public bool IsCropToolActive => ActiveScienceTool == ScientificToolMode.Crop;
+    public bool IsCalibrationToolActive => ActiveScienceTool == ScientificToolMode.Calibration;
+    public bool IsLengthToolActive => ActiveScienceTool == ScientificToolMode.Length;
+    public bool IsAngleToolActive => ActiveScienceTool == ScientificToolMode.Angle;
+    public bool IsRectangleRoiToolActive => ActiveScienceTool == ScientificToolMode.RectangleRoi;
+    public bool IsCircleRoiToolActive => ActiveScienceTool == ScientificToolMode.CircleRoi;
+    public bool IsPolylineToolActive => ActiveScienceTool == ScientificToolMode.Polyline;
+
+    public Visibility CropOverlayVisibility =>
+        IsCropOverlayVisible && IsCropToolActive
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+    public string ActiveScienceToolHint => ActiveScienceTool switch
+    {
+        ScientificToolMode.Calibration => "标定工具 · 拖动参考线，然后输入已知真实距离",
+        ScientificToolMode.Length => "长度工具 · 拖动测量，结果优先显示真实尺寸",
+        ScientificToolMode.Angle => "角度工具 · 依次点击第一端点、顶点、第二端点",
+        ScientificToolMode.RectangleRoi => "矩形 ROI · 拖动建立研究区域",
+        ScientificToolMode.CircleRoi => "圆形测量 · 拖动建立等宽高 ROI，自动计算等效直径、面积与周长",
+        ScientificToolMode.Polyline => "折线工具 · 逐点单击添加路径，双击最后一点完成",
+        _ => "裁剪工具 · 拖动空白处新建裁剪框，拖动框体移动",
+    };
 
     public bool IsBusy
     {
@@ -333,8 +679,26 @@ public sealed class MainWindowViewModel : ObservableObject
                 ExportCropCommand.NotifyCanExecuteChanged();
                 ExportFigureCommand.NotifyCanExecuteChanged();
                 ExportFigureVariantsCommand.NotifyCanExecuteChanged();
+                RunFigureQcCommand.NotifyCanExecuteChanged();
+                ApplySmartLayoutCommand.NotifyCanExecuteChanged();
+                HarmonizeFigureStyleCommand.NotifyCanExecuteChanged();
+                RunAssistedFigureReviewCommand.NotifyCanExecuteChanged();
+                NavigateToSelectedQcIssueCommand.NotifyCanExecuteChanged();
+                AddExportProfileCommand.NotifyCanExecuteChanged();
+                RemoveSelectedExportProfileCommand.NotifyCanExecuteChanged();
+                ResetExportProfilesCommand.NotifyCanExecuteChanged();
                 AcceptSourceRevisionCommand.NotifyCanExecuteChanged();
                 ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
+                DeleteSelectedMeasurementCommand.NotifyCanExecuteChanged();
+                CopyMeasurementsCommand.NotifyCanExecuteChanged();
+                ExportMeasurementsCommand.NotifyCanExecuteChanged();
+                AnalyzeIntensityProfileCommand.NotifyCanExecuteChanged();
+                AnalyzeAssistedRegionsCommand.NotifyCanExecuteChanged();
+                AcceptAllAssistedRegionsCommand.NotifyCanExecuteChanged();
+                RejectSelectedAssistedRegionCommand.NotifyCanExecuteChanged();
+                CommitAcceptedAssistedRegionsCommand.NotifyCanExecuteChanged();
+                ClearAssistedRegionsCommand.NotifyCanExecuteChanged();
+                ApplyCalibrationToFigurePanelsCommand.NotifyCanExecuteChanged();
                 OpenProjectCommand.NotifyCanExecuteChanged();
                 SaveProjectCommand.NotifyCanExecuteChanged();
                 SaveProjectAsCommand.NotifyCanExecuteChanged();
@@ -364,6 +728,7 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             if (SetProperty(ref _isCropOverlayVisible, value))
             {
+                OnPropertyChanged(nameof(CropOverlayVisibility));
                 MarkDirty();
             }
         }
@@ -391,6 +756,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 OnPropertyChanged(nameof(CropWorkspaceVisibility));
                 OnPropertyChanged(nameof(FigureWorkspaceVisibility));
                 OnPropertyChanged(nameof(WorkspaceModeText));
+                OnPropertyChanged(nameof(MeasurementDockVisibility));
                 MarkDirty();
             }
         }
@@ -448,6 +814,716 @@ public sealed class MainWindowViewModel : ObservableObject
         }
     }
 
+    public bool BeginScientificGesture(double x, double y, bool finishMultiPoint = false)
+    {
+        SourceAssetItemViewModel? source = SelectedSource;
+        if (source is null || ActiveScienceTool == ScientificToolMode.Crop)
+        {
+            return false;
+        }
+
+        var point = new MeasurementPoint(x, y);
+        switch (ActiveScienceTool)
+        {
+            case ScientificToolMode.Calibration:
+                source.Calibration.BeginReferenceLine(x, y);
+                StatusMessage = "拖动参考线 · 松开后输入已知真实距离";
+                return true;
+            case ScientificToolMode.Length:
+                _pendingMeasurement = source.AddMeasurement(
+                    ScientificMeasurementKind.Length,
+                    point,
+                    point);
+                StatusMessage = "正在测量长度…";
+                return true;
+            case ScientificToolMode.RectangleRoi:
+                _pendingMeasurement = source.AddMeasurement(
+                    ScientificMeasurementKind.RectangleRoi,
+                    point,
+                    point);
+                StatusMessage = "正在创建矩形 ROI…";
+                return true;
+            case ScientificToolMode.CircleRoi:
+                _pendingMeasurement = source.AddMeasurement(
+                    ScientificMeasurementKind.CircleRoi,
+                    point,
+                    point);
+                StatusMessage = "正在创建圆形测量…";
+                return true;
+            case ScientificToolMode.Polyline:
+                HandlePolylinePoint(source, point, finishMultiPoint);
+                return false;
+            case ScientificToolMode.Angle:
+                HandleAnglePoint(source, point);
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    public void UpdateScientificGesture(double x, double y)
+    {
+        if (SelectedSource is null)
+        {
+            return;
+        }
+
+        if (ActiveScienceTool == ScientificToolMode.Calibration)
+        {
+            SelectedSource.Calibration.UpdateReferenceLine(x, y);
+            return;
+        }
+
+        if (_pendingMeasurement is not null && ActiveScienceTool == ScientificToolMode.CircleRoi)
+        {
+            double deltaX = x - _pendingMeasurement.X1;
+            double deltaY = y - _pendingMeasurement.Y1;
+            double directionX = deltaX < 0 ? -1 : 1;
+            double directionY = deltaY < 0 ? -1 : 1;
+            double maximumX = directionX > 0
+                ? SelectedSource.Width - 1 - _pendingMeasurement.X1
+                : _pendingMeasurement.X1;
+            double maximumY = directionY > 0
+                ? SelectedSource.Height - 1 - _pendingMeasurement.Y1
+                : _pendingMeasurement.Y1;
+            double diameter = Math.Min(
+                Math.Max(Math.Abs(deltaX), Math.Abs(deltaY)),
+                Math.Min(maximumX, maximumY));
+            _pendingMeasurement.UpdatePointB(
+                _pendingMeasurement.X1 + directionX * diameter,
+                _pendingMeasurement.Y1 + directionY * diameter);
+            return;
+        }
+
+        if (_pendingMeasurement is not null &&
+            ActiveScienceTool is ScientificToolMode.Length or ScientificToolMode.RectangleRoi)
+        {
+            _pendingMeasurement.UpdatePointB(x, y);
+        }
+    }
+
+    public void CompleteScientificGesture()
+    {
+        SourceAssetItemViewModel? source = SelectedSource;
+        if (source is null)
+        {
+            _pendingMeasurement = null;
+            return;
+        }
+
+        if (ActiveScienceTool == ScientificToolMode.Calibration)
+        {
+            source.Calibration.CompleteReferenceLine();
+            StatusMessage = source.Calibration.CanApplyReference
+                ? "参考线已建立 · 输入真实距离并点击“应用参考标定”"
+                : "参考线过短 · 标定未改变";
+            return;
+        }
+
+        if (_pendingMeasurement is not null &&
+            ActiveScienceTool is ScientificToolMode.Length or ScientificToolMode.RectangleRoi or ScientificToolMode.CircleRoi)
+        {
+            ScientificMeasurementViewModel completed = _pendingMeasurement;
+            _pendingMeasurement = null;
+            if (!completed.IsValid)
+            {
+                source.RemoveMeasurement(completed);
+                StatusMessage = "测量已取消 · 几何尺寸过小";
+                return;
+            }
+
+            StatusMessage = $"已添加{completed.TypeText} · {completed.ValueText}";
+            CompleteHistoryGesture();
+        }
+    }
+
+    private void HandleAnglePoint(SourceAssetItemViewModel source, MeasurementPoint point)
+    {
+        if (_pendingMeasurement is null || _pendingAngleStep == 0)
+        {
+            _pendingMeasurement = source.AddMeasurement(
+                ScientificMeasurementKind.Angle,
+                point,
+                point,
+                point);
+            _pendingAngleStep = 1;
+            StatusMessage = "角度测量 1/3 · 已设置第一端点，请点击顶点";
+            return;
+        }
+
+        if (_pendingAngleStep == 1)
+        {
+            _pendingMeasurement.UpdatePointB(point.X, point.Y);
+            _pendingAngleStep = 2;
+            StatusMessage = "角度测量 2/3 · 已设置顶点，请点击第二端点";
+            return;
+        }
+
+        _pendingMeasurement.UpdatePointC(point.X, point.Y);
+        ScientificMeasurementViewModel completed = _pendingMeasurement;
+        _pendingMeasurement = null;
+        _pendingAngleStep = 0;
+        if (!completed.IsValid)
+        {
+            source.RemoveMeasurement(completed);
+            StatusMessage = "角度测量已取消 · 两条边必须具有有效长度";
+            return;
+        }
+
+        StatusMessage = $"已添加角度测量 · {completed.ValueText}";
+        CompleteHistoryGesture();
+    }
+
+    private void CancelPendingScientificMeasurement()
+    {
+        ScientificMeasurementViewModel? pending = _pendingMeasurement;
+        _pendingMeasurement = null;
+        _pendingAngleStep = 0;
+        if (pending is null)
+        {
+            return;
+        }
+
+        SourceAssetItemViewModel? owner = Sources.FirstOrDefault(
+            source => source.Asset.Id == pending.SourceAssetId);
+        owner?.CancelMeasurement(pending);
+    }
+
+    private void HandlePolylinePoint(
+        SourceAssetItemViewModel source,
+        MeasurementPoint point,
+        bool finish)
+    {
+        if (_pendingMeasurement is null || _pendingMeasurement.Kind != ScientificMeasurementKind.Polyline)
+        {
+            _pendingMeasurement = source.AddMeasurement(
+                ScientificMeasurementKind.Polyline,
+                point,
+                point,
+                pathPoints: [point, point]);
+            StatusMessage = "折线测量 · 已设置起点，继续单击添加节点，双击完成";
+            return;
+        }
+
+        if (!finish)
+        {
+            _pendingMeasurement.CommitPolylinePoint(point.X, point.Y);
+            StatusMessage = $"折线测量 · {_pendingMeasurement.PathPoints.Count - 1} 段 · 双击完成";
+            return;
+        }
+
+        _pendingMeasurement.CompletePolyline(point.X, point.Y);
+        ScientificMeasurementViewModel completed = _pendingMeasurement;
+        _pendingMeasurement = null;
+        if (!completed.IsValid)
+        {
+            source.RemoveMeasurement(completed);
+            StatusMessage = "折线测量已取消 · 至少需要两个不同节点";
+            return;
+        }
+
+        StatusMessage = $"已添加折线测量 · {completed.ValueText} · {completed.PathPoints.Count} points";
+        CompleteHistoryGesture();
+    }
+
+    private void DeleteSelectedMeasurement()
+    {
+        if (SelectedSource?.SelectedMeasurement is not ScientificMeasurementViewModel measurement)
+        {
+            return;
+        }
+
+        SelectedSource.RemoveMeasurement(measurement);
+        StatusMessage = "已删除测量对象 · 原图未修改";
+    }
+
+    private void CopyMeasurements()
+    {
+        if (SelectedSource?.Measurements.Count is not > 0)
+        {
+            return;
+        }
+
+        Clipboard.SetText(SelectedSource.CreateMeasurementCsv());
+        StatusMessage = $"已复制 {SelectedSource.Measurements.Count} 条测量记录";
+    }
+
+    private async Task ExportMeasurementsAsync()
+    {
+        SourceAssetItemViewModel? source = SelectedSource;
+        if (source?.Measurements.Count is not > 0)
+        {
+            return;
+        }
+
+        string suggestedName = $"{Path.GetFileNameWithoutExtension(source.DisplayName)}_measurements.csv";
+        string? requestedPath = _exportFilePicker.PickNewMeasurementExportPath(suggestedName);
+        if (requestedPath is null)
+        {
+            return;
+        }
+
+        ExportPathDecision decision = await _pathSafetyPolicy.ValidateExportTargetAsync(
+            requestedPath,
+            Sources.Select(item => item.Asset).ToArray());
+        if (!decision.IsAllowed || decision.NormalizedTargetPath is null)
+        {
+            LastError = decision.Message;
+            StatusMessage = "测量表导出已阻止 · 路径不安全";
+            return;
+        }
+
+        if (File.Exists(decision.NormalizedTargetPath))
+        {
+            LastError = "测量表只能导出到全新 CSV 或 XLSX 文件，不覆盖任何已有文件。";
+            StatusMessage = "测量表导出已阻止 · 目标文件已存在";
+            return;
+        }
+
+        string extension = Path.GetExtension(decision.NormalizedTargetPath).ToLowerInvariant();
+        if (extension == ".xlsx")
+        {
+            MeasurementTableXlsxWriter.WriteNew(decision.NormalizedTargetPath, source);
+        }
+        else if (extension == ".csv")
+        {
+            await using var output = new FileStream(
+                decision.NormalizedTargetPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                4096,
+                useAsync: true);
+            await using var writer = new StreamWriter(output, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+            await writer.WriteAsync(source.CreateMeasurementCsv());
+            await writer.FlushAsync();
+        }
+        else
+        {
+            LastError = "测量表格式只支持 .csv 或 .xlsx。";
+            StatusMessage = "测量表导出已阻止 · 格式不支持";
+            return;
+        }
+
+        _auditTrail.Add(new ProjectAuditEntrySnapshot
+        {
+            Timestamp = DateTimeOffset.UtcNow,
+            Command = extension == ".xlsx" ? "ExportMeasurementsXlsx" : "ExportMeasurementsCsv",
+            Parameters = new Dictionary<string, object?>
+            {
+                ["sourceAssetId"] = source.Asset.Id,
+                ["measurementCount"] = source.Measurements.Count,
+                ["calibrated"] = source.Calibration.IsCalibrated,
+            },
+        });
+        LastError = null;
+        StatusMessage = $"测量表已导出 · {Path.GetFileName(decision.NormalizedTargetPath)} · 原图未修改";
+    }
+
+    private void ApplyCalibrationToFigurePanels()
+    {
+        SourceAssetItemViewModel? source = SelectedSource;
+        if (source?.Calibration.IsCalibrated != true)
+        {
+            return;
+        }
+
+        int updated = SynchronizeScaleBarsForSource(source);
+        StatusMessage = updated == 0
+            ? "当前源图尚未加入拼版；后续面板会自动继承标定"
+            : $"已将标定同步到 {updated} 个拼版面板的比例尺";
+        CompleteHistoryGesture();
+    }
+
+    private void AttachSourceScience(SourceAssetItemViewModel source)
+    {
+        source.ScienceChanged -= OnSourceScienceChanged;
+        source.ScienceEditCompleted -= OnSourceScienceEditCompleted;
+        source.ScienceChanged += OnSourceScienceChanged;
+        source.ScienceEditCompleted += OnSourceScienceEditCompleted;
+    }
+
+    private void OnSourceScienceChanged(object? sender, EventArgs e)
+    {
+        if (sender is SourceAssetItemViewModel source)
+        {
+            SynchronizeScaleBarsForSource(source);
+        }
+
+        OnPropertyChanged(nameof(MeasurementDockVisibility));
+        DeleteSelectedMeasurementCommand.NotifyCanExecuteChanged();
+        CopyMeasurementsCommand.NotifyCanExecuteChanged();
+        ExportMeasurementsCommand.NotifyCanExecuteChanged();
+        AnalyzeIntensityProfileCommand.NotifyCanExecuteChanged();
+        ApplyCalibrationToFigurePanelsCommand.NotifyCanExecuteChanged();
+        if (IntensityProfile is not null)
+        {
+            IntensityProfileStatusText = "测量或标定已变化 · 请重新运行强度剖面";
+        }
+        MarkDirty();
+    }
+
+    private async Task AnalyzeIntensityProfileAsync()
+    {
+        SourceAssetItemViewModel? source = SelectedSource;
+        ScientificMeasurementViewModel? measurement = source?.SelectedMeasurement;
+        if (source is null || measurement?.Kind != ScientificMeasurementKind.Length)
+        {
+            LastError = "强度剖面需要先在测量表中选择一条长度测量。";
+            StatusMessage = "强度剖面未运行 · 未选择长度测量";
+            return;
+        }
+
+        IsBusy = true;
+        LastError = null;
+        StatusMessage = $"正在从原始 {source.Asset.Metadata.BitsPerChannel}-bit 文件采样强度…";
+        try
+        {
+            ScientificMeasurement model = measurement.Measurement;
+            IntensityProfileResult profile = await _intensityProfileAnalyzer.AnalyzeAsync(
+                source.Asset,
+                model.PointA,
+                model.PointB,
+                source.Calibration.Calibration);
+            if (!profile.IsValid)
+            {
+                throw new InvalidDataException("强度剖面结果无效或采样点不足。");
+            }
+
+            IntensityProfile = profile;
+            IntensityProfilePoints = CreateIntensityProfilePoints(profile);
+            IntensityProfileStatusText =
+                $"N {profile.Samples.Count} · Min {profile.Minimum:0.000} · Mean {profile.Mean:0.000} · " +
+                $"Max {profile.Maximum:0.000} · 原始 {profile.SourceBitDepth}-bit 归一化";
+            StatusMessage = $"强度剖面完成 · {profile.Samples.Count} 个采样点 · 原图未修改";
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidDataException or
+            NotSupportedException or ArgumentOutOfRangeException)
+        {
+            LastError = exception.Message;
+            StatusMessage = "强度剖面失败 · 原图未修改";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private void ClearIntensityProfile()
+    {
+        IntensityProfile = null;
+        IntensityProfilePoints = [];
+        IntensityProfileStatusText = "请选择长度测量后运行强度剖面";
+    }
+
+    private static PointCollection CreateIntensityProfilePoints(IntensityProfileResult profile)
+    {
+        const double chartWidth = 300;
+        const double chartHeight = 100;
+        int lastIndex = Math.Max(1, profile.Samples.Count - 1);
+        var points = new PointCollection(profile.Samples.Count);
+        for (int index = 0; index < profile.Samples.Count; index++)
+        {
+            points.Add(new Point(
+                index / (double)lastIndex * chartWidth,
+                (1 - profile.Samples[index].NormalizedIntensity) * chartHeight));
+        }
+
+        points.Freeze();
+        return points;
+    }
+
+    private async Task AnalyzeAssistedRegionsAsync()
+    {
+        SourceAssetItemViewModel? source = SelectedSource;
+        if (source is null || !Crop.TryGetCrop(out PixelRect64 roi))
+        {
+            LastError = "请先选择源图并建立有效裁剪 ROI。";
+            StatusMessage = "候选区域分析未运行 · ROI 无效";
+            return;
+        }
+
+        var options = new AssistedRegionAnalysisOptions(
+            AssistedRegionMode,
+            roi,
+            UseAutomaticRegionThreshold,
+            RegionThresholdPercent / 100,
+            MinimumRegionAreaPixels);
+        IsBusy = true;
+        LastError = null;
+        StatusMessage = "正在从原始像素生成可复核候选；不会修改源文件…";
+        try
+        {
+            AssistedRegionAnalysisResult result = await _assistedRegionAnalyzer.AnalyzeAsync(
+                source.Asset,
+                options);
+            if (!result.IsValid)
+            {
+                throw new InvalidDataException("候选区域分析结果无效。请调整阈值或最小面积。");
+            }
+
+            ClearAssistedRegionAnalysis();
+            _assistedRegionResult = result;
+            foreach (AssistedRegionCandidate candidate in result.Candidates)
+            {
+                var item = new AssistedRegionCandidateViewModel(
+                    candidate,
+                    source.Calibration.Calibration,
+                    result.Options.Mode);
+                item.Changed += OnAssistedRegionDecisionChanged;
+                AssistedRegions.Add(item);
+            }
+
+            SelectedAssistedRegion = AssistedRegions.FirstOrDefault();
+            AssistedRegionStatusText =
+                $"{GetAssistedRegionModeLabel(result.Options.Mode)} · {result.Candidates.Count} 候选 · " +
+                $"面积分数 {result.AreaFraction:P2} · 阈值 {result.AppliedThresholdNormalized:P1} · " +
+                $"{result.AnalyzerId}";
+            _auditTrail.Add(new ProjectAuditEntrySnapshot
+            {
+                Timestamp = result.AnalyzedAt,
+                Command = "AnalyzeAssistedRegions",
+                Parameters = new Dictionary<string, object?>
+                {
+                    ["sourceAssetId"] = source.Asset.Id,
+                    ["mode"] = result.Options.Mode.ToString(),
+                    ["roi"] = $"{roi.X},{roi.Y},{roi.Width},{roi.Height}",
+                    ["automaticThreshold"] = result.Options.UseAutomaticThreshold,
+                    ["appliedThreshold"] = result.AppliedThresholdNormalized,
+                    ["minimumAreaPixels"] = result.Options.MinimumAreaPixels,
+                    ["candidateCount"] = result.Candidates.Count,
+                    ["areaFraction"] = result.AreaFraction,
+                    ["analyzerId"] = result.AnalyzerId,
+                },
+            });
+            NotifyAssistedRegionStateChanged();
+            MarkDirty();
+            StatusMessage = $"候选区域分析完成 · {result.Candidates.Count} 项等待人工接受/拒绝 · 原图未修改";
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidDataException or
+            NotSupportedException or ArgumentException or OverflowException)
+        {
+            LastError = exception.Message;
+            StatusMessage = "候选区域分析失败 · 原图未修改";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private void AcceptAllAssistedRegions()
+    {
+        foreach (AssistedRegionCandidateViewModel candidate in AssistedRegions.Where(
+                     candidate => !candidate.IsCommitted))
+        {
+            candidate.IsAccepted = true;
+        }
+
+        NotifyAssistedRegionStateChanged();
+        StatusMessage = "所有未写入候选已标记为接受；仍需点击“写入测量表”确认";
+    }
+
+    private void RejectSelectedAssistedRegion()
+    {
+        if (SelectedAssistedRegion is not { IsCommitted: false } selected)
+        {
+            return;
+        }
+
+        selected.IsAccepted = false;
+        NotifyAssistedRegionStateChanged();
+        StatusMessage = $"候选 {selected.Id} 已拒绝；分析结果未写入科研测量";
+    }
+
+    private void CommitAcceptedAssistedRegions()
+    {
+        SourceAssetItemViewModel? source = SelectedSource;
+        AssistedRegionCandidateViewModel[] accepted = AssistedRegions
+            .Where(candidate => candidate.IsAccepted && !candidate.IsCommitted)
+            .ToArray();
+        if (source is null || accepted.Length == 0)
+        {
+            return;
+        }
+
+        int committed = 0;
+        AssistedRegionMode mode = _assistedRegionResult?.Options.Mode ?? AssistedRegionMode.BrightParticles;
+        foreach (AssistedRegionCandidateViewModel candidate in accepted)
+        {
+            double maximumX = Math.Max(0, source.Width - 1);
+            double maximumY = Math.Max(0, source.Height - 1);
+            if (mode is AssistedRegionMode.DarkCracks or AssistedRegionMode.BrightLamellae)
+            {
+                bool majorIsHorizontal = candidate.Candidate.Bounds.Width >= candidate.Candidate.Bounds.Height;
+                bool measureHorizontal = mode == AssistedRegionMode.DarkCracks
+                    ? majorIsHorizontal
+                    : !majorIsHorizontal;
+                double length = mode == AssistedRegionMode.DarkCracks
+                    ? Math.Max(candidate.Candidate.Bounds.Width, candidate.Candidate.Bounds.Height)
+                    : Math.Min(candidate.Candidate.Bounds.Width, candidate.Candidate.Bounds.Height);
+                double half = length / 2;
+                MeasurementPoint start = measureHorizontal
+                    ? new MeasurementPoint(
+                        Math.Clamp(candidate.Candidate.CentroidX - half, 0, maximumX),
+                        Math.Clamp(candidate.Candidate.CentroidY, 0, maximumY))
+                    : new MeasurementPoint(
+                        Math.Clamp(candidate.Candidate.CentroidX, 0, maximumX),
+                        Math.Clamp(candidate.Candidate.CentroidY - half, 0, maximumY));
+                MeasurementPoint end = measureHorizontal
+                    ? new MeasurementPoint(
+                        Math.Clamp(candidate.Candidate.CentroidX + half, 0, maximumX),
+                        Math.Clamp(candidate.Candidate.CentroidY, 0, maximumY))
+                    : new MeasurementPoint(
+                        Math.Clamp(candidate.Candidate.CentroidX, 0, maximumX),
+                        Math.Clamp(candidate.Candidate.CentroidY + half, 0, maximumY));
+                if (Math.Abs(end.X - start.X) + Math.Abs(end.Y - start.Y) < 1)
+                {
+                    continue;
+                }
+
+                source.AddMeasurement(
+                    ScientificMeasurementKind.Length,
+                    start,
+                    end,
+                    strokeColor: "#FF75D9AA");
+                candidate.MarkCommitted();
+                committed++;
+                continue;
+            }
+
+            double diameter = Math.Min(
+                candidate.Candidate.EquivalentDiameterPixels,
+                Math.Min(maximumX, maximumY));
+            if (diameter < 1)
+            {
+                continue;
+            }
+
+            double x = Math.Clamp(
+                candidate.Candidate.CentroidX - diameter / 2,
+                0,
+                Math.Max(0, maximumX - diameter));
+            double y = Math.Clamp(
+                candidate.Candidate.CentroidY - diameter / 2,
+                0,
+                Math.Max(0, maximumY - diameter));
+            source.AddMeasurement(
+                ScientificMeasurementKind.CircleRoi,
+                new MeasurementPoint(x, y),
+                new MeasurementPoint(x + diameter, y + diameter),
+                strokeColor: "#FF75D9AA");
+            candidate.MarkCommitted();
+            committed++;
+        }
+
+        _auditTrail.Add(new ProjectAuditEntrySnapshot
+        {
+            Timestamp = DateTimeOffset.UtcNow,
+            Command = "AcceptAssistedRegions",
+            Parameters = new Dictionary<string, object?>
+            {
+                ["sourceAssetId"] = source.Asset.Id,
+                ["mode"] = _assistedRegionResult?.Options.Mode.ToString(),
+                ["acceptedCandidateIds"] = string.Join(",", accepted.Select(candidate => candidate.Id)),
+                ["committedMeasurementCount"] = committed,
+                ["rejectedCandidateCount"] = AssistedRegions.Count(candidate => !candidate.IsAccepted),
+                ["analyzerId"] = _assistedRegionResult?.AnalyzerId,
+            },
+        });
+        NotifyAssistedRegionStateChanged();
+        CompleteHistoryGesture();
+        string metric = mode switch
+        {
+            AssistedRegionMode.DarkCracks => "裂纹长度",
+            AssistedRegionMode.BrightLamellae => "片层宽度",
+            _ => "等效圆直径",
+        };
+        StatusMessage = $"已人工确认并写入 {committed} 条{metric}测量 · 可在测量表继续删除校正";
+    }
+
+    private void OnAssistedRegionDecisionChanged(object? sender, EventArgs e) =>
+        NotifyAssistedRegionStateChanged();
+
+    private void MarkAssistedRegionAnalysisStale()
+    {
+        if (_assistedRegionResult is not null)
+        {
+            AssistedRegionStatusText = "参数已变化 · 当前候选仅作旧结果参考，请重新分析";
+        }
+    }
+
+    private void ClearAssistedRegionAnalysis()
+    {
+        foreach (AssistedRegionCandidateViewModel candidate in AssistedRegions)
+        {
+            candidate.Changed -= OnAssistedRegionDecisionChanged;
+        }
+
+        AssistedRegions.Clear();
+        SelectedAssistedRegion = null;
+        _assistedRegionResult = null;
+        AssistedRegionStatusText = "在当前裁剪 ROI 中生成可人工复核的候选区域";
+        NotifyAssistedRegionStateChanged();
+    }
+
+    private void NotifyAssistedRegionStateChanged()
+    {
+        OnPropertyChanged(nameof(AssistedRegionDecisionText));
+        OnPropertyChanged(nameof(AssistedRegionResultsVisibility));
+        AcceptAllAssistedRegionsCommand.NotifyCanExecuteChanged();
+        RejectSelectedAssistedRegionCommand.NotifyCanExecuteChanged();
+        CommitAcceptedAssistedRegionsCommand.NotifyCanExecuteChanged();
+        ClearAssistedRegionsCommand.NotifyCanExecuteChanged();
+    }
+
+    private string GetAssistedRegionModeLabel(AssistedRegionMode mode) =>
+        AssistedRegionModes.FirstOrDefault(option => option.Mode == mode)?.Label ?? mode.ToString();
+
+    private void OnSourceScienceEditCompleted(object? sender, EventArgs e) =>
+        CompleteHistoryGesture();
+
+    private int SynchronizeScaleBarsForSource(SourceAssetItemViewModel source)
+    {
+        SpatialCalibration calibration = source.Calibration.Calibration;
+        FigurePanelViewModel[] panels = Figure.Panels
+            .Where(panel => ReferenceEquals(panel.Source, source))
+            .ToArray();
+        foreach (FigurePanelViewModel panel in panels)
+        {
+            panel.ApplySpatialCalibration(calibration);
+        }
+
+        return panels.Length;
+    }
+
+    private static bool MeasurementFitsSource(
+        ScientificMeasurement measurement,
+        SourceAssetItemViewModel source)
+    {
+        bool Fits(MeasurementPoint point) =>
+            point.IsFinite && point.X >= 0 && point.Y >= 0 &&
+            point.X < source.Width && point.Y < source.Height;
+        return Fits(measurement.PointA) && Fits(measurement.PointB) &&
+               (!measurement.PointC.HasValue || Fits(measurement.PointC.Value)) &&
+               measurement.EffectivePathPoints.All(Fits);
+    }
+
+    private static bool MeasurementFitsDimensions(
+        ScientificMeasurement measurement,
+        long width,
+        long height)
+    {
+        bool Fits(MeasurementPoint point) =>
+            point.IsFinite && point.X >= 0 && point.Y >= 0 &&
+            point.X < width && point.Y < height;
+        return Fits(measurement.PointA) && Fits(measurement.PointB) &&
+               (!measurement.PointC.HasValue || Fits(measurement.PointC.Value)) &&
+               measurement.EffectivePathPoints.All(Fits);
+    }
+
     private async Task ImportSourcesAsync()
     {
         IReadOnlyList<string> paths = _filePicker.PickImageFiles();
@@ -471,6 +1547,7 @@ public sealed class MainWindowViewModel : ObservableObject
                     SourceAsset asset = await _sourceReader.ImportAsync(path);
                     var preview = await _previewLoader.LoadAsync(path, 1400);
                     SourceAssetItemViewModel item = new(asset, preview);
+                    AttachSourceScience(item);
                     Sources.Add(item);
                     MarkDirty();
                     SelectedSource ??= item;
@@ -926,6 +2003,15 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             throw new InvalidDataException("新版本尺寸不足以覆盖当前活动裁剪区域，不能接受。");
         }
+
+        if (selected.Measurements.Any(measurement =>
+                !MeasurementFitsDimensions(
+                    measurement.Measurement,
+                    proposed.Metadata.PixelSize.Width,
+                    proposed.Metadata.PixelSize.Height)))
+        {
+            throw new InvalidDataException("新版本尺寸不足以覆盖现有科学测量坐标，不能接受。");
+        }
     }
 
     private void AddCurrentCropToFigure()
@@ -944,6 +2030,8 @@ public sealed class MainWindowViewModel : ObservableObject
             StatusMessage = "未加入拼版 · 模板插槽已满";
             return;
         }
+
+        panel.ApplySpatialCalibration(selected.Calibration.Calibration);
 
         LastError = panel.IsBelowMinimumDpi
             ? $"面板 {panel.Label} 的{panel.EffectiveDpiText}，低于模板建议的 {panel.MinimumEffectiveDpi} dpi。"
@@ -966,6 +2054,7 @@ public sealed class MainWindowViewModel : ObservableObject
         try
         {
             panel.ReplaceSource(source, crop);
+            panel.ApplySpatialCalibration(source.Calibration.Calibration);
             LastError = null;
             StatusMessage = $"已将面板 {panel.Label} 替换为 {source.DisplayName} · 原图未修改";
             CompleteHistoryGesture();
@@ -1030,10 +2119,7 @@ public sealed class MainWindowViewModel : ObservableObject
             }
 
             FigureExportDocument exportDocument = Figure.CreateExportDocument();
-            FigurePreflightResult preflight = FigurePreflight.Check(
-                exportDocument,
-                Sources.Select(item => item.Asset).ToArray(),
-                IsDirty);
+            FigurePreflightResult preflight = UpdateFigureQc(exportDocument);
             if (preflight.HasErrors)
             {
                 LastError = string.Join(Environment.NewLine, preflight.Issues
@@ -1050,7 +2136,7 @@ public sealed class MainWindowViewModel : ObservableObject
             FigureProvenanceDocument provenance = FigureProvenanceWriter.Create(
                 exportDocument,
                 decision.NormalizedTargetPath,
-                typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "0.9.0",
+                typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "1.2.0-alpha",
                 Sources.Select(item => item.Asset).ToArray(),
                 preflight);
             try
@@ -1076,6 +2162,87 @@ public sealed class MainWindowViewModel : ObservableObject
         }
     }
 
+    private void AddExportProfile()
+    {
+        var editor = new ExportProfileEditorViewModel(new FigureExportProfile(
+            Guid.NewGuid().ToString("D"),
+            $"自定义预设 {ExportProfiles.Count + 1}",
+            "tiff",
+            300,
+            bitDepth: 16));
+        editor.PropertyChanged += OnExportProfilePropertyChanged;
+        ExportProfiles.Add(editor);
+        SelectedExportProfile = editor;
+        OnPropertyChanged(nameof(ExportProfileSummary));
+        RemoveSelectedExportProfileCommand.NotifyCanExecuteChanged();
+        MarkDirty();
+    }
+
+    private void RemoveSelectedExportProfile()
+    {
+        if (SelectedExportProfile is not { } selected || ExportProfiles.Count <= 1)
+        {
+            return;
+        }
+
+        int index = ExportProfiles.IndexOf(selected);
+        selected.PropertyChanged -= OnExportProfilePropertyChanged;
+        ExportProfiles.Remove(selected);
+        SelectedExportProfile = ExportProfiles[Math.Clamp(index, 0, ExportProfiles.Count - 1)];
+        OnPropertyChanged(nameof(ExportProfileSummary));
+        RemoveSelectedExportProfileCommand.NotifyCanExecuteChanged();
+        MarkDirty();
+    }
+
+    private void ResetExportProfilesToBuiltIns(bool markDirty) => ReplaceExportProfiles(
+        FigureExportProfile.BuiltIns.Select(profile => new ExportProfileEditorViewModel(profile)),
+        markDirty);
+
+    private void RestoreExportProfiles(IReadOnlyList<ProjectExportProfileSnapshot> snapshots)
+    {
+        IEnumerable<ExportProfileEditorViewModel> profiles = snapshots.Count == 0
+            ? FigureExportProfile.BuiltIns.Select(profile => new ExportProfileEditorViewModel(profile))
+            : snapshots.Select(ExportProfileEditorViewModel.FromSnapshot);
+        ReplaceExportProfiles(profiles, markDirty: false);
+    }
+
+    private void ReplaceExportProfiles(
+        IEnumerable<ExportProfileEditorViewModel> profiles,
+        bool markDirty)
+    {
+        foreach (ExportProfileEditorViewModel existing in ExportProfiles)
+        {
+            existing.PropertyChanged -= OnExportProfilePropertyChanged;
+        }
+        ExportProfiles.Clear();
+        foreach (ExportProfileEditorViewModel profile in profiles)
+        {
+            profile.PropertyChanged += OnExportProfilePropertyChanged;
+            ExportProfiles.Add(profile);
+        }
+        if (ExportProfiles.Count == 0)
+        {
+            throw new InvalidDataException("工程至少需要一个导出预设。");
+        }
+
+        SelectedExportProfile = ExportProfiles[0];
+        OnPropertyChanged(nameof(ExportProfileSummary));
+        RemoveSelectedExportProfileCommand.NotifyCanExecuteChanged();
+        if (markDirty)
+        {
+            MarkDirty();
+        }
+    }
+
+    private FigureExportProfile[] CreateValidatedExportProfiles() =>
+        ExportProfiles.Select(profile => profile.ToModel()).ToArray();
+
+    private void OnExportProfilePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        OnPropertyChanged(nameof(ExportProfileSummary));
+        MarkDirty();
+    }
+
     private async Task ExportFigureVariantsAsync()
     {
         if (_batchExportFolderPicker is null || Figure.Panels.Count == 0)
@@ -1096,6 +2263,23 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
+        FigureExportProfile[] profiles;
+        try
+        {
+            profiles = CreateValidatedExportProfiles();
+        }
+        catch (InvalidDataException exception)
+        {
+            LastError = exception.Message;
+            StatusMessage = "投稿版本导出已停止 · 请修正预设";
+            return;
+        }
+        if (profiles.Length == 0)
+        {
+            LastError = "至少需要一个投稿导出预设。";
+            return;
+        }
+
         SourceAsset[] figureSources = Figure.Panels
             .Select(panel => panel.Source.Asset)
             .DistinctBy(source => source.Id)
@@ -1107,7 +2291,7 @@ public sealed class MainWindowViewModel : ObservableObject
         int completed = 0;
         IsBusy = true;
         LastError = null;
-        StatusMessage = $"正在准备 {FigureExportProfile.BuiltIns.Count} 个投稿版本…";
+        StatusMessage = $"正在准备 {profiles.Length} 个投稿版本…";
 
         try
         {
@@ -1122,7 +2306,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 }
             }
 
-            foreach (FigureExportProfile profile in FigureExportProfile.BuiltIns)
+            foreach (FigureExportProfile profile in profiles)
             {
                 try
                 {
@@ -1163,7 +2347,7 @@ public sealed class MainWindowViewModel : ObservableObject
                         FigureProvenanceDocument provenance = FigureProvenanceWriter.Create(
                             variant,
                             decision.NormalizedTargetPath,
-                            typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "0.9.0",
+                            typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "1.2.0-alpha",
                             figureSources,
                             preflight,
                             profile.Id,
@@ -1197,8 +2381,8 @@ public sealed class MainWindowViewModel : ObservableObject
                 ? warnings.Count == 0 ? null : string.Join(Environment.NewLine, warnings)
                 : string.Join(Environment.NewLine, errors.Concat(warnings));
             StatusMessage = errors.Count == 0
-                ? $"投稿版本导出完成 · {completed}/{FigureExportProfile.BuiltIns.Count} 项 · 主图/补充图/缩略图均未覆盖原文件"
-                : $"投稿版本导出完成 · {completed}/{FigureExportProfile.BuiltIns.Count} 项成功 · 失败项已保留，原图未修改";
+                ? $"投稿版本导出完成 · {completed}/{profiles.Length} 项 · 所有输出均为全新文件"
+                : $"投稿版本导出完成 · {completed}/{profiles.Length} 项成功 · 失败项未覆盖任何文件";
         }
         finally
         {
@@ -1270,6 +2454,7 @@ public sealed class MainWindowViewModel : ObservableObject
             _projectCreatedAt = DateTimeOffset.UtcNow;
             _projectPath = null;
             _auditTrail.Clear();
+            ResetExportProfilesToBuiltIns(markDirty: false);
             LastError = null;
             StatusMessage = "已新建空白工程";
             OnPropertyChanged(nameof(ProjectPath));
@@ -1331,7 +2516,8 @@ public sealed class MainWindowViewModel : ObservableObject
                 WorkspaceMode,
                 LockCropSizeAcrossSources,
                 IsCropOverlayVisible,
-                _auditTrail);
+                _auditTrail,
+                CreateValidatedExportProfiles());
 
             string? previousProjectPath = _projectPath;
             await _projectStore.SaveAsync(normalizedPath, document);
@@ -1618,9 +2804,43 @@ public sealed class MainWindowViewModel : ObservableObject
             BatchCropQueue.Clear();
             SelectedBatchCrop = null;
             OnPropertyChanged(nameof(BatchCropQueueSummary));
+            RestoreExportProfiles(document.ExportProfiles);
             foreach (SourceAssetItemViewModel source in restoredSources)
             {
+                AttachSourceScience(source);
                 Sources.Add(source);
+            }
+
+            foreach (SourceAssetItemViewModel source in restoredSources)
+            {
+                ProjectCalibrationSnapshot? calibrationSnapshot = document.Calibrations
+                    .SingleOrDefault(item => item.SourceAssetId == source.Asset.Id);
+                SpatialCalibration calibration = calibrationSnapshot is null
+                    ? source.Calibration.Calibration
+                    : ProjectDocumentMapper.ToCalibration(calibrationSnapshot);
+                ProjectMeasurementSnapshot[] measurementSnapshots = document.Measurements
+                    .Where(item => item.SourceAssetId == source.Asset.Id)
+                    .ToArray();
+                ScientificMeasurement[] measurements = measurementSnapshots
+                    .Select(ProjectDocumentMapper.ToMeasurement)
+                    .ToArray();
+                if (measurements.Any(measurement => !MeasurementFitsSource(measurement, source)))
+                {
+                    throw new InvalidDataException($"源图 {source.DisplayName} 包含越界的测量坐标。");
+                }
+
+                Dictionary<Guid, (string StrokeColor, double StrokeWidthPixels)> styles =
+                    measurementSnapshots.ToDictionary(
+                        item => item.Id,
+                        item => (item.StrokeColor, item.StrokeWidthPixels));
+                source.RestoreScience(
+                    calibration,
+                    calibrationSnapshot?.ReferenceStartX ?? 0,
+                    calibrationSnapshot?.ReferenceStartY ?? 0,
+                    calibrationSnapshot?.ReferenceEndX ?? 0,
+                    calibrationSnapshot?.ReferenceEndY ?? 0,
+                    measurements,
+                    styles);
             }
 
             Figure.Clear();
@@ -1677,6 +2897,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 }
 
                 restored.Label = layer.PanelLabel ?? restored.Label;
+                restored.CropLinkGroupId = layer.CropLinkGroupId;
 
                 if (scaleBars.TryGetValue(layer.Id, out ProjectScaleBarSnapshot? scaleBar))
                 {
@@ -1691,6 +2912,18 @@ public sealed class MainWindowViewModel : ObservableObject
             }
 
             ProjectTemplateSnapshot? editor = document.TemplateSnapshot;
+            ProjectGlobalStyleSnapshot? globalStyle = editor?.GlobalStyle;
+            Figure.RestoreGlobalStyle(globalStyle is null
+                ? FigureGlobalStyle.Default
+                : new FigureGlobalStyle(
+                    globalStyle.FontFamily,
+                    globalStyle.FontSizePt,
+                    globalStyle.StrokeWidthPt,
+                    globalStyle.TextColor,
+                    globalStyle.ShapeColor,
+                    globalStyle.ScaleBarColor));
+            Figure.RestoreScientificColors((editor?.ScientificColors ?? [])
+                .Select(color => new ScientificColorDefinition(color.Id, color.Name, color.Color)));
             foreach (ProjectAnnotationSnapshot annotation in
                      (editor?.Annotations ?? []).OrderBy(item => item.ZIndex))
             {
@@ -1810,8 +3043,9 @@ public sealed class MainWindowViewModel : ObservableObject
 
             string? slotId = layerSlots.GetValueOrDefault(layer.Id) ??
                              projectTemplate.Slots.ElementAtOrDefault(layerIndex)?.Id;
+            bool insetSlot = slotId?.StartsWith("inset:", StringComparison.Ordinal) == true;
             if (slotId is null ||
-                projectTemplate.Slots.All(slot => slot.Id != slotId) ||
+                (!insetSlot && projectTemplate.Slots.All(slot => slot.Id != slotId)) ||
                 !usedSlots.Add(slotId))
             {
                 throw new InvalidDataException($"图层 {layer.Name} 的模板插槽无效或重复。");
@@ -1907,6 +3141,8 @@ public sealed class MainWindowViewModel : ObservableObject
             AddCurrentCropToFigureCommand.NotifyCanExecuteChanged();
             AddCurrentCropToBatchQueueCommand.NotifyCanExecuteChanged();
             ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
+            AnalyzeAssistedRegionsCommand.NotifyCanExecuteChanged();
+            MarkAssistedRegionAnalysisStale();
             MarkDirty();
         }
     }
@@ -1918,7 +3154,243 @@ public sealed class MainWindowViewModel : ObservableObject
         ExportFigureVariantsCommand.NotifyCanExecuteChanged();
         AddCurrentCropToFigureCommand.NotifyCanExecuteChanged();
         ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
+        MarkFigureQcStale();
         MarkDirty();
+    }
+
+    private void ApplySmartLayout()
+    {
+        if (Figure.Panels.Count > 0)
+        {
+            int reset = Figure.ResetRegularPanelsToTemplateLayout();
+            SmartAssistStatusText = reset == 0
+                ? "当前只有 Inset 或没有可重排面板；布局未改变。"
+                : $"已按 {Figure.TemplateName} 的确定性槽位重排 {reset} 个面板；Inset 保持原位。";
+            StatusMessage = $"辅助布局完成 · {reset} 个面板 · 可撤销";
+            return;
+        }
+
+        if (Sources.Count == 0)
+        {
+            SmartAssistStatusText = "尚无源图；导入图像后才能按数量推荐模板。";
+            StatusMessage = "辅助布局未运行 · 没有源图";
+            return;
+        }
+
+        int requestedCount = Sources.Count;
+        FigureTemplateDefinition recommended = AvailableTemplates
+            .Where(template => template.Slots.Count >= requestedCount)
+            .OrderBy(template => template.Slots.Count - requestedCount)
+            .ThenBy(template => template.Id, StringComparer.Ordinal)
+            .FirstOrDefault() ?? AvailableTemplates
+            .OrderByDescending(template => template.Slots.Count)
+            .ThenBy(template => template.Id, StringComparer.Ordinal)
+            .First();
+        if (!ReferenceEquals(recommended, SelectedFigureTemplate))
+        {
+            ReplaceFigure(recommended);
+        }
+
+        int placed = 0;
+        foreach (SourceAssetItemViewModel source in Sources.Take(Figure.SlotCount))
+        {
+            if (Figure.AddPanel(
+                    source,
+                    new PixelRect64(0, 0, source.Width, source.Height)) is not null)
+            {
+                placed++;
+            }
+        }
+
+        _auditTrail.Add(new ProjectAuditEntrySnapshot
+        {
+            Timestamp = DateTimeOffset.UtcNow,
+            Command = "ApplyExplainableLayoutSuggestion",
+            Parameters = new Dictionary<string, object?>
+            {
+                ["inputSourceCount"] = requestedCount,
+                ["templateId"] = recommended.Id,
+                ["templateSlotCount"] = recommended.Slots.Count,
+                ["placedPanelCount"] = placed,
+                ["rule"] = "smallest-template-capacity-greater-than-or-equal-to-source-count",
+            },
+        });
+        SmartAssistStatusText =
+            $"按源图数量 {requestedCount} 推荐 {recommended.Name}（{recommended.Slots.Count} 槽），已放置 {placed} 张；" +
+            "规则与结果已记录，可人工移动或撤销。";
+        CompleteHistoryGesture();
+        StatusMessage = $"辅助布局完成 · {placed}/{requestedCount} 张源图已放置";
+    }
+
+    private void HarmonizeFigureStyle()
+    {
+        FigureExportDocument before = Figure.CreateExportDocument();
+        FigureGlobalStyle style = before.GlobalStyle;
+        int changed = before.Annotations.Count(annotation => annotation.IsVisible &&
+            (annotation.Kind == "text"
+                ? Math.Abs(annotation.FontSizePt - style.FontSizePt) > 0.01 ||
+                  !SameHexColor(annotation.Color, style.TextColor)
+                : Math.Abs(annotation.StrokeWidthPt - style.StrokeWidthPt) > 0.01 ||
+                  !SameHexColor(annotation.Color, style.ShapeColor)));
+        Figure.ApplyGlobalStyleCommand.Execute(null);
+        _auditTrail.Add(new ProjectAuditEntrySnapshot
+        {
+            Timestamp = DateTimeOffset.UtcNow,
+            Command = "ApplyStyleHarmonizationSuggestion",
+            Parameters = new Dictionary<string, object?>
+            {
+                ["changedAnnotationCount"] = changed,
+                ["fontFamily"] = style.FontFamily,
+                ["fontSizePt"] = style.FontSizePt,
+                ["strokeWidthPt"] = style.StrokeWidthPt,
+                ["rule"] = "project-global-style-is-canonical",
+            },
+        });
+        SmartAssistStatusText = changed == 0
+            ? "样式检查未发现偏离项目全局样式的标注。"
+            : $"已将 {changed} 个标注统一到项目全局样式；修改可撤销，规则已记录。";
+        CompleteHistoryGesture();
+        StatusMessage = $"样式协调完成 · {changed} 个标注已统一";
+    }
+
+    private void RunAssistedFigureReview()
+    {
+        try
+        {
+            FigureExportDocument document = Figure.CreateExportDocument();
+            FigurePreflightResult result = FigureAssistance.Review(
+                document,
+                Sources.Select(source => source.Asset).ToArray(),
+                IsDirty);
+            UpdateFigureQcIssues(result);
+            int integrityCount = result.Issues.Count(issue =>
+                issue.Code.StartsWith("INTEGRITY_", StringComparison.Ordinal));
+            int styleCount = result.Issues.Count(issue =>
+                issue.Code is "STYLE_HARMONIZATION" or "LOW_COLOR_CONTRAST");
+            _auditTrail.Add(new ProjectAuditEntrySnapshot
+            {
+                Timestamp = DateTimeOffset.UtcNow,
+                Command = "RunExplainableFigureReview",
+                Parameters = new Dictionary<string, object?>
+                {
+                    ["issueCount"] = result.Issues.Count,
+                    ["integrityFindingCount"] = integrityCount,
+                    ["styleFindingCount"] = styleCount,
+                    ["engine"] = "scicanvas.explainable-figure-review.v1",
+                    ["generativeModificationEnabled"] = false,
+                },
+            });
+            SmartAssistStatusText =
+                $"辅助审查完成 · {result.Issues.Count} 项（科研诚信 {integrityCount}、样式/颜色 {styleCount}）；" +
+                "均为可解释规则，需人工判断。";
+            MarkDirty();
+            StatusMessage = $"可解释 Figure 审查 · {result.Summary}";
+        }
+        catch (InvalidOperationException exception)
+        {
+            LastError = exception.Message;
+            SmartAssistStatusText = "辅助审查未运行：当前拼版包含无效编辑状态。";
+            StatusMessage = "可解释 Figure 审查失败";
+        }
+    }
+
+    private static bool SameHexColor(string first, string second)
+    {
+        static string Normalize(string value)
+        {
+            string hex = value.Trim().TrimStart('#');
+            return hex.Length == 8 ? hex[2..] : hex;
+        }
+
+        return string.Equals(Normalize(first), Normalize(second), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void RunFigureQc()
+    {
+        try
+        {
+            FigureExportDocument document = Figure.CreateExportDocument();
+            FigurePreflightResult result = UpdateFigureQc(document);
+            LastError = result.HasErrors
+                ? string.Join(Environment.NewLine, result.Issues
+                    .Where(issue => issue.Severity == FigurePreflightSeverity.Error)
+                    .Select(issue => issue.Message))
+                : null;
+            StatusMessage = $"Figure QC · {result.Summary}";
+        }
+        catch (InvalidOperationException exception)
+        {
+            var result = new FigurePreflightResult(
+            [
+                new FigurePreflightIssue(
+                    FigurePreflightSeverity.Error,
+                    "QC_ENGINE_ERROR",
+                    exception.Message),
+            ]);
+            UpdateFigureQcIssues(result);
+            LastError = exception.Message;
+            StatusMessage = "Figure QC 未通过 · 编辑状态无效";
+        }
+    }
+
+    private FigurePreflightResult UpdateFigureQc(FigureExportDocument document)
+    {
+        FigurePreflightResult result = FigurePreflight.Check(
+            document,
+            Sources.Select(item => item.Asset).ToArray(),
+            IsDirty);
+        UpdateFigureQcIssues(result);
+        return result;
+    }
+
+    private void UpdateFigureQcIssues(FigurePreflightResult result)
+    {
+        FigureQcIssues.Clear();
+        foreach (FigurePreflightIssue issue in result.Issues
+                     .OrderByDescending(issue => issue.Severity)
+                     .ThenBy(issue => issue.PanelLabel, StringComparer.OrdinalIgnoreCase)
+                     .ThenBy(issue => issue.Code, StringComparer.Ordinal))
+        {
+            FigureQcIssues.Add(new FigureQcIssueViewModel(issue));
+        }
+
+        SelectedFigureQcIssue = FigureQcIssues.FirstOrDefault();
+        _isFigureQcStale = false;
+        FigureQcStatusText = result.Summary;
+        OnPropertyChanged(nameof(FigureQcCountText));
+    }
+
+    private void MarkFigureQcStale()
+    {
+        if (!_isFigureQcStale)
+        {
+            _isFigureQcStale = true;
+            FigureQcStatusText = "拼版已更改 · 请重新运行 Figure QC";
+        }
+    }
+
+    private void NavigateToSelectedQcIssue()
+    {
+        string? panelLabel = SelectedFigureQcIssue?.PanelLabel;
+        if (string.IsNullOrWhiteSpace(panelLabel))
+        {
+            return;
+        }
+
+        FigurePanelViewModel? panel = Figure.Panels.FirstOrDefault(
+            item => string.Equals(item.Label, panelLabel, StringComparison.OrdinalIgnoreCase));
+        if (panel is null)
+        {
+            LastError = $"QC 目标面板 {panelLabel} 已不存在，请重新运行检查。";
+            MarkFigureQcStale();
+            return;
+        }
+
+        WorkspaceMode = WorkspaceMode.Figure;
+        IsLayersTabActive = false;
+        Figure.SelectPanel(panel, toggle: false);
+        LastError = null;
+        StatusMessage = $"已定位 Figure QC 问题 · 面板 {panel.Label}";
     }
 
     private void OnFigureEditCompleted(object? sender, EventArgs e) => CompleteHistoryGesture();
@@ -1952,6 +3424,7 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             "text" => FigureAnnotationKind.Text,
             "arrow" => FigureAnnotationKind.Arrow,
+            "line" => FigureAnnotationKind.Line,
             "rectangle" => FigureAnnotationKind.Rectangle,
             "ellipse" => FigureAnnotationKind.Ellipse,
             _ => throw new InvalidDataException($"不支持的标注类型：{kind ?? "<空>"}"),
@@ -2026,6 +3499,8 @@ public sealed class MainWindowViewModel : ObservableObject
             Figure.AutoPanelLabelsEnabled,
             Figure.ShowPanelLabels,
             Figure.PanelLabelSequence,
+            Figure.GlobalStyle,
+            Figure.ScientificColors.Select(entry => entry.Definition).ToArray(),
             Figure.SelectedPanel?.Id,
             Figure.SelectedPanels.Select(panel => panel.Id).ToArray(),
             Figure.SelectedAnnotation?.Id,
@@ -2052,7 +3527,8 @@ public sealed class MainWindowViewModel : ObservableObject
                     panel.ScaleBarShowLabel,
                     panel.FrameIndex,
                     panel.Adjustments,
-                    panel.IsAspectRatioLocked))
+                    panel.IsAspectRatioLocked,
+                    panel.CropLinkGroupId))
                 .ToArray(),
             Figure.Annotations
                 .OrderBy(annotation => annotation.ZIndex)
@@ -2078,6 +3554,26 @@ public sealed class MainWindowViewModel : ObservableObject
                     guide.Orientation,
                     guide.Position,
                     guide.IsLocked))
+                .ToArray(),
+            Sources.Select(source => new CalibrationHistorySnapshot(
+                    source.Asset.Id,
+                    source.Calibration.Calibration,
+                    source.Calibration.ReferenceStartX,
+                    source.Calibration.ReferenceStartY,
+                    source.Calibration.ReferenceEndX,
+                    source.Calibration.ReferenceEndY))
+                .ToArray(),
+            Sources.SelectMany(source => source.Measurements)
+                .Select(measurement => new MeasurementHistorySnapshot(
+                    measurement.Id,
+                    measurement.SourceAssetId,
+                    measurement.Kind,
+                    measurement.Measurement.PointA,
+                    measurement.Measurement.PointB,
+                    measurement.Measurement.PointC,
+                    measurement.PathPoints,
+                    measurement.StrokeColor,
+                    measurement.StrokeWidthPixels))
                 .ToArray());
     }
 
@@ -2125,6 +3621,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 restored.ScaleBarUnit = panelSnapshot.ScaleBarUnit;
                 restored.ScaleBarShowLabel = panelSnapshot.ScaleBarShowLabel;
                 restored.ShowScaleBar = panelSnapshot.ShowScaleBar;
+                restored.CropLinkGroupId = panelSnapshot.CropLinkGroupId;
             }
 
             foreach (AnnotationHistorySnapshot annotation in
@@ -2156,10 +3653,40 @@ public sealed class MainWindowViewModel : ObservableObject
                     guide.IsLocked);
             }
 
+            foreach (SourceAssetItemViewModel source in Sources)
+            {
+                CalibrationHistorySnapshot calibration = snapshot.Calibrations.Single(
+                    item => item.SourceId == source.Asset.Id);
+                MeasurementHistorySnapshot[] measurementSnapshots = snapshot.Measurements
+                    .Where(item => item.SourceId == source.Asset.Id)
+                    .ToArray();
+                source.RestoreScience(
+                    calibration.Calibration,
+                    calibration.ReferenceStartX,
+                    calibration.ReferenceStartY,
+                    calibration.ReferenceEndX,
+                    calibration.ReferenceEndY,
+                    measurementSnapshots.Select(item => new ScientificMeasurement(
+                        item.Id,
+                        item.SourceId,
+                        item.Kind,
+                        item.PointA,
+                        item.PointB,
+                        item.PointC,
+                        Name: null,
+                        PathPoints: item.PathPoints)),
+                    measurementSnapshots.ToDictionary(
+                        item => item.Id,
+                        item => (item.StrokeColor, item.StrokeWidthPixels)));
+                SynchronizeScaleBarsForSource(source);
+            }
+
             Figure.IsSnappingEnabled = snapshot.SnappingEnabled;
             Figure.SnapTolerancePixels = snapshot.SnapTolerancePixels;
             Figure.ExactSpacingPixels = snapshot.ExactSpacingPixels;
             Figure.BackgroundColor = snapshot.BackgroundColor;
+            Figure.RestoreGlobalStyle(snapshot.GlobalStyle);
+            Figure.RestoreScientificColors(snapshot.ScientificColors);
             Figure.AutoPanelLabelsEnabled = false;
             Figure.PanelLabelSequence = snapshot.PanelLabelSequence;
             Figure.ShowPanelLabels = snapshot.ShowPanelLabels;
@@ -2211,7 +3738,9 @@ public sealed class MainWindowViewModel : ObservableObject
         before.Annotations.Select(annotation => annotation.Id)
             .SequenceEqual(after.Annotations.Select(annotation => annotation.Id)) &&
         before.Guides.Select(guide => guide.Id)
-            .SequenceEqual(after.Guides.Select(guide => guide.Id));
+            .SequenceEqual(after.Guides.Select(guide => guide.Id)) &&
+        before.Measurements.Select(measurement => measurement.Id)
+            .SequenceEqual(after.Measurements.Select(measurement => measurement.Id));
 
     private void RefreshHistoryState()
     {
@@ -2263,7 +3792,8 @@ public sealed class MainWindowViewModel : ObservableObject
                 WorkspaceMode,
                 LockCropSizeAcrossSources,
                 IsCropOverlayVisible,
-                _auditTrail);
+                _auditTrail,
+                CreateValidatedExportProfiles());
 
             await _projectRecoveryStore.SaveAsync(_projectId, _projectPath, document);
             AutosaveStatusText = $"自动保存 {DateTime.Now:HH:mm:ss}";
@@ -2321,6 +3851,11 @@ public sealed class MainWindowViewModel : ObservableObject
         Figure = new FigureCanvasViewModel(template);
         Figure.DocumentChanged += OnFigureDocumentChanged;
         Figure.EditCompleted += OnFigureEditCompleted;
+        FigureQcIssues.Clear();
+        SelectedFigureQcIssue = null;
+        _isFigureQcStale = true;
+        FigureQcStatusText = "拼版已重建 · 请运行 Figure QC";
+        OnPropertyChanged(nameof(FigureQcCountText));
         _selectedFigureTemplate = template;
         OnPropertyChanged(nameof(SelectedFigureTemplate));
         OnPropertyChanged(nameof(IsTemplateSelectionEnabled));

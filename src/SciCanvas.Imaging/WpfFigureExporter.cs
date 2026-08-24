@@ -36,6 +36,16 @@ public sealed class WpfFigureExporter : IFigureExporter
             return;
         }
 
+        if (extension is ".tif" or ".tiff" && document.BitDepth == 16)
+        {
+            WpfHighBitDepthFigureExporter.Export(document, targetPath, cancellationToken);
+            return;
+        }
+
+        if (document.BitDepth != 8)
+        {
+            throw new NotSupportedException("16-bit 拼版当前只能导出为 TIFF。");
+        }
 
         var visual = new DrawingVisual();
         using (DrawingContext drawing = visual.RenderOpen())
@@ -61,8 +71,9 @@ public sealed class WpfFigureExporter : IFigureExporter
                     cropped.PixelHeight,
                     panel.DestinationRect);
                 drawing.DrawImage(cropped, imageRect);
-                DrawScaleBar(drawing, panel, imageRect, document.Dpi);
-                DrawPanelLabel(drawing, panel.Label, panel.DestinationRect, document.Dpi);
+                DrawInsetBorder(drawing, panel, imageRect, document.Dpi, document.GlobalStyle);
+                DrawScaleBar(drawing, panel, imageRect, document.Dpi, document.GlobalStyle);
+                DrawPanelLabel(drawing, panel.Label, panel.DestinationRect, document.Dpi, document.GlobalStyle);
             }
 
             foreach (FigureAnnotationExportItem annotation in
@@ -70,7 +81,7 @@ public sealed class WpfFigureExporter : IFigureExporter
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 ValidateAnnotation(annotation, document);
-                DrawAnnotation(drawing, annotation, document.Dpi);
+                DrawAnnotation(drawing, annotation, document.Dpi, document.GlobalStyle);
             }
 
             drawing.Pop();
@@ -170,25 +181,29 @@ public sealed class WpfFigureExporter : IFigureExporter
         return new Rect(left, top, width, height);
     }
 
-    private static void DrawPanelLabel(
+    internal static void DrawPanelLabel(
         DrawingContext drawing,
         string label,
         PixelRect64 destination,
-        int dpi)
+        int dpi,
+        FigureGlobalStyle? globalStyle = null)
     {
         if (string.IsNullOrWhiteSpace(label))
         {
             return;
         }
 
-        double fontSize = Math.Max(12, 7.0 / 72.0 * dpi);
+        FigureGlobalStyle style = globalStyle ?? FigureGlobalStyle.Default;
+        double fontSize = Math.Max(12, style.FontSizePt / 72.0 * dpi);
+        var textBrush = new SolidColorBrush(ParseColor(style.TextColor));
+        textBrush.Freeze();
         var text = new FormattedText(
             label,
             CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight,
-            new Typeface(new FontFamily("Arial"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal),
+            new Typeface(new FontFamily(style.FontFamily), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal),
             fontSize,
-            Brushes.Black,
+            textBrush,
             pixelsPerDip: 1.0);
         double padding = Math.Max(4, dpi / 75.0);
         var background = new Rect(
@@ -200,11 +215,32 @@ public sealed class WpfFigureExporter : IFigureExporter
         drawing.DrawText(text, new Point(background.X + padding, background.Y));
     }
 
-    private static void DrawScaleBar(
+    internal static void DrawInsetBorder(
         DrawingContext drawing,
         FigurePanelExportItem panel,
         Rect imageRect,
-        int dpi)
+        int dpi,
+        FigureGlobalStyle? globalStyle = null)
+    {
+        if (!panel.IsInset)
+        {
+            return;
+        }
+
+        FigureGlobalStyle style = globalStyle ?? FigureGlobalStyle.Default;
+        var brush = new SolidColorBrush(ParseColor(style.ShapeColor));
+        brush.Freeze();
+        var pen = new Pen(brush, Math.Max(1, 0.5 / 72.0 * dpi));
+        pen.Freeze();
+        drawing.DrawRectangle(null, pen, imageRect);
+    }
+
+    internal static void DrawScaleBar(
+        DrawingContext drawing,
+        FigurePanelExportItem panel,
+        Rect imageRect,
+        int dpi,
+        FigureGlobalStyle? globalStyle = null)
     {
         FigureScaleBarExportSpec? scaleBar = panel.ScaleBar;
         if (scaleBar is null)
@@ -212,11 +248,14 @@ public sealed class WpfFigureExporter : IFigureExporter
             return;
         }
 
+        FigureGlobalStyle style = globalStyle ?? FigureGlobalStyle.Default;
+        var scaleBarBrush = new SolidColorBrush(ParseColor(style.ScaleBarColor));
+        scaleBarBrush.Freeze();
         double sourcePixels = scaleBar.PhysicalLength / scaleBar.PhysicalUnitsPerSourcePixel;
         double outputPixelsPerSourcePixel = imageRect.Width / panel.SourceRect.Width;
         double barWidth = sourcePixels * outputPixelsPerSourcePixel;
         double margin = Math.Max(10, Math.Min(imageRect.Width, imageRect.Height) * 0.035);
-        double thickness = Math.Max(4, dpi / 60.0);
+        double thickness = Math.Max(2, style.StrokeWidthPt / 72.0 * dpi);
         double right = imageRect.Right - margin;
         double y = imageRect.Bottom - margin - thickness / 2.0;
         double left = right - barWidth;
@@ -226,7 +265,7 @@ public sealed class WpfFigureExporter : IFigureExporter
             StartLineCap = PenLineCap.Square,
             EndLineCap = PenLineCap.Square,
         };
-        var linePen = new Pen(Brushes.White, thickness)
+        var linePen = new Pen(scaleBarBrush, thickness)
         {
             StartLineCap = PenLineCap.Square,
             EndLineCap = PenLineCap.Square,
@@ -241,31 +280,33 @@ public sealed class WpfFigureExporter : IFigureExporter
             return;
         }
 
-        double fontSize = Math.Max(12, 7.0 / 72.0 * dpi);
+        double fontSize = Math.Max(12, style.FontSizePt / 72.0 * dpi);
         var text = new FormattedText(
             $"{scaleBar.PhysicalLength:0.###} {scaleBar.Unit}",
             CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight,
-            new Typeface(new FontFamily("Arial"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal),
+            new Typeface(new FontFamily(style.FontFamily), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal),
             fontSize,
-            Brushes.White,
+            scaleBarBrush,
             pixelsPerDip: 1.0);
         double textX = right - text.Width;
         double textY = y - thickness - text.Height - Math.Max(3, dpi / 100.0);
         Geometry geometry = text.BuildGeometry(new Point(textX, textY));
         drawing.DrawGeometry(
-            Brushes.White,
+            scaleBarBrush,
             new Pen(Brushes.Black, Math.Max(2, dpi / 150.0)),
             geometry);
     }
 
-    private static void DrawAnnotation(
+    internal static void DrawAnnotation(
         DrawingContext drawing,
         FigureAnnotationExportItem annotation,
-        int dpi)
+        int dpi,
+        FigureGlobalStyle? globalStyle = null)
     {
         SolidColorBrush brush = new(ParseColor(annotation.Color));
         brush.Freeze();
+        FigureGlobalStyle style = globalStyle ?? FigureGlobalStyle.Default;
         if (string.Equals(annotation.Kind, "text", StringComparison.OrdinalIgnoreCase))
         {
             double fontSize = annotation.FontSizePt / 72.0 * dpi;
@@ -274,7 +315,7 @@ public sealed class WpfFigureExporter : IFigureExporter
                 CultureInfo.InvariantCulture,
                 FlowDirection.LeftToRight,
                 new Typeface(
-                    new FontFamily("Arial"),
+                    new FontFamily(style.FontFamily),
                     FontStyles.Normal,
                     annotation.IsBold ? FontWeights.Bold : FontWeights.Normal,
                     FontStretches.Normal),
@@ -292,6 +333,15 @@ public sealed class WpfFigureExporter : IFigureExporter
             EndLineCap = PenLineCap.Round,
             LineJoin = PenLineJoin.Round,
         };
+
+        if (string.Equals(annotation.Kind, "line", StringComparison.OrdinalIgnoreCase))
+        {
+            drawing.DrawLine(
+                pen,
+                new Point(annotation.X, annotation.Y),
+                new Point(annotation.EndX, annotation.EndY));
+            return;
+        }
 
         if (string.Equals(annotation.Kind, "rectangle", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(annotation.Kind, "ellipse", StringComparison.OrdinalIgnoreCase))
@@ -376,6 +426,7 @@ public sealed class WpfFigureExporter : IFigureExporter
     {
         bool isText = string.Equals(annotation.Kind, "text", StringComparison.OrdinalIgnoreCase);
         bool isArrow = string.Equals(annotation.Kind, "arrow", StringComparison.OrdinalIgnoreCase);
+        bool isLine = string.Equals(annotation.Kind, "line", StringComparison.OrdinalIgnoreCase);
         bool isRectangle = string.Equals(annotation.Kind, "rectangle", StringComparison.OrdinalIgnoreCase);
         bool isEllipse = string.Equals(annotation.Kind, "ellipse", StringComparison.OrdinalIgnoreCase);
         bool isShape = isRectangle || isEllipse;
@@ -385,9 +436,9 @@ public sealed class WpfFigureExporter : IFigureExporter
         bool endInside = double.IsFinite(annotation.EndX) && double.IsFinite(annotation.EndY) &&
                          annotation.EndX >= 0 && annotation.EndX <= document.WidthPixels &&
                          annotation.EndY >= 0 && annotation.EndY <= document.HeightPixels;
-        if ((!isText && !isArrow && !isShape) || !startInside ||
-            ((isArrow || isShape) && !endInside) ||
-            (isArrow && Math.Sqrt(
+        if ((!isText && !isArrow && !isLine && !isShape) || !startInside ||
+            ((isArrow || isLine || isShape) && !endInside) ||
+            ((isArrow || isLine) && Math.Sqrt(
                 Math.Pow(annotation.EndX - annotation.X, 2) +
                 Math.Pow(annotation.EndY - annotation.Y, 2)) < 5) ||
             (isShape && (annotation.EndX - annotation.X < 5 ||
@@ -396,7 +447,7 @@ public sealed class WpfFigureExporter : IFigureExporter
             !double.IsFinite(annotation.FontSizePt) || annotation.FontSizePt is < 4 or > 72 ||
             !double.IsFinite(annotation.StrokeWidthPt) || annotation.StrokeWidthPt is < 0.25 or > 10)
         {
-            throw new InvalidOperationException("拼版包含无效的文字、箭头或形状标注参数。");
+            throw new InvalidOperationException("拼版包含无效的文字、直线、箭头或形状标注参数。");
         }
 
         _ = ParseColor(annotation.Color);

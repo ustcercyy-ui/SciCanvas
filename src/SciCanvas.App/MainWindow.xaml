@@ -74,6 +74,60 @@
             <Setter Property="FontWeight" Value="SemiBold" />
         </Style>
 
+        <Style x:Key="ToolButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0,0,0,2" />
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="True">
+                    <Setter Property="Background" Value="#087E98" />
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                    <Setter Property="Foreground" Value="#F5FBFF" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="ComboBox">
+            <Setter Property="Foreground" Value="#101820" />
+            <Setter Property="Background" Value="#0F151D" />
+            <Setter Property="BorderBrush" Value="#354253" />
+            <Setter Property="Padding" Value="7,5" />
+        </Style>
+
+        <Style TargetType="DataGridCell">
+            <Setter Property="Background" Value="#0F151D" />
+            <Setter Property="Foreground" Value="#E8EDF4" />
+            <Setter Property="BorderBrush" Value="#26313D" />
+            <Setter Property="Padding" Value="7,3" />
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#174B59" />
+                    <Setter Property="Foreground" Value="#FFFFFF" />
+                    <Setter Property="BorderBrush" Value="#22C7E8" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="#1A222D" />
+            <Setter Property="Foreground" Value="#AEB9C7" />
+            <Setter Property="BorderBrush" Value="#2B3543" />
+            <Setter Property="Padding" Value="7,5" />
+        </Style>
+
+        <Style TargetType="DataGridRow">
+            <Setter Property="Background" Value="#0F151D" />
+            <Setter Property="Foreground" Value="#E8EDF4" />
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#174B59" />
+                    <Setter Property="Foreground" Value="#FFFFFF" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
         <Style TargetType="TextBox">
             <Setter Property="Foreground" Value="#F4F7FA" />
             <Setter Property="Background" Value="#0F151D" />
@@ -142,6 +196,18 @@
                         <MenuItem Header="导出当前裁剪" Command="{Binding ExportCropCommand}" />
                         <MenuItem Header="批量导出裁剪" Command="{Binding ExportBatchCropsCommand}" />
                     </MenuItem>
+                    <MenuItem Header="测量(A)">
+                        <MenuItem Header="标定参考线" Command="{Binding SelectCalibrationToolCommand}" />
+                        <Separator />
+                        <MenuItem Header="长度" Command="{Binding SelectLengthToolCommand}" />
+                        <MenuItem Header="角度（三点）" Command="{Binding SelectAngleToolCommand}" />
+                        <MenuItem Header="矩形 ROI" Command="{Binding SelectRectangleRoiToolCommand}" />
+                        <MenuItem Header="圆形测量" Command="{Binding SelectCircleRoiToolCommand}" />
+                        <MenuItem Header="折线（双击完成）" Command="{Binding SelectPolylineToolCommand}" />
+                        <Separator />
+                        <MenuItem Header="复制测量表" Command="{Binding CopyMeasurementsCommand}" />
+                        <MenuItem Header="导出测量 CSV / Excel" Command="{Binding ExportMeasurementsCommand}" />
+                    </MenuItem>
                     <MenuItem Header="裁剪(C)">
                         <MenuItem Header="加入当前裁剪到拼版" Command="{Binding AddCurrentCropToFigureCommand}" />
                         <MenuItem Header="加入批量裁剪队列" Command="{Binding AddCurrentCropToBatchQueueCommand}" />
@@ -149,6 +215,8 @@
                     <MenuItem Header="拼版(M)">
                         <MenuItem Header="导出整张拼版" Command="{Binding ExportFigureCommand}" />
                         <MenuItem Header="批量导出投稿版本" Command="{Binding ExportFigureVariantsCommand}" />
+                        <Separator />
+                        <MenuItem Header="运行 Figure QC" Command="{Binding RunFigureQcCommand}" />
                     </MenuItem>
                     <MenuItem Header="工具(T)">
                         <MenuItem Header="{Binding TemplateLibraryLabel}" Command="{Binding ShowFigureWorkspaceCommand}" />
@@ -188,9 +256,15 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                    <Button Command="{Binding ShowCropWorkspaceCommand}" Content="裁剪视图" />
-                    <Button Margin="6,0,0,0" Command="{Binding ShowFigureWorkspaceCommand}" Content="拼版视图" />
-                    <Button Margin="16,0,0,0" Command="{Binding AddCurrentCropToFigureCommand}" Style="{StaticResource AccentButtonStyle}" Content="加入拼版" />
+                    <Button Command="{Binding SelectCropToolCommand}" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsCropToolActive}" Content="裁剪" ToolTip="裁剪工具" />
+                    <Button Command="{Binding SelectCalibrationToolCommand}" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsCalibrationToolActive}" Content="标定" ToolTip="拖动参考线建立空间尺度" />
+                    <Button Command="{Binding SelectLengthToolCommand}" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsLengthToolActive}" Content="长度" />
+                    <Button Command="{Binding SelectAngleToolCommand}" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsAngleToolActive}" Content="角度" />
+                    <Button Command="{Binding SelectRectangleRoiToolCommand}" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsRectangleRoiToolActive}" Content="矩形 ROI" />
+                    <Button Command="{Binding SelectCircleRoiToolCommand}" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsCircleRoiToolActive}" Content="圆形" />
+                    <Button Command="{Binding SelectPolylineToolCommand}" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsPolylineToolActive}" Content="折线" />
+                    <Button Margin="8,0,0,0" Command="{Binding ShowFigureWorkspaceCommand}" Style="{StaticResource ToolButtonStyle}" Content="拼版视图" />
+                    <Button Margin="8,0,0,0" Command="{Binding AddCurrentCropToFigureCommand}" Style="{StaticResource AccentButtonStyle}" Content="加入拼版" />
                 </StackPanel>
 
                 <Border Grid.Column="3" Padding="10,5" Background="#10251E" BorderBrush="#256B51" BorderThickness="1" CornerRadius="12" VerticalAlignment="Center">
@@ -206,7 +280,7 @@
                 <ColumnDefinition Width="6" />
                 <ColumnDefinition Width="*" MinWidth="360" />
                 <ColumnDefinition Width="6" />
-                <ColumnDefinition Width="325" MinWidth="270" MaxWidth="520" />
+                <ColumnDefinition Width="360" MinWidth="320" MaxWidth="520" />
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" Background="{StaticResource PanelBrush}">
@@ -288,13 +362,14 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="42" />
                     <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
                 <Border Grid.Row="0" Visibility="{Binding CropWorkspaceVisibility}" Background="#11171F" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
                     <Grid Margin="14,0">
                         <TextBlock Text="画布 · 源像素坐标" Foreground="#B8C3CF" VerticalAlignment="Center" FontSize="11" />
                         <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" FontSize="10"
-                                   Text="拖动空白处新建裁剪框 · 拖动框体移动" />
+                                   Text="{Binding ActiveScienceToolHint}" />
                     </Grid>
                 </Border>
 
@@ -335,7 +410,147 @@
                                        Stroke="#17D9F4"
                                        StrokeThickness="5"
                                        Cursor="SizeAll"
-                                       Visibility="{Binding IsCropOverlayVisible, Converter={StaticResource BooleanToVisibility}}" />
+                                       Visibility="{Binding CropOverlayVisibility}" />
+                            <Line X1="{Binding SelectedSource.Calibration.ReferenceStartX}"
+                                  Y1="{Binding SelectedSource.Calibration.ReferenceStartY}"
+                                  X2="{Binding SelectedSource.Calibration.ReferenceEndX}"
+                                  Y2="{Binding SelectedSource.Calibration.ReferenceEndY}"
+                                  Stroke="#FF22C7E8"
+                                  StrokeThickness="5"
+                                  Panel.ZIndex="10"
+                                  IsHitTestVisible="False"
+                                  Visibility="{Binding SelectedSource.Calibration.ReferenceLineVisibility}" />
+                            <Border Canvas.Left="{Binding SelectedSource.Calibration.ReferenceLabelX}"
+                                    Canvas.Top="{Binding SelectedSource.Calibration.ReferenceLabelY}"
+                                    Panel.ZIndex="11"
+                                    Padding="10,5"
+                                    Background="#D011171F"
+                                    BorderBrush="#FF22C7E8"
+                                    BorderThickness="1"
+                                    CornerRadius="3"
+                                    IsHitTestVisible="False"
+                                    Visibility="{Binding SelectedSource.Calibration.ReferenceLineVisibility}">
+                                <TextBlock Text="{Binding SelectedSource.Calibration.ReferenceLabel}"
+                                           Foreground="#FF4BD4EF"
+                                           FontSize="22"
+                                           FontWeight="SemiBold" />
+                            </Border>
+                            <ItemsControl Width="{Binding SelectedSource.Width}"
+                                          Height="{Binding SelectedSource.Height}"
+                                          ItemsSource="{Binding SelectedSource.Measurements}"
+                                          Panel.ZIndex="20"
+                                          IsHitTestVisible="False">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <Canvas />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemContainerStyle>
+                                    <Style TargetType="ContentPresenter">
+                                        <Setter Property="Canvas.Left" Value="0" />
+                                        <Setter Property="Canvas.Top" Value="0" />
+                                    </Style>
+                                </ItemsControl.ItemContainerStyle>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Canvas Width="{Binding DataContext.SelectedSource.Width, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Height="{Binding DataContext.SelectedSource.Height, RelativeSource={RelativeSource AncestorType=Window}}">
+                                            <Line X1="{Binding X1}" Y1="{Binding Y1}" X2="{Binding X2}" Y2="{Binding Y2}"
+                                                  Stroke="{Binding OverlayStroke}" StrokeThickness="{Binding OverlayThickness}"
+                                                  Visibility="{Binding LengthVisibility}" />
+                                            <Polyline Points="{Binding PolylinePoints}"
+                                                      Stroke="{Binding OverlayStroke}"
+                                                      StrokeThickness="{Binding OverlayThickness}"
+                                                      StrokeLineJoin="Round"
+                                                      Visibility="{Binding PolylineVisibility}" />
+                                            <Line X1="{Binding X1}" Y1="{Binding Y1}" X2="{Binding X2}" Y2="{Binding Y2}"
+                                                  Stroke="{Binding OverlayStroke}" StrokeThickness="{Binding OverlayThickness}"
+                                                  Visibility="{Binding AngleVisibility}" />
+                                            <Line X1="{Binding X2}" Y1="{Binding Y2}" X2="{Binding X3}" Y2="{Binding Y3}"
+                                                  Stroke="{Binding OverlayStroke}" StrokeThickness="{Binding OverlayThickness}"
+                                                  Visibility="{Binding AngleVisibility}" />
+                                            <Rectangle Canvas.Left="{Binding RectangleX}"
+                                                       Canvas.Top="{Binding RectangleY}"
+                                                       Width="{Binding RectangleWidth}"
+                                                       Height="{Binding RectangleHeight}"
+                                                       Stroke="{Binding OverlayStroke}"
+                                                       StrokeThickness="{Binding OverlayThickness}"
+                                                       Fill="#1816C7E8"
+                                                       Visibility="{Binding RectangleVisibility}" />
+                                            <Ellipse Canvas.Left="{Binding RectangleX}"
+                                                     Canvas.Top="{Binding RectangleY}"
+                                                     Width="{Binding RectangleWidth}"
+                                                     Height="{Binding RectangleHeight}"
+                                                     Stroke="{Binding OverlayStroke}"
+                                                     StrokeThickness="{Binding OverlayThickness}"
+                                                     Fill="#1816C7E8"
+                                                     Visibility="{Binding CircleVisibility}" />
+                                            <Ellipse Canvas.Left="{Binding X1}" Canvas.Top="{Binding Y1}"
+                                                     Width="16" Height="16" Fill="#FF11171F"
+                                                     Stroke="{Binding OverlayStroke}" StrokeThickness="4" />
+                                            <Ellipse Canvas.Left="{Binding X2}" Canvas.Top="{Binding Y2}"
+                                                     Width="16" Height="16" Fill="#FF11171F"
+                                                     Stroke="{Binding OverlayStroke}" StrokeThickness="4" />
+                                            <Ellipse Canvas.Left="{Binding X3}" Canvas.Top="{Binding Y3}"
+                                                     Width="16" Height="16" Fill="#FF11171F"
+                                                     Stroke="{Binding OverlayStroke}" StrokeThickness="4"
+                                                     Visibility="{Binding AngleVisibility}" />
+                                            <Border Canvas.Left="{Binding LabelX}"
+                                                    Canvas.Top="{Binding LabelY}"
+                                                    Padding="9,4"
+                                                    Background="#D011171F"
+                                                    BorderBrush="{Binding OverlayStroke}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="3">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding Number, StringFormat={}{0} · }" Foreground="#FFB8C3CF" FontSize="20" />
+                                                    <TextBlock Text="{Binding ValueText}" Foreground="{Binding OverlayStroke}" FontSize="22" FontWeight="SemiBold" />
+                                                </StackPanel>
+                                            </Border>
+                                        </Canvas>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <ItemsControl Width="{Binding SelectedSource.Width}"
+                                          Height="{Binding SelectedSource.Height}"
+                                          ItemsSource="{Binding AssistedRegions}"
+                                          Panel.ZIndex="18"
+                                          IsHitTestVisible="False">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <Canvas />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemContainerStyle>
+                                    <Style TargetType="ContentPresenter">
+                                        <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                        <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                    </Style>
+                                </ItemsControl.ItemContainerStyle>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Rectangle Width="{Binding Width}"
+                                                       Height="{Binding Height}"
+                                                       Stroke="{Binding OverlayStroke}"
+                                                       StrokeThickness="3"
+                                                       Fill="{Binding OverlayFill}" />
+                                            <Border Margin="2"
+                                                    Padding="3,1"
+                                                    HorizontalAlignment="Left"
+                                                    VerticalAlignment="Top"
+                                                    Background="#CC11171F"
+                                                    BorderBrush="{Binding OverlayStroke}"
+                                                    BorderThickness="1">
+                                                <TextBlock Text="{Binding Id}"
+                                                           Foreground="{Binding OverlayStroke}"
+                                                           FontSize="12"
+                                                           FontWeight="Bold" />
+                                            </Border>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
                         </Canvas>
                     </Viewbox>
                 </Grid>
@@ -413,16 +628,16 @@
                                                                Canvas.Top="{Binding ScaleBarLabelPreviewY}"
                                                                Padding="5,2"
                                                                Text="{Binding ScaleBarLabel}"
-                                                               Foreground="White"
+                                                               Foreground="{Binding DataContext.Figure.GlobalScaleBarBrush, RelativeSource={RelativeSource AncestorType=Window}}"
                                                                Background="#B0000000"
-                                                               FontFamily="Arial"
-                                                               FontSize="20"
+                                                               FontFamily="{Binding DataContext.Figure.GlobalFontFamily, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               FontSize="{Binding DataContext.Figure.GlobalFontSizePixels, RelativeSource={RelativeSource AncestorType=Window}}"
                                                                FontWeight="Bold" />
                                                     <Border Canvas.Left="{Binding ScaleBarPreviewX}"
                                                             Canvas.Top="{Binding ScaleBarPreviewY}"
                                                             Width="{Binding ScaleBarPreviewWidth}"
-                                                            Height="7"
-                                                            Background="White"
+                                                            Height="{Binding DataContext.Figure.GlobalStrokeWidthPixels, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            Background="{Binding DataContext.Figure.GlobalScaleBarBrush, RelativeSource={RelativeSource AncestorType=Window}}"
                                                             BorderBrush="Black"
                                                             BorderThickness="2" />
                                                 </Canvas>
@@ -432,7 +647,11 @@
                                                         Padding="7,3"
                                                         Background="White"
                                                         Visibility="{Binding DataContext.Figure.ShowPanelLabels, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibility}}">
-                                                    <TextBlock Text="{Binding Label, Mode=OneWay}" Foreground="Black" FontFamily="Arial" FontSize="28" FontWeight="Bold" />
+                                                    <TextBlock Text="{Binding Label, Mode=OneWay}"
+                                                               Foreground="{Binding DataContext.Figure.GlobalTextBrush, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               FontFamily="{Binding DataContext.Figure.GlobalFontFamily, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               FontSize="{Binding DataContext.Figure.GlobalFontSizePixels, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               FontWeight="Bold" />
                                                 </Border>
                                             <Border Width="14" Height="14" Margin="0,0,5,5" HorizontalAlignment="Right" VerticalAlignment="Bottom" Panel.ZIndex="40" Background="{StaticResource AccentBrush}" BorderBrush="#09151B" BorderThickness="2" Cursor="SizeNWSE" Tag="{Binding}" Visibility="{Binding PanelResizeHandleVisibility}" PreviewMouseLeftButtonDown="FigurePanelResizeHandle_OnMouseLeftButtonDown" PreviewMouseMove="FigurePanelResizeHandle_OnMouseMove" PreviewMouseLeftButtonUp="FigurePanelResizeHandle_OnMouseLeftButtonUp" LostMouseCapture="FigurePanelResizeHandle_OnLostMouseCapture" />
                                             </Grid>
@@ -516,7 +735,7 @@
                                                 </Border.Style>
                                                 <TextBlock Text="{Binding Text}"
                                                            Foreground="{Binding PreviewBrush}"
-                                                           FontFamily="Arial"
+                                                           FontFamily="{Binding DataContext.Figure.GlobalFontFamily, RelativeSource={RelativeSource AncestorType=Window}}"
                                                            FontSize="{Binding FontSizePixels}">
                                                     <TextBlock.Style>
                                                         <Style TargetType="TextBlock">
@@ -545,6 +764,20 @@
                                                       Stroke="{Binding PreviewBrush}"
                                                       StrokeThickness="{Binding StrokeWidthPixels}"
                                                       Fill="{Binding PreviewBrush}"
+                                                      IsHitTestVisible="False" />
+                                            </Grid>
+                                            <Grid Visibility="{Binding LineVisibility}">
+                                                <Path Data="{Binding LineGeometry}"
+                                                      Stroke="Transparent"
+                                                      StrokeThickness="24" />
+                                                <Path Data="{Binding LineGeometry}"
+                                                      Stroke="#16C7E8"
+                                                      StrokeThickness="{Binding SelectionStrokeWidthPixels}"
+                                                      IsHitTestVisible="False"
+                                                      Visibility="{Binding IsSelected, Converter={StaticResource BooleanToVisibility}}" />
+                                                <Path Data="{Binding LineGeometry}"
+                                                      Stroke="{Binding PreviewBrush}"
+                                                      StrokeThickness="{Binding StrokeWidthPixels}"
                                                       IsHitTestVisible="False" />
                                             </Grid>
                                             <Grid Width="{Binding ShapeWidth}"
@@ -586,6 +819,85 @@
                         <TextBlock Margin="0,10,0,0" Text="{Binding Figure.TemplateDescription}" Foreground="#45515E" FontSize="14" TextWrapping="Wrap" MaxWidth="620" TextAlignment="Center" />
                     </StackPanel>
                 </Grid>
+
+                <Border Grid.Row="2"
+                        Height="230"
+                        Background="#11171F"
+                        BorderBrush="{StaticResource BorderBrush}"
+                        BorderThickness="0,1,0,0"
+                        Visibility="{Binding MeasurementDockVisibility}">
+                    <Grid Margin="12,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="250" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="28" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="{Binding SelectedSource.MeasurementCountText}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="{Binding SelectedSource.MeasurementSummaryText}"
+                                   Foreground="#AFC5D2" FontSize="10" VerticalAlignment="Center" TextWrapping="Wrap" />
+                        <DataGrid Grid.Row="1"
+                                  Margin="0,4,10,0"
+                                  ItemsSource="{Binding SelectedSource.Measurements}"
+                                  SelectedItem="{Binding SelectedSource.SelectedMeasurement}"
+                                  AutoGenerateColumns="False"
+                                  CanUserAddRows="False"
+                                  CanUserDeleteRows="False"
+                                  IsReadOnly="True"
+                                  HeadersVisibility="Column"
+                                  RowHeaderWidth="0"
+                                  GridLinesVisibility="Horizontal"
+                                  Background="#0F151D"
+                                  Foreground="#E8EDF4"
+                                  BorderBrush="{StaticResource BorderBrush}"
+                                  HorizontalGridLinesBrush="#26313D">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="ID" Binding="{Binding Number}" Width="42" />
+                                <DataGridTextColumn Header="Image" Binding="{Binding SourceName}" Width="120" />
+                                <DataGridTextColumn Header="Type" Binding="{Binding TypeText}" Width="72" />
+                                <DataGridTextColumn Header="Value" Binding="{Binding ValueText}" Width="112" />
+                                <DataGridTextColumn Header="Pixel" Binding="{Binding PixelValueText}" Width="*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <StackPanel Grid.Row="1" Grid.Column="1" Margin="10,4,0,0">
+                            <TextBlock Text="{Binding SelectedSource.SelectedMeasurementStatusText}"
+                                       Foreground="#7DD9E9" FontSize="10" TextWrapping="Wrap" />
+                            <TextBlock Margin="0,7,0,2"
+                                       Text="{Binding SelectedSource.MeasurementHistogramStatusText}"
+                                       Foreground="#AFC5D2" FontSize="9" TextTrimming="CharacterEllipsis" />
+                            <Border Height="60"
+                                    Padding="4"
+                                    Background="#0B1016"
+                                    BorderBrush="#26313D"
+                                    BorderThickness="1"
+                                    Visibility="{Binding SelectedSource.MeasurementHistogramVisibility}">
+                                <ItemsControl ItemsSource="{Binding SelectedSource.MeasurementHistogramBars}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Rows="1" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid ToolTip="{Binding ToolTip}">
+                                                <Border Height="{Binding HeightPixels}"
+                                                        Margin="1,0"
+                                                        VerticalAlignment="Bottom"
+                                                        Background="#FF22C7E8"
+                                                        CornerRadius="1,1,0,0" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Border>
+                            <Button Margin="0,7,0,0" Command="{Binding DeleteSelectedMeasurementCommand}" Content="删除所选测量" />
+                            <Button Margin="0,6,0,0" Command="{Binding CopyMeasurementsCommand}" Content="复制表格" />
+                            <Button Margin="0,6,0,0" Command="{Binding ExportMeasurementsCommand}" Style="{StaticResource AccentButtonStyle}" Content="导出 CSV / Excel" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
             </Grid>
 
             <GridSplitter Grid.Column="3" Width="6" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="#263442" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" ShowsPreview="True" ToolTip="拖动调整检查器宽度" />
@@ -636,7 +948,7 @@
                             </Button.Style>
                         </Button>
                     </Grid>
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" CanContentScroll="False" Visibility="{Binding InspectorTabVisibility}">
+                    <ScrollViewer x:Name="InspectorScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False" Visibility="{Binding InspectorTabVisibility}">
                     <Grid>
                     <StackPanel Margin="16,16,16,24"
                                 IsEnabled="{Binding HasSelection}"
@@ -666,7 +978,186 @@
                                            Foreground="#BDA68E"
                                            FontSize="8"
                                            TextWrapping="Wrap" />
-                                <Button Command="{Binding AcceptSourceRevisionCommand}" Content="核对并明确接受当前文件为新版本" />
+                                <Button Command="{Binding AcceptSourceRevisionCommand}" Content="接受当前文件为新版本" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Margin="0,22,0,8" Style="{StaticResource SectionTitleStyle}" Text="尺度标定 / CALIBRATION" />
+                        <Border Padding="10" Background="#111B23" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding SelectedSource.Calibration.StatusText}" Foreground="#7DD9E9" FontSize="10" TextWrapping="Wrap" />
+                                    <TextBlock Grid.Column="1" Margin="8,0,0,0" Text="{Binding SelectedSource.Calibration.OriginText}" Foreground="#AEB9C7" FontSize="9" />
+                                </Grid>
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="X 尺度 / unit per px" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding SelectedSource.Calibration.UnitsPerPixelX, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Y 尺度 / unit per px" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding SelectedSource.Calibration.UnitsPerPixelY, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="参考线像素长度" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" IsReadOnly="True" Text="{Binding SelectedSource.Calibration.ReferencePixelLength, Mode=OneWay, StringFormat={}{0:0.###}}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="已知真实距离" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding SelectedSource.Calibration.ReferencePhysicalLength, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+                                <ComboBox Margin="0,8,0,0"
+                                          ItemsSource="{Binding SelectedSource.Calibration.AvailableUnits}"
+                                          SelectedItem="{Binding SelectedSource.Calibration.Unit}" />
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="6" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button Grid.Column="0" Command="{Binding SelectedSource.Calibration.ApplyReferenceCommand}" Style="{StaticResource AccentButtonStyle}" Content="应用参考标定" />
+                                    <Button Grid.Column="2" Command="{Binding ApplyCalibrationToFigurePanelsCommand}" Content="同步到拼版" />
+                                </Grid>
+                                <Button Margin="0,6,0,0" Command="{Binding SelectedSource.Calibration.ClearCalibrationCommand}" Content="清除标定" />
+                                <TextBlock Margin="0,8,0,0" Text="{Binding SelectedSource.Calibration.ValidatorText}" Foreground="#AFC5D2" FontSize="9" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Margin="0,22,0,8" Style="{StaticResource SectionTitleStyle}" Text="当前测量" />
+                        <Border Padding="10" Background="#111B23" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4">
+                            <StackPanel>
+                                <TextBlock Text="{Binding SelectedSource.SelectedMeasurementStatusText}" Foreground="#7DD9E9" FontSize="10" TextWrapping="Wrap" />
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="描边颜色" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding SelectedSource.SelectedMeasurement.StrokeColor, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="线宽 / px" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding SelectedSource.SelectedMeasurement.StrokeWidthPixels, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+                                <Button Margin="0,8,0,0" Command="{Binding DeleteSelectedMeasurementCommand}" Content="删除当前测量" />
+                                <Button Margin="0,6,0,0"
+                                        Command="{Binding AnalyzeIntensityProfileCommand}"
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        Content="从原始像素生成强度剖面" />
+                                <TextBlock Margin="0,6,0,0"
+                                           Text="{Binding IntensityProfileStatusText}"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           FontSize="8"
+                                           TextWrapping="Wrap" />
+                                <Border Margin="0,8,0,0"
+                                        Padding="7"
+                                        Background="#0B131A"
+                                        BorderBrush="#315365"
+                                        BorderThickness="1"
+                                        CornerRadius="3"
+                                        Visibility="{Binding IntensityProfileVisibility}">
+                                    <Viewbox Stretch="Uniform" StretchDirection="DownOnly">
+                                        <Canvas Width="300" Height="100">
+                                            <Line X1="0" Y1="99" X2="300" Y2="99" Stroke="#4E6474" StrokeThickness="1" />
+                                            <Line X1="0" Y1="0" X2="0" Y2="100" Stroke="#4E6474" StrokeThickness="1" />
+                                            <Polyline Points="{Binding IntensityProfilePoints}"
+                                                      Stroke="#22C7E8"
+                                                      StrokeThickness="2"
+                                                      StrokeLineJoin="Round" />
+                                        </Canvas>
+                                    </Viewbox>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Margin="0,22,0,8" Style="{StaticResource SectionTitleStyle}" Text="智能辅助区域分析 / 可审计规则" />
+                        <Border Padding="10" Background="#171A21" BorderBrush="#66543A" BorderThickness="1" CornerRadius="4">
+                            <StackPanel>
+                                <TextBlock Text="只生成候选，不修改原图；候选必须人工接受后才写入测量表。"
+                                           Foreground="#E8C989" FontSize="9" TextWrapping="Wrap" />
+                                <ComboBox Margin="0,8,0,0"
+                                          ItemsSource="{Binding AssistedRegionModes}"
+                                          DisplayMemberPath="Label"
+                                          SelectedValuePath="Mode"
+                                          SelectedValue="{Binding AssistedRegionMode}" />
+                                <CheckBox Margin="0,8,0,0"
+                                          IsChecked="{Binding UseAutomaticRegionThreshold}"
+                                          Content="自动阈值（Otsu，可复现）" />
+                                <Grid Margin="0,7,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="手动阈值 / %" Foreground="{StaticResource MutedBrush}" FontSize="8" />
+                                        <TextBox Margin="0,3,0,0"
+                                                 Text="{Binding RegionThresholdPercent, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip="关闭自动阈值后使用此值" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="最小面积 / px²" Foreground="{StaticResource MutedBrush}" FontSize="8" />
+                                        <TextBox Margin="0,3,0,0" Text="{Binding MinimumRegionAreaPixels, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+                                <Button Margin="0,8,0,0"
+                                        Command="{Binding AnalyzeAssistedRegionsCommand}"
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        Content="分析当前裁剪 ROI" />
+                                <TextBlock Margin="0,7,0,0"
+                                           Text="{Binding AssistedRegionStatusText}"
+                                           Foreground="#D9C29A"
+                                           FontSize="8"
+                                           TextWrapping="Wrap" />
+                                <StackPanel Visibility="{Binding AssistedRegionResultsVisibility}">
+                                    <TextBlock Margin="0,7,0,4"
+                                               Text="{Binding AssistedRegionDecisionText}"
+                                               Foreground="#AFC5D2"
+                                               FontSize="8" />
+                                    <DataGrid Height="150"
+                                              ItemsSource="{Binding AssistedRegions}"
+                                              SelectedItem="{Binding SelectedAssistedRegion}"
+                                              AutoGenerateColumns="False"
+                                              CanUserAddRows="False"
+                                              CanUserDeleteRows="False"
+                                              HeadersVisibility="Column"
+                                              RowHeaderWidth="0"
+                                              Background="#0D1319"
+                                              BorderBrush="{StaticResource BorderBrush}">
+                                        <DataGrid.Columns>
+                                            <DataGridCheckBoxColumn Header="采用" Binding="{Binding IsAccepted, Mode=TwoWay}" Width="42" />
+                                            <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="34" IsReadOnly="True" />
+                                            <DataGridTextColumn Header="等效尺寸" Binding="{Binding SizeText}" Width="*" IsReadOnly="True" />
+                                            <DataGridTextColumn Header="状态" Binding="{Binding DecisionText}" Width="78" IsReadOnly="True" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                    <UniformGrid Margin="0,7,0,0" Columns="2" Rows="2">
+                                        <Button Margin="0,0,4,4" Command="{Binding AcceptAllAssistedRegionsCommand}" Content="全部接受" />
+                                        <Button Margin="4,0,0,4" Command="{Binding RejectSelectedAssistedRegionCommand}" Content="拒绝所选" />
+                                        <Button Margin="0,4,4,0" Command="{Binding CommitAcceptedAssistedRegionsCommand}" Style="{StaticResource AccentButtonStyle}" Content="写入测量表" />
+                                        <Button Margin="4,4,0,0" Command="{Binding ClearAssistedRegionsCommand}" Content="清除候选" />
+                                    </UniformGrid>
+                                </StackPanel>
                             </StackPanel>
                         </Border>
 
@@ -870,6 +1361,101 @@
                             </StackPanel>
                         </Border>
 
+                        <TextBlock Margin="0,18,0,8" Style="{StaticResource SectionTitleStyle}" Text="全局图样式" />
+                        <Border Padding="10" Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4">
+                            <StackPanel>
+                                <TextBlock Text="字体家族" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <TextBox Margin="0,4,0,0" Text="{Binding Figure.GlobalFontFamily, UpdateSourceTrigger=PropertyChanged}" />
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="字号 / pt" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.GlobalFontSizePt, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="线宽 / pt" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.GlobalStrokeWidthPt, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="6" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="6" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="文字" Foreground="{StaticResource MutedBrush}" FontSize="8" />
+                                        <TextBox Margin="0,3,0,0" Text="{Binding Figure.GlobalTextColor, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="图形" Foreground="{StaticResource MutedBrush}" FontSize="8" />
+                                        <TextBox Margin="0,3,0,0" Text="{Binding Figure.GlobalShapeColor, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="4">
+                                        <TextBlock Text="比例尺" Foreground="{StaticResource MutedBrush}" FontSize="8" />
+                                        <TextBox Margin="0,3,0,0" Text="{Binding Figure.GlobalScaleBarColor, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+                                <Button Margin="0,9,0,0"
+                                        Command="{Binding Figure.ApplyGlobalStyleCommand}"
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        Content="一键统一全部标注" />
+                                <TextBlock Margin="0,5,0,0" Text="{Binding Figure.GlobalStyleStatusText}" Foreground="{StaticResource MutedBrush}" FontSize="8" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Margin="0,18,0,8" Style="{StaticResource SectionTitleStyle}" Text="科研颜色字典" />
+                        <Border Padding="10" Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4">
+                            <StackPanel>
+                                <TextBlock Text="同一物理对象在全项目复用同一颜色，并进行红绿色觉缺陷近似检查。"
+                                           Foreground="{StaticResource MutedBrush}" FontSize="8" TextWrapping="Wrap" />
+                                <ListBox Margin="0,8,0,0"
+                                         MaxHeight="210"
+                                         ItemsSource="{Binding Figure.ScientificColors}"
+                                         SelectedItem="{Binding Figure.SelectedScientificColor}"
+                                         Background="#0D151C"
+                                         BorderBrush="{StaticResource BorderBrush}">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="Padding" Value="3" />
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="22" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="8" />
+                                                    <ColumnDefinition Width="92" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="16" Height="16" Background="{Binding ColorBrush}" BorderBrush="#8090A0" BorderThickness="1" CornerRadius="2" />
+                                                <TextBox Grid.Column="1" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
+                                                <TextBox Grid.Column="3" Text="{Binding Color, UpdateSourceTrigger=PropertyChanged}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <UniformGrid Margin="0,8,0,0" Columns="3" Rows="1">
+                                    <Button Margin="0,0,4,0" Command="{Binding Figure.AddScientificColorCommand}" Content="新增" />
+                                    <Button Margin="4,0" Command="{Binding Figure.RemoveSelectedScientificColorCommand}" Content="删除" />
+                                    <Button Margin="4,0,0,0" Command="{Binding Figure.ApplySelectedScientificColorCommand}" Style="{StaticResource AccentButtonStyle}" Content="应用" ToolTip="应用到所选标注；未选择标注时设为全局图形颜色" />
+                                </UniformGrid>
+                                <TextBlock Margin="0,7,0,0"
+                                           Text="{Binding Figure.ScientificColorStatusText}"
+                                           Foreground="#80DDEA"
+                                           FontSize="8"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
                         <Grid Margin="0,18,0,8">
                             <TextBlock Style="{StaticResource SectionTitleStyle}" Text="面板图层" />
                             <TextBlock HorizontalAlignment="Right" Text="{Binding Figure.PanelCountText}" Foreground="{StaticResource MutedBrush}" FontSize="10" />
@@ -1016,6 +1602,20 @@
                                             <Button Margin="0,0,5,0" Padding="5" Command="{Binding Figure.DistributeSelectionHorizontallyCommand}" Content="水平等距" />
                                             <Button Padding="5" Command="{Binding Figure.DistributeSelectionVerticallyCommand}" Content="垂直等距" />
                                         </UniformGrid>
+                                        <UniformGrid Margin="0,7,0,0" Columns="2">
+                                            <Button Margin="0,0,5,0" Padding="5" Command="{Binding Figure.LinkSelectedPanelCropsCommand}" Content="关联裁剪" ToolTip="所选面板必须来自同一源图；之后替换其中一个裁剪会同步到同组面板" />
+                                            <Button Padding="5" Command="{Binding Figure.UnlinkSelectedPanelCropsCommand}" Content="解除关联" />
+                                        </UniformGrid>
+                                        <TextBlock Margin="0,9,0,5"
+                                                   Text="匹配主选面板（最后选中的高亮面板）"
+                                                   Foreground="{StaticResource MutedBrush}"
+                                                   FontSize="8" />
+                                        <UniformGrid Columns="4">
+                                            <Button Margin="0,0,4,0" Padding="4" Command="{Binding Figure.MatchSelectionWidthCommand}" Content="同宽" />
+                                            <Button Margin="0,0,4,0" Padding="4" Command="{Binding Figure.MatchSelectionHeightCommand}" Content="同高" />
+                                            <Button Margin="0,0,4,0" Padding="4" Command="{Binding Figure.MatchSelectionFrameCommand}" Content="同框" />
+                                            <Button Padding="4" Command="{Binding Figure.MatchSelectionAspectRatioCommand}" Content="同比" ToolTip="保持各自宽度，将宽高比匹配到主选面板" />
+                                        </UniformGrid>
                                         <Grid Margin="0,8,0,0">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*" />
@@ -1037,6 +1637,8 @@
                                     <StackPanel>
                                         <CheckBox IsChecked="{Binding Figure.SelectedPanel.ShowScaleBar}"
                                                   Content="显示经过校准的比例尺" />
+                                        <TextBlock Margin="0,6,0,0" Text="{Binding Figure.SelectedPanel.CropLinkStatusText}" Foreground="{StaticResource MutedBrush}" FontSize="8" />
+                                        <Button Margin="0,7,0,0" Command="{Binding Figure.CreateInsetCommand}" Content="创建 Inset 局部放大" />
                                         <Grid Margin="0,10,0,0">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*" />
@@ -1236,11 +1838,12 @@
                             <TextBlock Style="{StaticResource SectionTitleStyle}" Text="科研标注层" />
                             <TextBlock HorizontalAlignment="Right" Text="{Binding Figure.AnnotationCountText}" Foreground="{StaticResource MutedBrush}" FontSize="10" />
                         </Grid>
-                        <UniformGrid Columns="2" Rows="2">
+                        <UniformGrid Columns="2" Rows="3">
                             <Button Margin="0,0,5,5" Command="{Binding Figure.AddTextAnnotationCommand}" Content="＋ 文字" />
                             <Button Margin="0,0,0,5" Command="{Binding Figure.AddArrowAnnotationCommand}" Content="＋ 箭头" />
-                            <Button Margin="0,0,5,0" Command="{Binding Figure.AddRectangleAnnotationCommand}" Content="＋ 矩形" />
-                            <Button Command="{Binding Figure.AddEllipseAnnotationCommand}" Content="＋ 椭圆" />
+                            <Button Margin="0,0,5,5" Command="{Binding Figure.AddLineAnnotationCommand}" Content="＋ 直线" />
+                            <Button Margin="0,0,0,5" Command="{Binding Figure.AddRectangleAnnotationCommand}" Content="＋ 矩形" />
+                            <Button Margin="0,0,5,0" Command="{Binding Figure.AddEllipseAnnotationCommand}" Content="＋ 椭圆" />
                         </UniformGrid>
                         <ListBox Margin="0,8,0,0"
                                  MinHeight="80"
@@ -1358,6 +1961,165 @@
                                            Foreground="#80DDEA"
                                            FontSize="9"
                                            TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <Grid Margin="0,20,0,8">
+                            <TextBlock Style="{StaticResource SectionTitleStyle}" Text="投稿导出预设" />
+                            <TextBlock HorizontalAlignment="Right" Text="{Binding ExportProfileSummary}" Foreground="{StaticResource MutedBrush}" FontSize="10" />
+                        </Grid>
+                        <ListBox MinHeight="90"
+                                 MaxHeight="180"
+                                 ItemsSource="{Binding ExportProfiles}"
+                                 SelectedItem="{Binding SelectedExportProfile}"
+                                 Background="{StaticResource PanelRaisedBrush}"
+                                 BorderBrush="{StaticResource BorderBrush}"
+                                 BorderThickness="1">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="7,5">
+                                        <TextBlock Text="{Binding Name}" FontSize="10" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Summary}" Foreground="{StaticResource MutedBrush}" FontSize="8" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <UniformGrid Margin="0,7,0,0" Columns="3">
+                            <Button Margin="0,0,5,0" Padding="6" Command="{Binding AddExportProfileCommand}" Content="新增" />
+                            <Button Margin="0,0,5,0" Padding="6" Command="{Binding RemoveSelectedExportProfileCommand}" Content="移除" />
+                            <Button Padding="6" Command="{Binding ResetExportProfilesCommand}" Content="恢复默认" />
+                        </UniformGrid>
+                        <Border Margin="0,8,0,0" Padding="10" Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4">
+                            <StackPanel>
+                                <TextBlock Text="名称" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <TextBox Margin="0,4,0,0" Text="{Binding SelectedExportProfile.Name, UpdateSourceTrigger=PropertyChanged}" />
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="格式" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <ComboBox Margin="0,4,0,0" IsEditable="True" Text="{Binding SelectedExportProfile.Format, UpdateSourceTrigger=PropertyChanged}">
+                                            <ComboBoxItem Content="tiff" />
+                                            <ComboBoxItem Content="png" />
+                                            <ComboBoxItem Content="jpg" />
+                                            <ComboBoxItem Content="pdf" />
+                                            <ComboBoxItem Content="svg" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="位深" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <ComboBox Margin="0,4,0,0" IsEditable="True" Text="{Binding SelectedExportProfile.BitDepth, UpdateSourceTrigger=PropertyChanged}">
+                                            <ComboBoxItem Content="8" />
+                                            <ComboBoxItem Content="16" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                </Grid>
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="DPI" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding SelectedExportProfile.Dpi, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="缩放倍数" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding SelectedExportProfile.Scale, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="目标宽 / px（可空）" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding SelectedExportProfile.WidthPixels, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="目标高 / px（可空）" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding SelectedExportProfile.HeightPixels, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+                                <CheckBox Margin="0,8,0,0" IsChecked="{Binding SelectedExportProfile.WriteProvenance}" Content="生成溯源 JSON 与 HTML 报告" />
+                                <TextBlock Margin="0,6,0,0" Text="{Binding SelectedExportProfile.ValidationMessage}" Foreground="#80DDEA" FontSize="8" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Margin="0,18,0,8" Style="{StaticResource SectionTitleStyle}" Text="智能辅助 · 可解释 / 可撤销" />
+                        <Border Padding="10" Background="#171A21" BorderBrush="#66543A" BorderThickness="1" CornerRadius="4">
+                            <StackPanel>
+                                <TextBlock Text="使用确定性规则辅助布局、样式和科研诚信审查；不执行生成式填充、克隆、局部擦除或对象移除。"
+                                           Foreground="#E8C989" FontSize="9" TextWrapping="Wrap" />
+                                <Button Margin="0,9,0,0"
+                                        Command="{Binding ApplySmartLayoutCommand}"
+                                        Content="推荐并应用布局" />
+                                <Button Margin="0,6,0,0"
+                                        Command="{Binding HarmonizeFigureStyleCommand}"
+                                        Content="协调全局样式" />
+                                <Button Margin="0,6,0,0"
+                                        Command="{Binding RunAssistedFigureReviewCommand}"
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        Content="运行样式 + 科研诚信辅助审查" />
+                                <TextBlock Margin="0,7,0,0"
+                                           Text="{Binding SmartAssistStatusText}"
+                                           Foreground="#D9C29A"
+                                           FontSize="8"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Margin="0,18,0,8" Style="{StaticResource SectionTitleStyle}" Text="Figure QC · 投稿前检查" />
+                        <Border Padding="10" Background="#121E27" BorderBrush="#315365" BorderThickness="1" CornerRadius="4">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding FigureQcStatusText}" Foreground="#DCE7F0" FontSize="10" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                        <TextBlock Margin="0,3,0,0" Text="{Binding FigureQcCountText}" Foreground="{StaticResource MutedBrush}" FontSize="8" />
+                                    </StackPanel>
+                                    <Button Grid.Column="1" Margin="8,0,0,0" Padding="9,5" Command="{Binding RunFigureQcCommand}" Content="重新检查" />
+                                </Grid>
+                                <ListBox Margin="0,9,0,0"
+                                         MinHeight="54"
+                                         MaxHeight="230"
+                                         Background="#0D151C"
+                                         BorderBrush="{StaticResource BorderBrush}"
+                                         BorderThickness="1"
+                                         ItemsSource="{Binding FigureQcIssues}"
+                                         SelectedItem="{Binding SelectedFigureQcIssue}"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="Padding" Value="0" />
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Margin="5,4" Padding="7" BorderBrush="{Binding SeverityBrush}" BorderThickness="3,0,0,0">
+                                                <StackPanel>
+                                                    <Grid>
+                                                        <TextBlock Text="{Binding SeverityText}" Foreground="{Binding SeverityBrush}" FontSize="8" FontWeight="Bold" />
+                                                        <TextBlock HorizontalAlignment="Right" Text="{Binding TargetText}" Foreground="{StaticResource MutedBrush}" FontSize="8" />
+                                                    </Grid>
+                                                    <TextBlock Margin="0,3,0,0" Text="{Binding Message}" FontSize="9" TextWrapping="Wrap" />
+                                                    <TextBlock Margin="0,3,0,0" Text="{Binding SuggestedAction}" Foreground="{StaticResource MutedBrush}" FontSize="8" TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <Button Margin="0,8,0,0" Command="{Binding NavigateToSelectedQcIssueCommand}" Content="定位选中问题" />
                             </StackPanel>
                         </Border>
 

@@ -16,12 +16,21 @@ public sealed record FigureExportProfile
         double scale = 1,
         int? widthPixels = null,
         int? heightPixels = null,
-        bool writeProvenance = true)
+        bool writeProvenance = true,
+        int bitDepth = 8)
     {
         Id = NormalizeRequired(id, nameof(id));
         Name = NormalizeRequired(name, nameof(name));
         Format = NormalizeFormat(format);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(dpi);
+        if (bitDepth is not (8 or 16))
+        {
+            throw new ArgumentOutOfRangeException(nameof(bitDepth), "输出位深只支持 8 或 16。");
+        }
+        if (bitDepth == 16 && Format != "tiff")
+        {
+            throw new ArgumentException("16-bit 输出当前仅支持 TIFF。", nameof(bitDepth));
+        }
         if (!double.IsFinite(scale) || scale <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(scale), "输出比例必须是有限的正数。");
@@ -42,6 +51,7 @@ public sealed record FigureExportProfile
         WidthPixels = widthPixels;
         HeightPixels = heightPixels;
         WriteProvenance = writeProvenance;
+        BitDepth = bitDepth;
     }
 
     public string Id { get; }
@@ -59,6 +69,8 @@ public sealed record FigureExportProfile
     public int? HeightPixels { get; }
 
     public bool WriteProvenance { get; }
+
+    public int BitDepth { get; }
 
     public string Extension => $".{Format}";
 
@@ -91,7 +103,8 @@ public sealed record FigureExportProfile
             Dpi,
             panels,
             annotations,
-            source.BackgroundColor);
+            source.BackgroundColor,
+            BitDepth);
     }
 
     public static IReadOnlyList<FigureExportProfile> BuiltIns { get; } =
@@ -100,7 +113,8 @@ public sealed record FigureExportProfile
             "main-tiff",
             "主图 · 无损 TIFF",
             "tiff",
-            dpi: 300),
+            dpi: 300,
+            bitDepth: 16),
         new(
             "supplement-png",
             "补充图 · PNG",

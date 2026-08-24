@@ -1,5 +1,7 @@
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
+using SciCanvas.Core.Science;
+using SciCanvas.Core.Export;
 
 namespace SciCanvas.Presentation;
 
@@ -15,6 +17,8 @@ internal sealed record EditorHistorySnapshot(
     bool AutoPanelLabelsEnabled,
     bool ShowPanelLabels,
     string PanelLabelSequence,
+    FigureGlobalStyle GlobalStyle,
+    IReadOnlyList<ScientificColorDefinition> ScientificColors,
     Guid? SelectedPanelId,
     IReadOnlyList<Guid> SelectedPanelIds,
     Guid? SelectedAnnotationId,
@@ -24,7 +28,9 @@ internal sealed record EditorHistorySnapshot(
     long ExactSpacingPixels,
     IReadOnlyList<PanelHistorySnapshot> Panels,
     IReadOnlyList<AnnotationHistorySnapshot> Annotations,
-    IReadOnlyList<GuideHistorySnapshot> Guides);
+    IReadOnlyList<GuideHistorySnapshot> Guides,
+    IReadOnlyList<CalibrationHistorySnapshot> Calibrations,
+    IReadOnlyList<MeasurementHistorySnapshot> Measurements);
 
 internal sealed record PanelHistorySnapshot(
     Guid Id,
@@ -43,7 +49,8 @@ internal sealed record PanelHistorySnapshot(
     bool ScaleBarShowLabel,
     int FrameIndex,
     ImageAdjustmentParameters Adjustments,
-    bool IsAspectRatioLocked);
+    bool IsAspectRatioLocked,
+    Guid? CropLinkGroupId);
 
 internal sealed record AnnotationHistorySnapshot(
     Guid Id,
@@ -66,3 +73,22 @@ internal sealed record GuideHistorySnapshot(
     FigureGuideOrientation Orientation,
     double Position,
     bool IsLocked);
+
+internal sealed record CalibrationHistorySnapshot(
+    Guid SourceId,
+    SpatialCalibration Calibration,
+    double ReferenceStartX,
+    double ReferenceStartY,
+    double ReferenceEndX,
+    double ReferenceEndY);
+
+internal sealed record MeasurementHistorySnapshot(
+    Guid Id,
+    Guid SourceId,
+    ScientificMeasurementKind Kind,
+    MeasurementPoint PointA,
+    MeasurementPoint PointB,
+    MeasurementPoint? PointC,
+    IReadOnlyList<MeasurementPoint> PathPoints,
+    string StrokeColor,
+    double StrokeWidthPixels);

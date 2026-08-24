@@ -6,4 +6,7 @@ public interface IExportFilePicker
 
     string? PickNewFigureExportPath(string suggestedFileName) =>
         PickNewExportPath(suggestedFileName);
+
+    string? PickNewMeasurementExportPath(string suggestedFileName) =>
+        PickNewExportPath(suggestedFileName);
 }

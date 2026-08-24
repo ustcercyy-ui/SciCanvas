@@ -23,6 +23,17 @@ public sealed class FigureCanvasViewModel : ObservableObject
     private bool _autoPanelLabelsEnabled = true;
     private bool _showPanelLabels = true;
     private string _panelLabelSequence;
+    private string _globalFontFamily = FigureGlobalStyle.Default.FontFamily;
+    private double _globalFontSizePt = FigureGlobalStyle.Default.FontSizePt;
+    private double _globalStrokeWidthPt = FigureGlobalStyle.Default.StrokeWidthPt;
+    private string _globalTextColor = FigureGlobalStyle.Default.TextColor;
+    private string _globalShapeColor = FigureGlobalStyle.Default.ShapeColor;
+    private string _globalScaleBarColor = FigureGlobalStyle.Default.ScaleBarColor;
+    private string _lastValidGlobalTextColor = FigureGlobalStyle.Default.TextColor;
+    private string _lastValidGlobalShapeColor = FigureGlobalStyle.Default.ShapeColor;
+    private string _lastValidGlobalScaleBarColor = FigureGlobalStyle.Default.ScaleBarColor;
+    private bool _isSynchronizingLinkedCrops;
+    private ScientificColorEntryViewModel? _selectedScientificColor;
 
     public event EventHandler? DocumentChanged;
 
@@ -90,6 +101,18 @@ public sealed class FigureCanvasViewModel : ObservableObject
         SetVerticalSpacingCommand = new RelayCommand(
             () => SetExactPanelSpacing(horizontal: false),
             () => CanSetExactPanelSpacing(horizontal: false));
+        MatchSelectionWidthCommand = new RelayCommand(
+            () => MatchPanelSelection(PanelMatchMode.Width),
+            CanMatchPanelSelection);
+        MatchSelectionHeightCommand = new RelayCommand(
+            () => MatchPanelSelection(PanelMatchMode.Height),
+            CanMatchPanelSelection);
+        MatchSelectionFrameCommand = new RelayCommand(
+            () => MatchPanelSelection(PanelMatchMode.Frame),
+            CanMatchPanelSelection);
+        MatchSelectionAspectRatioCommand = new RelayCommand(
+            () => MatchPanelSelection(PanelMatchMode.AspectRatio),
+            CanMatchPanelSelection);
         AddVerticalGuideCommand = new RelayCommand(
             () => AddGuide(FigureGuideOrientation.Vertical));
         AddHorizontalGuideCommand = new RelayCommand(
@@ -101,8 +124,27 @@ public sealed class FigureCanvasViewModel : ObservableObject
         RenumberPanelLabelsCommand = new RelayCommand(
             () => RenumberPanelLabels(force: true),
             () => Panels.Count > 0);
+        ApplyGlobalStyleCommand = new RelayCommand(ApplyGlobalStyleToAnnotations, () => IsGlobalStyleValid);
+        foreach (ScientificColorDefinition definition in ScientificColorPalette.Default)
+        {
+            AddScientificColorEntry(definition);
+        }
+        SelectedScientificColor = ScientificColors.FirstOrDefault();
+        AddScientificColorCommand = new RelayCommand(AddScientificColor);
+        RemoveSelectedScientificColorCommand = new RelayCommand(
+            RemoveSelectedScientificColor,
+            () => SelectedScientificColor is not null && ScientificColors.Count > 1);
+        ApplySelectedScientificColorCommand = new RelayCommand(
+            ApplySelectedScientificColor,
+            () => SelectedScientificColor?.Definition.IsValid == true);
+        CreateInsetCommand = new RelayCommand(CreateInsetFromSelectedPanel, () => SelectedPanel is not null);
+        LinkSelectedPanelCropsCommand = new RelayCommand(LinkSelectedPanelCrops, CanLinkSelectedPanelCrops);
+        UnlinkSelectedPanelCropsCommand = new RelayCommand(
+            UnlinkSelectedPanelCrops,
+            () => SelectedPanels.Any(panel => panel.IsCropLinked));
         AddTextAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Text));
         AddArrowAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Arrow));
+        AddLineAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Line));
         AddRectangleAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Rectangle));
         AddEllipseAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Ellipse));
         RemoveSelectedAnnotationCommand = new RelayCommand(
@@ -123,6 +165,8 @@ public sealed class FigureCanvasViewModel : ObservableObject
     public ObservableCollection<FigureAnnotationViewModel> Annotations { get; } = [];
 
     public ObservableCollection<FigureGuideViewModel> Guides { get; } = [];
+
+    public ObservableCollection<ScientificColorEntryViewModel> ScientificColors { get; } = [];
 
     public RelayCommand RemoveSelectedCommand { get; }
 
@@ -166,6 +210,14 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
     public RelayCommand SetVerticalSpacingCommand { get; }
 
+    public RelayCommand MatchSelectionWidthCommand { get; }
+
+    public RelayCommand MatchSelectionHeightCommand { get; }
+
+    public RelayCommand MatchSelectionFrameCommand { get; }
+
+    public RelayCommand MatchSelectionAspectRatioCommand { get; }
+
     public RelayCommand AddVerticalGuideCommand { get; }
 
     public RelayCommand AddHorizontalGuideCommand { get; }
@@ -175,6 +227,8 @@ public sealed class FigureCanvasViewModel : ObservableObject
     public RelayCommand AddTextAnnotationCommand { get; }
 
     public RelayCommand AddArrowAnnotationCommand { get; }
+
+    public RelayCommand AddLineAnnotationCommand { get; }
 
     public RelayCommand AddRectangleAnnotationCommand { get; }
 
@@ -189,6 +243,20 @@ public sealed class FigureCanvasViewModel : ObservableObject
     public RelayCommand ResetBackgroundCommand { get; }
 
     public RelayCommand RenumberPanelLabelsCommand { get; }
+
+    public RelayCommand ApplyGlobalStyleCommand { get; }
+
+    public RelayCommand AddScientificColorCommand { get; }
+
+    public RelayCommand RemoveSelectedScientificColorCommand { get; }
+
+    public RelayCommand ApplySelectedScientificColorCommand { get; }
+
+    public RelayCommand CreateInsetCommand { get; }
+
+    public RelayCommand LinkSelectedPanelCropsCommand { get; }
+
+    public RelayCommand UnlinkSelectedPanelCropsCommand { get; }
 
     public string TemplateName => _layout.TemplateName;
 
@@ -301,11 +369,127 @@ public sealed class FigureCanvasViewModel : ObservableObject
             ? "新增、删除或切换编号序列时自动更新；可按画布位置重新编号。"
             : "自动编号已关闭，可直接编辑选中面板的编号。";
 
+    public string GlobalFontFamily
+    {
+        get => _globalFontFamily;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (SetProperty(ref _globalFontFamily, normalized))
+            {
+                NotifyGlobalStyleChanged();
+            }
+        }
+    }
+
+    public double GlobalFontSizePt
+    {
+        get => _globalFontSizePt;
+        set
+        {
+            if (SetProperty(ref _globalFontSizePt, value))
+            {
+                OnPropertyChanged(nameof(GlobalFontSizePixels));
+                NotifyGlobalStyleChanged();
+            }
+        }
+    }
+
+    public double GlobalStrokeWidthPt
+    {
+        get => _globalStrokeWidthPt;
+        set
+        {
+            if (SetProperty(ref _globalStrokeWidthPt, value))
+            {
+                OnPropertyChanged(nameof(GlobalStrokeWidthPixels));
+                NotifyGlobalStyleChanged();
+            }
+        }
+    }
+
+    public string GlobalTextColor
+    {
+        get => _globalTextColor;
+        set => SetGlobalColor(ref _globalTextColor, ref _lastValidGlobalTextColor, value, nameof(GlobalTextColor), nameof(GlobalTextBrush));
+    }
+
+    public string GlobalShapeColor
+    {
+        get => _globalShapeColor;
+        set => SetGlobalColor(ref _globalShapeColor, ref _lastValidGlobalShapeColor, value, nameof(GlobalShapeColor), nameof(GlobalShapeBrush));
+    }
+
+    public string GlobalScaleBarColor
+    {
+        get => _globalScaleBarColor;
+        set => SetGlobalColor(ref _globalScaleBarColor, ref _lastValidGlobalScaleBarColor, value, nameof(GlobalScaleBarColor), nameof(GlobalScaleBarBrush));
+    }
+
+    public double GlobalFontSizePixels => Math.Max(12, GlobalFontSizePt / 72.0 * Dpi);
+
+    public double GlobalStrokeWidthPixels => Math.Max(1, GlobalStrokeWidthPt / 72.0 * Dpi);
+
+    public Brush GlobalTextBrush => CreateBrush(_lastValidGlobalTextColor);
+
+    public Brush GlobalShapeBrush => CreateBrush(_lastValidGlobalShapeColor);
+
+    public Brush GlobalScaleBarBrush => CreateBrush(_lastValidGlobalScaleBarColor);
+
+    public FigureGlobalStyle GlobalStyle => new(
+        GlobalFontFamily,
+        GlobalFontSizePt,
+        GlobalStrokeWidthPt,
+        GlobalTextColor,
+        GlobalShapeColor,
+        GlobalScaleBarColor);
+
+    public bool IsGlobalStyleValid => GlobalStyle.IsValid;
+
+    public string GlobalStyleStatusText => IsGlobalStyleValid
+        ? $"{GlobalFontFamily} · {GlobalFontSizePt:0.##} pt · {GlobalStrokeWidthPt:0.##} pt · 可一键统一 {Annotations.Count} 个标注"
+        : "样式无效：字体 4–72 pt、线宽 0.25–10 pt，颜色使用 #RRGGBB 或 #AARRGGBB。";
+
+    public ScientificColorEntryViewModel? SelectedScientificColor
+    {
+        get => _selectedScientificColor;
+        set
+        {
+            if (SetProperty(ref _selectedScientificColor, value))
+            {
+                RemoveSelectedScientificColorCommand?.NotifyCanExecuteChanged();
+                ApplySelectedScientificColorCommand?.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    public string ScientificColorStatusText
+    {
+        get
+        {
+            ScientificColorPaletteReview review = ScientificColorPalette.Review(
+                ScientificColors.Select(entry => entry.Definition));
+            return review.IsValid
+                ? $"{ScientificColors.Count} 个项目颜色 · 名称唯一 · 红绿色觉缺陷模拟未发现近似色"
+                : string.Join(" ", review.Warnings);
+        }
+    }
+
     public int SlotCount => _layout.Slots.Count;
 
     public string CanvasSizeText => $"{CanvasWidth:N0} × {CanvasHeight:N0} px · {Dpi} dpi";
 
-    public string PanelCountText => $"{Panels.Count} / {SlotCount} 个面板";
+    public string PanelCountText
+    {
+        get
+        {
+            int insetCount = Panels.Count(panel => panel.IsInset);
+            int regularCount = Panels.Count - insetCount;
+            return insetCount == 0
+                ? $"{regularCount} / {SlotCount} 个面板"
+                : $"{regularCount} / {SlotCount} 个面板 · {insetCount} Inset";
+        }
+    }
 
     public IReadOnlyList<FigurePanelViewModel> SelectedPanels =>
         Panels.Where(panel => panel.IsSelected).ToArray();
@@ -684,6 +868,11 @@ public sealed class FigureCanvasViewModel : ObservableObject
     {
         TemplateSlotLayout? slot = _layout.Slots.FirstOrDefault(
             candidate => string.Equals(candidate.Id, slotId, StringComparison.Ordinal));
+        if (slot is null && IsInsetSlot(slotId))
+        {
+            slot = CreateInsetSlot(slotId, destinationRect);
+        }
+
         if (slot is null || Panels.Any(panel => panel.SlotId == slot.Id))
         {
             return null;
@@ -758,7 +947,8 @@ public sealed class FigureCanvasViewModel : ObservableObject
                 panel.IsVisible,
                 panel.CreateScaleBarExportSpec(),
                 panel.Adjustments,
-                panel.FrameIndex))
+                panel.FrameIndex,
+                panel.IsInset))
             .ToArray();
         FigureAnnotationExportItem[] annotations = Annotations
             .OrderBy(annotation => annotation.ZIndex)
@@ -770,7 +960,68 @@ public sealed class FigureCanvasViewModel : ObservableObject
             Dpi,
             panels,
             annotations,
-            NormalizedBackgroundColor);
+            NormalizedBackgroundColor,
+            globalStyle: GlobalStyle);
+    }
+
+    public int ResetRegularPanelsToTemplateLayout()
+    {
+        int updated = 0;
+        foreach (FigurePanelViewModel panel in Panels.Where(panel => !panel.IsInset))
+        {
+            TemplateSlotLayout? slot = _layout.Slots.FirstOrDefault(
+                candidate => string.Equals(candidate.Id, panel.SlotId, StringComparison.Ordinal));
+            if (slot is null)
+            {
+                continue;
+            }
+
+            panel.X = slot.PixelRect.X;
+            panel.Y = slot.PixelRect.Y;
+            panel.RestoreDestinationSize(slot.PixelRect, slot.LockAspectRatio);
+            updated++;
+        }
+
+        if (updated > 0)
+        {
+            RenumberPanelLabels(force: true);
+            DocumentChanged?.Invoke(this, EventArgs.Empty);
+            EditCompleted?.Invoke(this, EventArgs.Empty);
+        }
+
+        return updated;
+    }
+
+    public void RestoreGlobalStyle(FigureGlobalStyle style)
+    {
+        ArgumentNullException.ThrowIfNull(style);
+        style.EnsureValid();
+        GlobalFontFamily = style.FontFamily;
+        GlobalFontSizePt = style.FontSizePt;
+        GlobalStrokeWidthPt = style.StrokeWidthPt;
+        GlobalTextColor = style.TextColor;
+        GlobalShapeColor = style.ShapeColor;
+        GlobalScaleBarColor = style.ScaleBarColor;
+    }
+
+    public void RestoreScientificColors(IEnumerable<ScientificColorDefinition>? definitions)
+    {
+        foreach (ScientificColorEntryViewModel entry in ScientificColors)
+        {
+            entry.Changed -= OnScientificColorChanged;
+        }
+
+        ScientificColors.Clear();
+        ScientificColorDefinition[] restored = definitions?.Where(definition => definition.IsValid).ToArray() ?? [];
+        foreach (ScientificColorDefinition definition in restored.Length == 0
+                     ? ScientificColorPalette.Default
+                     : restored)
+        {
+            AddScientificColorEntry(definition);
+        }
+
+        SelectedScientificColor = ScientificColors.FirstOrDefault();
+        NotifyScientificColorStateChanged();
     }
 
     public FigureAnnotationViewModel RestoreAnnotation(
@@ -1171,6 +1422,285 @@ public sealed class FigureCanvasViewModel : ObservableObject
         return start + requiredSpan <= canvasSize;
     }
 
+    private bool CanMatchPanelSelection() =>
+        SelectedPanelCount >= 2 && SelectedPanel is not null &&
+        SelectedPanels.Any(panel => !ReferenceEquals(panel, SelectedPanel) && !panel.IsLocked);
+
+    private void MatchPanelSelection(PanelMatchMode mode)
+    {
+        FigurePanelViewModel? reference = SelectedPanel;
+        if (reference is null || !CanMatchPanelSelection())
+        {
+            return;
+        }
+
+        foreach (FigurePanelViewModel panel in SelectedPanels.Where(
+                     panel => !ReferenceEquals(panel, reference) && !panel.IsLocked))
+        {
+            switch (mode)
+            {
+                case PanelMatchMode.Width:
+                    panel.Width = Math.Min(reference.Width, CanvasWidth);
+                    break;
+                case PanelMatchMode.Height:
+                    panel.Height = Math.Min(reference.Height, CanvasHeight);
+                    break;
+                case PanelMatchMode.Frame:
+                    panel.SetMatchedFrameSize(
+                        Math.Min(reference.Width, CanvasWidth),
+                        Math.Min(reference.Height, CanvasHeight));
+                    break;
+                case PanelMatchMode.AspectRatio:
+                    double aspectRatio = reference.Width / (double)Math.Max(1, reference.Height);
+                    long width = panel.Width;
+                    long height = Math.Max(1, (long)Math.Round(width / aspectRatio));
+                    if (height > CanvasHeight)
+                    {
+                        height = CanvasHeight;
+                        width = Math.Max(1, (long)Math.Round(height * aspectRatio));
+                    }
+
+                    panel.SetMatchedFrameSize(width, height);
+                    break;
+            }
+
+            MovePanel(
+                panel,
+                Math.Clamp(panel.X, 0, Math.Max(0, CanvasWidth - panel.Width)),
+                Math.Clamp(panel.Y, 0, Math.Max(0, CanvasHeight - panel.Height)));
+        }
+
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ApplyGlobalStyleToAnnotations()
+    {
+        if (!IsGlobalStyleValid)
+        {
+            return;
+        }
+
+        foreach (FigureAnnotationViewModel annotation in Annotations)
+        {
+            if (annotation.Kind == FigureAnnotationKind.Text)
+            {
+                annotation.FontSizePt = GlobalFontSizePt;
+                annotation.Color = GlobalTextColor;
+            }
+            else
+            {
+                annotation.StrokeWidthPt = GlobalStrokeWidthPt;
+                annotation.Color = GlobalShapeColor;
+            }
+        }
+
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+        OnPropertyChanged(nameof(GlobalStyleStatusText));
+    }
+
+    private void AddScientificColor()
+    {
+        string[] palette = ["#FF56B4E9", "#FF009E73", "#FFF0E442", "#FFCC79A7", "#FF332288"];
+        var definition = new ScientificColorDefinition(
+            Guid.NewGuid(),
+            $"Object {ScientificColors.Count + 1}",
+            palette[ScientificColors.Count % palette.Length]);
+        ScientificColorEntryViewModel entry = AddScientificColorEntry(definition);
+        SelectedScientificColor = entry;
+        NotifyScientificColorStateChanged();
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void RemoveSelectedScientificColor()
+    {
+        ScientificColorEntryViewModel? selected = SelectedScientificColor;
+        if (selected is null || ScientificColors.Count <= 1)
+        {
+            return;
+        }
+
+        int index = ScientificColors.IndexOf(selected);
+        selected.Changed -= OnScientificColorChanged;
+        ScientificColors.Remove(selected);
+        SelectedScientificColor = ScientificColors[Math.Clamp(index, 0, ScientificColors.Count - 1)];
+        NotifyScientificColorStateChanged();
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ApplySelectedScientificColor()
+    {
+        ScientificColorDefinition? selected = SelectedScientificColor?.Definition;
+        if (selected?.IsValid != true)
+        {
+            return;
+        }
+
+        if (SelectedAnnotation is not null)
+        {
+            SelectedAnnotation.Color = selected.Color;
+        }
+        else
+        {
+            GlobalShapeColor = selected.Color;
+        }
+
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private ScientificColorEntryViewModel AddScientificColorEntry(ScientificColorDefinition definition)
+    {
+        var entry = new ScientificColorEntryViewModel(definition);
+        entry.Changed += OnScientificColorChanged;
+        ScientificColors.Add(entry);
+        return entry;
+    }
+
+    private void OnScientificColorChanged(object? sender, EventArgs e)
+    {
+        NotifyScientificColorStateChanged();
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void NotifyScientificColorStateChanged()
+    {
+        OnPropertyChanged(nameof(ScientificColorStatusText));
+        RemoveSelectedScientificColorCommand.NotifyCanExecuteChanged();
+        ApplySelectedScientificColorCommand.NotifyCanExecuteChanged();
+    }
+
+    private void CreateInsetFromSelectedPanel()
+    {
+        FigurePanelViewModel? reference = SelectedPanel;
+        if (reference is null)
+        {
+            return;
+        }
+
+        PixelRect64 source = reference.SourceRect;
+        long cropWidth = Math.Max(1, source.Width / 2);
+        long cropHeight = Math.Max(1, source.Height / 2);
+        var insetCrop = new PixelRect64(
+            source.X + (source.Width - cropWidth) / 2,
+            source.Y + (source.Height - cropHeight) / 2,
+            cropWidth,
+            cropHeight);
+        long width = Math.Clamp((long)Math.Round(reference.Width * 0.36), 80, Math.Max(80, CanvasWidth));
+        long height = Math.Max(1, (long)Math.Round(width * cropHeight / (double)cropWidth));
+        if (height > CanvasHeight)
+        {
+            height = CanvasHeight;
+            width = Math.Max(1, (long)Math.Round(height * cropWidth / (double)cropHeight));
+        }
+
+        long x = Math.Clamp(
+            reference.X + reference.Width - width - 24,
+            0,
+            Math.Max(0, CanvasWidth - width));
+        long y = Math.Clamp(
+            reference.Y + reference.Height - height - 24,
+            0,
+            Math.Max(0, CanvasHeight - height));
+        string slotId = $"inset:{Guid.NewGuid():N}";
+        TemplateSlotLayout slot = CreateInsetSlot(slotId, new PixelRect64(x, y, width, height));
+        var inset = new FigurePanelViewModel(reference.Source, insetCrop, slot, Panels.Count)
+        {
+            Adjustments = reference.Adjustments,
+            FrameIndex = reference.FrameIndex,
+        };
+        inset.ApplySpatialCalibration(reference.Source.Calibration.Calibration);
+        inset.PropertyChanged += OnPanelPropertyChanged;
+        Panels.Add(inset);
+        SelectedPanel = inset;
+        NotifyPanelCollectionChanged();
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private bool CanLinkSelectedPanelCrops() =>
+        SelectedPanelCount >= 2 &&
+        SelectedPanels.All(panel => !panel.IsLocked) &&
+        SelectedPanels.Select(panel => panel.Source.Asset.Id).Distinct().Count() == 1;
+
+    private void LinkSelectedPanelCrops()
+    {
+        if (!CanLinkSelectedPanelCrops())
+        {
+            return;
+        }
+
+        Guid groupId = Guid.NewGuid();
+        foreach (FigurePanelViewModel panel in SelectedPanels)
+        {
+            panel.CropLinkGroupId = groupId;
+        }
+
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void UnlinkSelectedPanelCrops()
+    {
+        foreach (FigurePanelViewModel panel in SelectedPanels)
+        {
+            panel.CropLinkGroupId = null;
+        }
+
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static bool IsInsetSlot(string slotId) =>
+        slotId.StartsWith("inset:", StringComparison.Ordinal) && slotId.Length > "inset:".Length;
+
+    private static TemplateSlotLayout CreateInsetSlot(string slotId, PixelRect64 destination) => new(
+        slotId,
+        string.Empty,
+        "inset",
+        destination,
+        300,
+        false,
+        true,
+        "Inset 局部放大面板；导出时保留 0.5 pt 边框。");
+
+    private void SetGlobalColor(
+        ref string field,
+        ref string lastValid,
+        string? value,
+        string propertyName,
+        string brushPropertyName)
+    {
+        string normalized = value?.Trim() ?? string.Empty;
+        if (!SetProperty(ref field, normalized, propertyName))
+        {
+            return;
+        }
+
+        if (TryNormalizeColor(normalized, out string valid))
+        {
+            lastValid = valid;
+        }
+
+        OnPropertyChanged(brushPropertyName);
+        NotifyGlobalStyleChanged();
+    }
+
+    private void NotifyGlobalStyleChanged()
+    {
+        OnPropertyChanged(nameof(GlobalStyle));
+        OnPropertyChanged(nameof(IsGlobalStyleValid));
+        OnPropertyChanged(nameof(GlobalStyleStatusText));
+        ApplyGlobalStyleCommand.NotifyCanExecuteChanged();
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static Brush CreateBrush(string color)
+    {
+        var brush = new SolidColorBrush(ParseColor(color));
+        brush.Freeze();
+        return brush;
+    }
+
     private void SelectOnlyPanel(FigurePanelViewModel? panel)
     {
         if (panel is not null && !Panels.Contains(panel))
@@ -1251,6 +1781,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
     private void NotifyAnnotationCollectionChanged()
     {
         OnPropertyChanged(nameof(AnnotationCountText));
+        OnPropertyChanged(nameof(GlobalStyleStatusText));
         OnPropertyChanged(nameof(EmptyVisibility));
         DocumentChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -1287,9 +1818,33 @@ public sealed class FigureCanvasViewModel : ObservableObject
             nameof(FigurePanelViewModel.Invert) or
             nameof(FigurePanelViewModel.Grayscale) or
             nameof(FigurePanelViewModel.Channel) or
+            nameof(FigurePanelViewModel.CropLinkGroupId) or
             nameof(FigurePanelViewModel.Label))
         {
             DocumentChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        if (e.PropertyName == nameof(FigurePanelViewModel.SourceRect) &&
+            sender is FigurePanelViewModel changedPanel &&
+            changedPanel.CropLinkGroupId is Guid linkGroup &&
+            !_isSynchronizingLinkedCrops)
+        {
+            _isSynchronizingLinkedCrops = true;
+            try
+            {
+                foreach (FigurePanelViewModel linked in Panels.Where(panel =>
+                             !ReferenceEquals(panel, changedPanel) &&
+                             panel.CropLinkGroupId == linkGroup &&
+                             !panel.IsLocked))
+                {
+                    linked.ReplaceSource(changedPanel.Source, changedPanel.SourceRect);
+                    linked.ApplySpatialCalibration(changedPanel.Source.Calibration.Calibration);
+                }
+            }
+            finally
+            {
+                _isSynchronizingLinkedCrops = false;
+            }
         }
 
         if (e.PropertyName is nameof(FigurePanelViewModel.Source) or
@@ -1377,6 +1932,13 @@ public sealed class FigureCanvasViewModel : ObservableObject
         DistributeSelectionVerticallyCommand.NotifyCanExecuteChanged();
         SetHorizontalSpacingCommand.NotifyCanExecuteChanged();
         SetVerticalSpacingCommand.NotifyCanExecuteChanged();
+        MatchSelectionWidthCommand.NotifyCanExecuteChanged();
+        MatchSelectionHeightCommand.NotifyCanExecuteChanged();
+        MatchSelectionFrameCommand.NotifyCanExecuteChanged();
+        MatchSelectionAspectRatioCommand.NotifyCanExecuteChanged();
+        CreateInsetCommand.NotifyCanExecuteChanged();
+        LinkSelectedPanelCropsCommand.NotifyCanExecuteChanged();
+        UnlinkSelectedPanelCropsCommand.NotifyCanExecuteChanged();
     }
 
     public void RenumberPanelLabels(bool force)
@@ -1476,5 +2038,13 @@ public sealed class FigureCanvasViewModel : ObservableObject
         Top,
         VerticalCenter,
         Bottom,
+    }
+
+    private enum PanelMatchMode
+    {
+        Width,
+        Height,
+        Frame,
+        AspectRatio,
     }
 }

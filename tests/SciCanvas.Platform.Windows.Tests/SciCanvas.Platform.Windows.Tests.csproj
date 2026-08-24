@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SciCanvas.App\SciCanvas.App.csproj" />
+    <ProjectReference Include="..\..\src\SciCanvas.Cli\SciCanvas.Cli.csproj" />
     <ProjectReference Include="..\..\src\SciCanvas.Core\SciCanvas.Core.csproj" />
     <ProjectReference Include="..\..\src\SciCanvas.Imaging\SciCanvas.Imaging.csproj" />
     <ProjectReference Include="..\..\src\SciCanvas.Platform.Windows\SciCanvas.Platform.Windows.csproj" />

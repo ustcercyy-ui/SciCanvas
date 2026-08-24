@@ -1,4 +1,9 @@
+using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Text;
+using System.Windows;
 using System.Windows.Media.Imaging;
+using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
 using SciCanvas.Imaging;
 
@@ -9,17 +14,59 @@ public sealed class SourceAssetItemViewModel : ObservableObject
     private SourceAsset _asset;
     private BitmapSource _preview;
     private readonly Dictionary<int, BitmapSource> _framePreviews = [];
+    private ScientificMeasurementViewModel? _selectedMeasurement;
 
     public SourceAssetItemViewModel(SourceAsset asset, BitmapSource preview)
     {
         _asset = asset ?? throw new ArgumentNullException(nameof(asset));
         _preview = preview ?? throw new ArgumentNullException(nameof(preview));
         _framePreviews[0] = _preview;
+        Calibration = new CalibrationEditorViewModel(
+            asset.Id,
+            asset.Metadata.PhysicalSizeX,
+            asset.Metadata.PhysicalSizeY,
+            asset.Metadata.PhysicalUnit);
+        Calibration.Changed += OnCalibrationChanged;
+        Calibration.EditCompleted += OnScienceEditCompleted;
     }
+
+    public event EventHandler? ScienceChanged;
+
+    public event EventHandler? ScienceEditCompleted;
 
     public SourceAsset Asset => _asset;
 
     public BitmapSource Preview => _preview;
+
+    public CalibrationEditorViewModel Calibration { get; }
+
+    public ObservableCollection<ScientificMeasurementViewModel> Measurements { get; } = [];
+
+    public ScientificMeasurementViewModel? SelectedMeasurement
+    {
+        get => _selectedMeasurement;
+        set
+        {
+            if (ReferenceEquals(_selectedMeasurement, value))
+            {
+                return;
+            }
+
+            if (_selectedMeasurement is not null)
+            {
+                _selectedMeasurement.IsSelected = false;
+            }
+
+            _selectedMeasurement = value;
+            if (_selectedMeasurement is not null)
+            {
+                _selectedMeasurement.IsSelected = true;
+            }
+
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SelectedMeasurementStatusText));
+        }
+    }
 
     public string DisplayName => Asset.DisplayName;
 
@@ -43,7 +90,212 @@ public sealed class SourceAssetItemViewModel : ObservableObject
         ? $"{dpiX:0.#}×{dpiY:0.#} dpi"
         : "DPI 未提供";
 
-    public string DetailsText => $"{FormatText} · {DpiText} · {FileSizeText}";
+    public string OmeText => Asset.Metadata.Ome?.Summary ?? "无 OME-XML";
+
+    public string DetailsText => Asset.Metadata.Ome is null
+        ? $"{FormatText} · {DpiText} · {FileSizeText}"
+        : $"{FormatText} · {DpiText} · {Asset.Metadata.Ome.Summary} · {FileSizeText}";
+
+    public string MeasurementCountText => $"测量表 · {Measurements.Count} 项";
+
+    public string SelectedMeasurementStatusText => SelectedMeasurement is null
+        ? "未选择测量对象"
+        : $"{SelectedMeasurement.TypeText} · {SelectedMeasurement.ValueText} · " +
+          $"{SelectedMeasurement.PixelValueText}" +
+          (string.IsNullOrWhiteSpace(SelectedMeasurement.AreaPerimeterText)
+              ? string.Empty
+              : $" · {SelectedMeasurement.AreaPerimeterText}");
+
+    public string MeasurementSummaryText
+    {
+        get
+        {
+            MeasurementStatistics? statistics = MeasurementStatistics.Calculate(GetLengthValues());
+            string unit = Calibration.IsCalibrated ? Calibration.Unit : "px";
+            return statistics is null
+                ? Calibration.IsCalibrated
+                    ? "尚无可统计的长度测量"
+                    : "未标定 · 结果以 px 显示"
+                : $"N {statistics.Count} · Mean {statistics.Mean:0.###} {unit} · " +
+                  $"SD {statistics.StandardDeviation:0.###} {unit}";
+        }
+    }
+
+    public IReadOnlyList<MeasurementHistogramBarViewModel> MeasurementHistogramBars
+    {
+        get
+        {
+            MeasurementHistogram? histogram = MeasurementHistogram.Create(GetLengthValues());
+            if (histogram is null || histogram.MaximumBinCount == 0)
+            {
+                return [];
+            }
+
+            string unit = Calibration.IsCalibrated ? Calibration.Unit : "px";
+            return histogram.Bins
+                .Select(bin => new MeasurementHistogramBarViewModel(
+                    8 + 44 * bin.Count / (double)histogram.MaximumBinCount,
+                    $"{bin.LowerBound:0.###}–{bin.UpperBound:0.###} {unit} · N={bin.Count}",
+                    bin.Count))
+                .ToArray();
+        }
+    }
+
+    public Visibility MeasurementHistogramVisibility => MeasurementHistogramBars.Count > 0
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+
+    public string MeasurementHistogramStatusText
+    {
+        get
+        {
+            MeasurementHistogram? histogram = MeasurementHistogram.Create(GetLengthValues());
+            if (histogram is null)
+            {
+                return "添加长度或折线测量后显示分布";
+            }
+
+            string unit = Calibration.IsCalibrated ? Calibration.Unit : "px";
+            return $"长度分布 · {histogram.Minimum:0.###}–{histogram.Maximum:0.###} {unit} · {histogram.Bins.Count} bins";
+        }
+    }
+
+    public ScientificMeasurementViewModel AddMeasurement(
+        ScientificMeasurementKind kind,
+        MeasurementPoint pointA,
+        MeasurementPoint pointB,
+        MeasurementPoint? pointC = null,
+        Guid? id = null,
+        string? strokeColor = null,
+        double strokeWidthPixels = 3,
+        IReadOnlyList<MeasurementPoint>? pathPoints = null)
+    {
+        var measurement = new ScientificMeasurementViewModel(
+            id ?? Guid.NewGuid(),
+            Asset.Id,
+            DisplayName,
+            kind,
+            pointA,
+            pointB,
+            pointC,
+            Calibration.Calibration,
+            Measurements.Count + 1,
+            pathPoints)
+        {
+            StrokeColor = strokeColor ?? "#FF22C7E8",
+            StrokeWidthPixels = strokeWidthPixels,
+        };
+        measurement.Changed += OnMeasurementChanged;
+        Measurements.Add(measurement);
+        SelectedMeasurement = measurement;
+        NotifyMeasurementCollectionChanged();
+        return measurement;
+    }
+
+    public void RemoveMeasurement(ScientificMeasurementViewModel measurement)
+    {
+        ArgumentNullException.ThrowIfNull(measurement);
+        int index = Measurements.IndexOf(measurement);
+        if (index < 0)
+        {
+            return;
+        }
+
+        measurement.Changed -= OnMeasurementChanged;
+        Measurements.RemoveAt(index);
+        RenumberMeasurements();
+        SelectedMeasurement = Measurements.ElementAtOrDefault(Math.Min(index, Measurements.Count - 1));
+        NotifyMeasurementCollectionChanged();
+        ScienceEditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void CancelMeasurement(ScientificMeasurementViewModel measurement)
+    {
+        ArgumentNullException.ThrowIfNull(measurement);
+        int index = Measurements.IndexOf(measurement);
+        if (index < 0)
+        {
+            return;
+        }
+
+        measurement.Changed -= OnMeasurementChanged;
+        Measurements.RemoveAt(index);
+        RenumberMeasurements();
+        SelectedMeasurement = Measurements.ElementAtOrDefault(Math.Min(index, Measurements.Count - 1));
+        NotifyMeasurementCollectionChanged();
+    }
+
+    public void RestoreScience(
+        SpatialCalibration calibration,
+        double referenceStartX,
+        double referenceStartY,
+        double referenceEndX,
+        double referenceEndY,
+        IEnumerable<ScientificMeasurement> measurements,
+        IReadOnlyDictionary<Guid, (string StrokeColor, double StrokeWidthPixels)>? styles = null)
+    {
+        Calibration.Restore(
+            calibration,
+            referenceStartX,
+            referenceStartY,
+            referenceEndX,
+            referenceEndY);
+        foreach (ScientificMeasurementViewModel measurement in Measurements)
+        {
+            measurement.Changed -= OnMeasurementChanged;
+        }
+
+        Measurements.Clear();
+        foreach (ScientificMeasurement measurement in measurements)
+        {
+            (string StrokeColor, double StrokeWidthPixels) style = styles?.GetValueOrDefault(
+                measurement.Id) ?? ("#FF22C7E8", 3);
+            AddMeasurement(
+                measurement.Kind,
+                measurement.PointA,
+                measurement.PointB,
+                measurement.PointC,
+                measurement.Id,
+                style.StrokeColor,
+                style.StrokeWidthPixels,
+                measurement.PathPoints);
+        }
+
+        SelectedMeasurement = Measurements.FirstOrDefault();
+        NotifyMeasurementCollectionChanged();
+    }
+
+    public string CreateMeasurementCsv()
+    {
+        var csv = new StringBuilder();
+        csv.AppendLine("Image,ID,Type,Value,Unit,PixelValue,Area,AreaUnit,Perimeter,PerimeterUnit");
+        foreach (ScientificMeasurementViewModel measurement in Measurements)
+        {
+            csv.Append(EscapeCsv(DisplayName)).Append(',')
+                .Append(measurement.Number.ToString(CultureInfo.InvariantCulture)).Append(',')
+                .Append(EscapeCsv(measurement.TypeText)).Append(',')
+                .Append(measurement.CsvValue).Append(',')
+                .Append(EscapeCsv(measurement.UnitText)).Append(',')
+                .Append(measurement.Measurement.PixelValue.ToString("0.######", CultureInfo.InvariantCulture)).Append(',')
+                .Append(measurement.Measurement.PixelArea > 0
+                    ? (measurement.Measurement.PhysicalArea(Calibration.Calibration) ?? measurement.Measurement.PixelArea)
+                        .ToString("0.######", CultureInfo.InvariantCulture)
+                    : string.Empty).Append(',')
+                .Append(measurement.Measurement.PixelArea > 0
+                    ? EscapeCsv(Calibration.IsCalibrated ? $"{Calibration.Unit}²" : "px²")
+                    : string.Empty).Append(',')
+                .Append(measurement.Measurement.PixelArea > 0
+                    ? (measurement.Measurement.PhysicalPerimeter(Calibration.Calibration) ?? measurement.Measurement.PixelPerimeter)
+                        .ToString("0.######", CultureInfo.InvariantCulture)
+                    : string.Empty).Append(',')
+                .Append(measurement.Measurement.PixelArea > 0
+                    ? EscapeCsv(Calibration.IsCalibrated ? Calibration.Unit : "px")
+                    : string.Empty)
+                .AppendLine();
+        }
+
+        return csv.ToString();
+    }
     public BitmapSource GetFramePreview(int frameIndex)
     {
         if (frameIndex < 0 || frameIndex >= FrameCount)
@@ -76,6 +328,10 @@ public sealed class SourceAssetItemViewModel : ObservableObject
         _preview = preview;
         _framePreviews.Clear();
         _framePreviews[0] = preview;
+        Calibration.RefreshMetadataCalibration(
+            asset.Metadata.PhysicalSizeX,
+            asset.Metadata.PhysicalSizeY,
+            asset.Metadata.PhysicalUnit);
         OnPropertyChanged(nameof(Asset));
         OnPropertyChanged(nameof(Preview));
         OnPropertyChanged(nameof(DisplayName));
@@ -86,9 +342,69 @@ public sealed class SourceAssetItemViewModel : ObservableObject
         OnPropertyChanged(nameof(FormatText));
         OnPropertyChanged(nameof(FileSizeText));
         OnPropertyChanged(nameof(DpiText));
+        OnPropertyChanged(nameof(OmeText));
         OnPropertyChanged(nameof(DetailsText));
         OnPropertyChanged(nameof(Sha256Short));
     }
+
+    private void OnCalibrationChanged(object? sender, EventArgs e)
+    {
+        foreach (ScientificMeasurementViewModel measurement in Measurements)
+        {
+            measurement.RefreshCalibration(Calibration.Calibration);
+        }
+
+        OnPropertyChanged(nameof(MeasurementSummaryText));
+        NotifyMeasurementHistogramChanged();
+        OnPropertyChanged(nameof(SelectedMeasurementStatusText));
+        ScienceChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnScienceEditCompleted(object? sender, EventArgs e) =>
+        ScienceEditCompleted?.Invoke(this, EventArgs.Empty);
+
+    private void OnMeasurementChanged(object? sender, EventArgs e)
+    {
+        OnPropertyChanged(nameof(MeasurementSummaryText));
+        NotifyMeasurementHistogramChanged();
+        OnPropertyChanged(nameof(SelectedMeasurementStatusText));
+        ScienceChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void NotifyMeasurementCollectionChanged()
+    {
+        OnPropertyChanged(nameof(MeasurementCountText));
+        OnPropertyChanged(nameof(MeasurementSummaryText));
+        NotifyMeasurementHistogramChanged();
+        OnPropertyChanged(nameof(SelectedMeasurementStatusText));
+        ScienceChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void RenumberMeasurements()
+    {
+        for (int index = 0; index < Measurements.Count; index++)
+        {
+            Measurements[index].Number = index + 1;
+        }
+    }
+
+    private IEnumerable<double> GetLengthValues() => Measurements
+        .Where(measurement => measurement.Kind is
+            ScientificMeasurementKind.Length or ScientificMeasurementKind.Polyline)
+        .Select(measurement => measurement.NumericValue ?? measurement.Measurement.PixelValue)
+        .Where(double.IsFinite);
+
+    private void NotifyMeasurementHistogramChanged()
+    {
+        OnPropertyChanged(nameof(MeasurementHistogramBars));
+        OnPropertyChanged(nameof(MeasurementHistogramVisibility));
+        OnPropertyChanged(nameof(MeasurementHistogramStatusText));
+    }
+
+    private static string EscapeCsv(string value) =>
+        value.IndexOfAny([',', '"', '\r', '\n']) >= 0
+            ? $"\"{value.Replace("\"", "\"\"")}\""
+            : value;
 
     private static string FormatBytes(long bytes)
     {

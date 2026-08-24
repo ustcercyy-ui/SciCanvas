@@ -479,6 +479,12 @@ public sealed class ProjectRoundTripIntegrationTests
         original.Figure.AutoPanelLabelsEnabled = false;
         original.Figure.PanelLabelSequence = "uppercase";
         original.Figure.ShowPanelLabels = true;
+        original.Figure.GlobalFontFamily = "Segoe UI";
+        original.Figure.GlobalFontSizePt = 8;
+        original.Figure.GlobalStrokeWidthPt = 1.5;
+        original.Figure.GlobalTextColor = "#FF223344";
+        original.Figure.GlobalShapeColor = "#FF00AA88";
+        original.Figure.GlobalScaleBarColor = "#FFFFFFFF";
         panel.Label = "SEM-1";
         await original.SaveProjectToPathAsync(projectPath);
 
@@ -492,13 +498,48 @@ public sealed class ProjectRoundTripIntegrationTests
         Assert.Equal("uppercase", restored.Figure.PanelLabelSequence);
         Assert.Equal("SEM-1", Assert.Single(restored.Figure.Panels).Label);
         Assert.Equal("#FFECEFF1", restored.Figure.CreateExportDocument().BackgroundColor);
+        Assert.Equal("Segoe UI", restored.Figure.GlobalFontFamily);
+        Assert.Equal(8, restored.Figure.GlobalFontSizePt);
+        Assert.Equal(1.5, restored.Figure.GlobalStrokeWidthPt);
+        Assert.Equal("#FF00AA88", restored.Figure.GlobalShapeColor);
 
         restored.Figure.BackgroundColor = "#FF000000";
+        restored.Figure.GlobalFontSizePt = 12;
         restored.CompleteHistoryGesture();
         Assert.True(restored.IsDirty);
         restored.UndoCommand.Execute(null);
         Assert.Equal("#FFECEFF1", restored.Figure.NormalizedBackgroundColor);
+        Assert.Equal(8, restored.Figure.GlobalFontSizePt);
         Assert.False(restored.IsDirty);
+    }
+
+    [Fact]
+    public async Task FigureQc_ReportsLowResolutionAndNavigatesToTargetPanel()
+    {
+        using var workspace = new TestWorkspace();
+        string sourcePath = Path.Combine(workspace.Root, "qc.png");
+        CreatePng(sourcePath, 30, 20);
+
+        MainWindowViewModel viewModel = CreateViewModel();
+        SourceAsset asset = await CreateReader().ImportAsync(sourcePath);
+        BitmapSource preview = await new WpfImagePreviewLoader().LoadAsync(sourcePath, 1400);
+        var sourceItem = new SourceAssetItemViewModel(asset, preview);
+        viewModel.Sources.Add(sourceItem);
+        viewModel.SelectedSource = sourceItem;
+        FigurePanelViewModel panel = Assert.IsType<FigurePanelViewModel>(
+            viewModel.Figure.AddPanel(sourceItem, new PixelRect64(0, 0, 20, 15)));
+
+        viewModel.RunFigureQcCommand.Execute(null);
+
+        FigureQcIssueViewModel issue = Assert.Single(
+            viewModel.FigureQcIssues,
+            item => item.Code == "LOW_EFFECTIVE_DPI");
+        Assert.Equal(panel.Label, issue.PanelLabel);
+        Assert.Contains("提醒", viewModel.FigureQcCountText, StringComparison.Ordinal);
+        viewModel.SelectedFigureQcIssue = issue;
+        viewModel.NavigateToSelectedQcIssueCommand.Execute(null);
+        Assert.Equal(WorkspaceMode.Figure, viewModel.WorkspaceMode);
+        Assert.Same(panel, viewModel.Figure.SelectedPanel);
     }
 
     [Fact]

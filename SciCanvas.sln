@@ -29,6 +29,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SciCanvas.Core.Tests", "tes
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SciCanvas.Platform.Windows.Tests", "tests\SciCanvas.Platform.Windows.Tests\SciCanvas.Platform.Windows.Tests.csproj", "{E1320DF9-6CF4-4205-B7C9-2D2DCB9DCADF}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SciCanvas.Cli", "src\SciCanvas.Cli\SciCanvas.Cli.csproj", "{7570A86A-1040-4F58-BA89-E95F968927A6}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -171,6 +173,18 @@ Global
 		{E1320DF9-6CF4-4205-B7C9-2D2DCB9DCADF}.Release|x64.Build.0 = Release|Any CPU
 		{E1320DF9-6CF4-4205-B7C9-2D2DCB9DCADF}.Release|x86.ActiveCfg = Release|Any CPU
 		{E1320DF9-6CF4-4205-B7C9-2D2DCB9DCADF}.Release|x86.Build.0 = Release|Any CPU
+		{7570A86A-1040-4F58-BA89-E95F968927A6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7570A86A-1040-4F58-BA89-E95F968927A6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7570A86A-1040-4F58-BA89-E95F968927A6}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{7570A86A-1040-4F58-BA89-E95F968927A6}.Debug|x64.Build.0 = Debug|Any CPU
+		{7570A86A-1040-4F58-BA89-E95F968927A6}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{7570A86A-1040-4F58-BA89-E95F968927A6}.Debug|x86.Build.0 = Debug|Any CPU
+		{7570A86A-1040-4F58-BA89-E95F968927A6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7570A86A-1040-4F58-BA89-E95F968927A6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7570A86A-1040-4F58-BA89-E95F968927A6}.Release|x64.ActiveCfg = Release|Any CPU
+		{7570A86A-1040-4F58-BA89-E95F968927A6}.Release|x64.Build.0 = Release|Any CPU
+		{7570A86A-1040-4F58-BA89-E95F968927A6}.Release|x86.ActiveCfg = Release|Any CPU
+		{7570A86A-1040-4F58-BA89-E95F968927A6}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -187,5 +201,6 @@ Global
 		{FC3D085A-0020-4032-81A4-799FECB38DD4} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{6A24342D-58CB-4804-A1BB-46373FEBBD55} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{E1320DF9-6CF4-4205-B7C9-2D2DCB9DCADF} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{7570A86A-1040-4F58-BA89-E95F968927A6} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

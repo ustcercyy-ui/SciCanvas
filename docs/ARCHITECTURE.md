@@ -1,6 +1,6 @@
 # SciCanvas 技术架构
 
-版本：0.1  
+版本：1.2
 对应产品规格：[MVP_SPEC.md](MVP_SPEC.md)
 
 ## 1. 架构目标

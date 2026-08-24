@@ -40,6 +40,14 @@ public static class FigurePreflight
         ArgumentNullException.ThrowIfNull(projectSources);
         List<FigurePreflightIssue> issues = [];
 
+        if (document.BackgroundColor.StartsWith("#00", StringComparison.OrdinalIgnoreCase))
+        {
+            issues.Add(new(
+                FigurePreflightSeverity.Info,
+                "TRANSPARENT_BACKGROUND",
+                "画布背景为透明；投稿系统转码时可能显示为黑色，请核对期刊要求。"));
+        }
+
         if (document.Panels.Count == 0)
         {
             issues.Add(new(FigurePreflightSeverity.Error, "NO_PANELS", "拼版中没有可导出的图像面板。"));
@@ -88,8 +96,17 @@ public static class FigurePreflight
                 issues.Add(new(FigurePreflightSeverity.Warning, "LOW_EFFECTIVE_DPI", $"面板 {panel.Label} 的有效分辨率约 {effectiveDpi:0} dpi。", panel.Label));
             }
 
-            if (panel.ScaleBar is not null &&
-                panel.ScaleBar.PhysicalLength / panel.ScaleBar.PhysicalUnitsPerSourcePixel > panel.SourceRect.Width * 0.8)
+            if (panel.ScaleBar is { } scaleBar &&
+                (!double.IsFinite(scaleBar.PhysicalUnitsPerSourcePixel) ||
+                 scaleBar.PhysicalUnitsPerSourcePixel <= 0 ||
+                 !double.IsFinite(scaleBar.PhysicalLength) ||
+                 scaleBar.PhysicalLength <= 0 ||
+                 string.IsNullOrWhiteSpace(scaleBar.Unit)))
+            {
+                issues.Add(new(FigurePreflightSeverity.Error, "INVALID_SCALE_BAR", $"面板 {panel.Label} 的比例尺校准参数无效。", panel.Label));
+            }
+            else if (panel.ScaleBar is { } validScaleBar &&
+                     validScaleBar.PhysicalLength / validScaleBar.PhysicalUnitsPerSourcePixel > panel.SourceRect.Width * 0.8)
             {
                 issues.Add(new(FigurePreflightSeverity.Error, "SCALE_BAR_TOO_LONG", $"面板 {panel.Label} 的比例尺超过图像宽度 80%。", panel.Label));
             }
@@ -106,12 +123,56 @@ public static class FigurePreflight
             {
                 issues.Add(new(FigurePreflightSeverity.Error, "EMPTY_ANNOTATION", "存在空的文字标注。"));
             }
+
+            bool knownKind = annotation.Kind is "text" or "arrow" or "line" or "rectangle" or "ellipse";
+            bool startInside = double.IsFinite(annotation.X) && double.IsFinite(annotation.Y) &&
+                               annotation.X >= 0 && annotation.X <= document.WidthPixels &&
+                               annotation.Y >= 0 && annotation.Y <= document.HeightPixels;
+            bool needsEnd = annotation.Kind != "text";
+            bool endInside = double.IsFinite(annotation.EndX) && double.IsFinite(annotation.EndY) &&
+                             annotation.EndX >= 0 && annotation.EndX <= document.WidthPixels &&
+                             annotation.EndY >= 0 && annotation.EndY <= document.HeightPixels;
+            if (!knownKind || !startInside || (needsEnd && !endInside))
+            {
+                issues.Add(new(FigurePreflightSeverity.Error, "INVALID_ANNOTATION_BOUNDS", "存在类型未知、坐标无效或超出画布的标注。"));
+            }
+
+            if (!IsHexColor(annotation.Color) ||
+                !double.IsFinite(annotation.FontSizePt) || annotation.FontSizePt is < 4 or > 72 ||
+                !double.IsFinite(annotation.StrokeWidthPt) || annotation.StrokeWidthPt is < 0.25 or > 10)
+            {
+                issues.Add(new(FigurePreflightSeverity.Error, "INVALID_ANNOTATION_STYLE", "存在颜色、字号或线宽无效的标注。"));
+            }
         }
 
-        if (document.Panels.Where(panel => panel.IsVisible).Select(panel => panel.Label).Distinct(StringComparer.OrdinalIgnoreCase).Count()
-            != document.Panels.Count(panel => panel.IsVisible && !string.IsNullOrWhiteSpace(panel.Label)))
+        FigurePanelExportItem[] visiblePanels = document.Panels.Where(panel => panel.IsVisible).ToArray();
+        string[] nonEmptyLabels = visiblePanels
+            .Select(panel => panel.Label)
+            .Where(label => !string.IsNullOrWhiteSpace(label))
+            .ToArray();
+        if (nonEmptyLabels.Length > 0 && nonEmptyLabels.Length < visiblePanels.Length)
+        {
+            issues.Add(new(FigurePreflightSeverity.Warning, "MISSING_LABEL", "部分可见面板没有编号，可能造成图注对应不清。"));
+        }
+
+        if (nonEmptyLabels.Distinct(StringComparer.OrdinalIgnoreCase).Count() != nonEmptyLabels.Length)
         {
             issues.Add(new(FigurePreflightSeverity.Warning, "DUPLICATE_LABEL", "可见面板存在重复编号。"));
+        }
+
+        for (int firstIndex = 0; firstIndex < visiblePanels.Length; firstIndex++)
+        {
+            for (int secondIndex = firstIndex + 1; secondIndex < visiblePanels.Length; secondIndex++)
+            {
+                if (Overlaps(visiblePanels[firstIndex].DestinationRect, visiblePanels[secondIndex].DestinationRect))
+                {
+                    issues.Add(new(
+                        FigurePreflightSeverity.Warning,
+                        "PANEL_OVERLAP",
+                        $"面板 {visiblePanels[firstIndex].Label} 与 {visiblePanels[secondIndex].Label} 发生重叠，请确认是否为有意叠放。",
+                        visiblePanels[secondIndex].Label));
+                }
+            }
         }
 
         if (hasUnsavedChanges)
@@ -120,5 +181,15 @@ public static class FigurePreflight
         }
 
         return new FigurePreflightResult(issues);
+    }
+
+    private static bool Overlaps(Geometry.PixelRect64 first, Geometry.PixelRect64 second) =>
+        first.X < second.Right && first.Right > second.X &&
+        first.Y < second.Bottom && first.Bottom > second.Y;
+
+    private static bool IsHexColor(string? value)
+    {
+        string hex = value?.Trim().TrimStart('#') ?? string.Empty;
+        return hex.Length is 6 or 8 && hex.All(Uri.IsHexDigit);
     }
 }

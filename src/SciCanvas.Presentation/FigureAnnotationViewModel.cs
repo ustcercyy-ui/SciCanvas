@@ -9,6 +9,7 @@ public enum FigureAnnotationKind
 {
     Text,
     Arrow,
+    Line,
     Rectangle,
     Ellipse,
 }
@@ -69,6 +70,7 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
     {
         FigureAnnotationKind.Text => "text",
         FigureAnnotationKind.Arrow => "arrow",
+        FigureAnnotationKind.Line => "line",
         FigureAnnotationKind.Rectangle => "rectangle",
         FigureAnnotationKind.Ellipse => "ellipse",
         _ => throw new InvalidOperationException("不支持的标注类型。"),
@@ -78,6 +80,7 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
     {
         FigureAnnotationKind.Text => "文字",
         FigureAnnotationKind.Arrow => "箭头",
+        FigureAnnotationKind.Line => "直线",
         FigureAnnotationKind.Rectangle => "矩形",
         FigureAnnotationKind.Ellipse => "椭圆",
         _ => "标注",
@@ -88,6 +91,10 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
         : Visibility.Collapsed;
 
     public Visibility ArrowVisibility => Kind == FigureAnnotationKind.Arrow
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+
+    public Visibility LineVisibility => Kind == FigureAnnotationKind.Line
         ? Visibility.Visible
         : Visibility.Collapsed;
 
@@ -111,9 +118,9 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
         ? Visibility.Collapsed
         : Visibility.Visible;
 
-    public string EndXLabel => Kind == FigureAnnotationKind.Arrow ? "终点 X" : "右下 X";
+    public string EndXLabel => Kind is FigureAnnotationKind.Arrow or FigureAnnotationKind.Line ? "终点 X" : "右下 X";
 
-    public string EndYLabel => Kind == FigureAnnotationKind.Arrow ? "终点 Y" : "右下 Y";
+    public string EndYLabel => Kind is FigureAnnotationKind.Arrow or FigureAnnotationKind.Line ? "终点 Y" : "右下 Y";
 
     public double X
     {
@@ -259,6 +266,8 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
 
     public Geometry ArrowGeometry => CreateArrowGeometry();
 
+    public Geometry LineGeometry => CreateLineGeometry();
+
     public Brush PreviewBrush
     {
         get
@@ -283,6 +292,7 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
     {
         FigureAnnotationKind.Text => $"文字 · {(string.IsNullOrWhiteSpace(Text) ? "空" : Text)}",
         FigureAnnotationKind.Arrow => $"箭头 · ({X:0}, {Y:0}) → ({EndX:0}, {EndY:0})",
+        FigureAnnotationKind.Line => $"直线 · ({X:0}, {Y:0}) — ({EndX:0}, {EndY:0})",
         FigureAnnotationKind.Rectangle => $"矩形 · {ShapeWidth:0} × {ShapeHeight:0} px",
         FigureAnnotationKind.Ellipse => $"椭圆 · {ShapeWidth:0} × {ShapeHeight:0} px",
         _ => "标注",
@@ -307,7 +317,7 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
             return Kind switch
             {
                 FigureAnnotationKind.Text => !string.IsNullOrWhiteSpace(Text),
-                FigureAnnotationKind.Arrow => Distance(EndX - X, EndY - Y) >= 5,
+                FigureAnnotationKind.Arrow or FigureAnnotationKind.Line => Distance(EndX - X, EndY - Y) >= 5,
                 FigureAnnotationKind.Rectangle or FigureAnnotationKind.Ellipse =>
                     ShapeWidth >= 5 && ShapeHeight >= 5,
                 _ => false,
@@ -344,9 +354,10 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
                 return "文字标注不能为空。";
             }
 
-            if (Kind == FigureAnnotationKind.Arrow && Distance(EndX - X, EndY - Y) < 5)
+            if (Kind is FigureAnnotationKind.Arrow or FigureAnnotationKind.Line &&
+                Distance(EndX - X, EndY - Y) < 5)
             {
-                return "箭头起点与终点距离至少为 5 px。";
+                return "直线或箭头的起点与终点距离至少为 5 px。";
             }
 
             if (Kind is FigureAnnotationKind.Rectangle or FigureAnnotationKind.Ellipse &&
@@ -444,6 +455,20 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
         return geometry;
     }
 
+    private Geometry CreateLineGeometry()
+    {
+        if (Kind != FigureAnnotationKind.Line ||
+            !double.IsFinite(X) || !double.IsFinite(Y) ||
+            !double.IsFinite(EndX) || !double.IsFinite(EndY))
+        {
+            return Geometry.Empty;
+        }
+
+        var geometry = new LineGeometry(new Point(0, 0), new Point(EndX - X, EndY - Y));
+        geometry.Freeze();
+        return geometry;
+    }
+
     private bool AreCoordinatesFiniteAndInsideCanvas()
     {
         bool startValid = double.IsFinite(X) && double.IsFinite(Y) &&
@@ -460,6 +485,7 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
     private void NotifyGeometryChanged()
     {
         OnPropertyChanged(nameof(ArrowGeometry));
+        OnPropertyChanged(nameof(LineGeometry));
         OnPropertyChanged(nameof(ShapeWidth));
         OnPropertyChanged(nameof(ShapeHeight));
         OnPropertyChanged(nameof(Summary));

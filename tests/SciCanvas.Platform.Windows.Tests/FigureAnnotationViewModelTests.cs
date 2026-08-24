@@ -1,3 +1,4 @@
+using System.Windows.Media;
 using SciCanvas.Presentation;
 
 namespace SciCanvas.Platform.Windows.Tests;
@@ -54,6 +55,34 @@ public sealed class FigureAnnotationViewModelTests
         Assert.Equal(500, annotation.EndX);
         Assert.Equal(400, annotation.EndY);
         Assert.True(annotation.IsValid);
+    }
+
+    [Fact]
+    public void LineAnnotation_UsesEndpointsWithoutArrowheadAndValidatesLength()
+    {
+        var annotation = new FigureAnnotationViewModel(
+            FigureAnnotationKind.Line,
+            500,
+            400,
+            300,
+            0)
+        {
+            X = 40,
+            Y = 60,
+            EndX = 240,
+            EndY = 160,
+            StrokeWidthPt = 1,
+        };
+
+        Assert.True(annotation.IsValid);
+        Assert.Equal("line", annotation.CreateExportItem().Kind);
+        Assert.NotEqual(Geometry.Empty, annotation.LineGeometry);
+        Assert.Equal(Geometry.Empty, annotation.ArrowGeometry);
+
+        annotation.EndX = 42;
+        annotation.EndY = 61;
+        Assert.False(annotation.IsValid);
+        Assert.Contains("至少为 5 px", annotation.ValidationMessage, StringComparison.Ordinal);
     }
 
     [Theory]

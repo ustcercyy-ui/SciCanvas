@@ -51,8 +51,13 @@ internal static class WpfEditableFigureExporter
             string dataUri = $"data:image/png;base64,{Convert.ToBase64String(EncodePng(cropped))}";
             svg.Append($"  <g id=\"panel-{panelIndex++}\" data-source=\"{Escape(panel.Source.DisplayName)}\" data-label=\"{Escape(panel.Label)}\">\n");
             svg.Append($"    <image x=\"{F(imageRect.X)}\" y=\"{F(imageRect.Y)}\" width=\"{F(imageRect.Width)}\" height=\"{F(imageRect.Height)}\" preserveAspectRatio=\"none\" href=\"{dataUri}\"/>\n");
-            AppendSvgScaleBar(svg, panel, imageRect, document.Dpi);
-            AppendSvgPanelLabel(svg, panel.Label, panel.DestinationRect, document.Dpi);
+            if (panel.IsInset)
+            {
+                Color insetColor = WpfFigureExporter.ParseColor(document.GlobalStyle.ShapeColor);
+                svg.Append($"    <rect x=\"{F(imageRect.X)}\" y=\"{F(imageRect.Y)}\" width=\"{F(imageRect.Width)}\" height=\"{F(imageRect.Height)}\" fill=\"none\" stroke=\"{ColorHex(insetColor)}\" stroke-width=\"{F(Math.Max(1, 0.5 / 72.0 * document.Dpi))}\"/>\n");
+            }
+            AppendSvgScaleBar(svg, panel, imageRect, document.Dpi, document.GlobalStyle);
+            AppendSvgPanelLabel(svg, panel.Label, panel.DestinationRect, document.Dpi, document.GlobalStyle);
             svg.Append("  </g>\n");
         }
 
@@ -61,7 +66,7 @@ internal static class WpfEditableFigureExporter
         {
             cancellationToken.ThrowIfCancellationRequested();
             WpfFigureExporter.ValidateAnnotation(annotation, document);
-            AppendSvgAnnotation(svg, annotation, document.Dpi);
+            AppendSvgAnnotation(svg, annotation, document.Dpi, document.GlobalStyle);
         }
 
         svg.Append("</svg>\n");
@@ -72,26 +77,29 @@ internal static class WpfEditableFigureExporter
         StringBuilder svg,
         string label,
         PixelRect64 destination,
-        int dpi)
+        int dpi,
+        FigureGlobalStyle style)
     {
         if (string.IsNullOrWhiteSpace(label))
         {
             return;
         }
 
-        double fontSize = Math.Max(12, 7.0 / 72.0 * dpi);
+        double fontSize = Math.Max(12, style.FontSizePt / 72.0 * dpi);
         double padding = Math.Max(4, dpi / 75.0);
         double width = label.Length * fontSize * 0.68 + padding * 2;
         double height = fontSize * 1.35 + padding;
         AppendSvgRect(svg, destination.X + padding, destination.Y + padding, width, height, Colors.White, null);
-        svg.Append($"    <text x=\"{F(destination.X + padding * 2)}\" y=\"{F(destination.Y + padding)}\" font-family=\"Arial\" font-size=\"{F(fontSize)}\" font-weight=\"700\" dominant-baseline=\"hanging\" fill=\"#000000\">{Escape(label)}</text>\n");
+        Color textColor = WpfFigureExporter.ParseColor(style.TextColor);
+        svg.Append($"    <text x=\"{F(destination.X + padding * 2)}\" y=\"{F(destination.Y + padding)}\" font-family=\"{Escape(style.FontFamily)}\" font-size=\"{F(fontSize)}\" font-weight=\"700\" dominant-baseline=\"hanging\" fill=\"{ColorHex(textColor)}\">{Escape(label)}</text>\n");
     }
 
     private static void AppendSvgScaleBar(
         StringBuilder svg,
         FigurePanelExportItem panel,
         Rect imageRect,
-        int dpi)
+        int dpi,
+        FigureGlobalStyle style)
     {
         if (panel.ScaleBar is not { } scaleBar)
         {
@@ -102,25 +110,28 @@ internal static class WpfEditableFigureExporter
         double outputPixelsPerSourcePixel = imageRect.Width / panel.SourceRect.Width;
         double barWidth = sourcePixels * outputPixelsPerSourcePixel;
         double margin = Math.Max(10, Math.Min(imageRect.Width, imageRect.Height) * 0.035);
-        double thickness = Math.Max(4, dpi / 60.0);
+        double thickness = Math.Max(2, style.StrokeWidthPt / 72.0 * dpi);
         double right = imageRect.Right - margin;
         double y = imageRect.Bottom - margin - thickness / 2.0;
         double left = right - barWidth;
         svg.Append($"    <line x1=\"{F(left)}\" y1=\"{F(y)}\" x2=\"{F(right)}\" y2=\"{F(y)}\" stroke=\"#000000\" stroke-width=\"{F(thickness + Math.Max(3, dpi / 100.0))}\" stroke-linecap=\"square\"/>\n");
-        svg.Append($"    <line x1=\"{F(left)}\" y1=\"{F(y)}\" x2=\"{F(right)}\" y2=\"{F(y)}\" stroke=\"#FFFFFF\" stroke-width=\"{F(thickness)}\" stroke-linecap=\"square\"/>\n");
+        Color scaleBarColor = WpfFigureExporter.ParseColor(style.ScaleBarColor);
+        string scaleBarHex = ColorHex(scaleBarColor);
+        svg.Append($"    <line x1=\"{F(left)}\" y1=\"{F(y)}\" x2=\"{F(right)}\" y2=\"{F(y)}\" stroke=\"{scaleBarHex}\" stroke-width=\"{F(thickness)}\" stroke-linecap=\"square\"/>\n");
         if (scaleBar.ShowLabel)
         {
-            double fontSize = Math.Max(12, 7.0 / 72.0 * dpi);
+            double fontSize = Math.Max(12, style.FontSizePt / 72.0 * dpi);
             double textX = right - ($"{scaleBar.PhysicalLength:0.###} {scaleBar.Unit}".Length * fontSize * 0.58);
             double textY = y - thickness - fontSize * 1.3;
-            svg.Append($"    <text x=\"{F(textX)}\" y=\"{F(textY)}\" font-family=\"Arial\" font-size=\"{F(fontSize)}\" font-weight=\"700\" fill=\"#FFFFFF\" stroke=\"#000000\" stroke-width=\"{F(Math.Max(2, dpi / 150.0))}\" paint-order=\"stroke\">{Escape($"{scaleBar.PhysicalLength:0.###} {scaleBar.Unit}")}</text>\n");
+            svg.Append($"    <text x=\"{F(textX)}\" y=\"{F(textY)}\" font-family=\"{Escape(style.FontFamily)}\" font-size=\"{F(fontSize)}\" font-weight=\"700\" fill=\"{scaleBarHex}\" stroke=\"#000000\" stroke-width=\"{F(Math.Max(2, dpi / 150.0))}\" paint-order=\"stroke\">{Escape($"{scaleBar.PhysicalLength:0.###} {scaleBar.Unit}")}</text>\n");
         }
     }
 
     private static void AppendSvgAnnotation(
         StringBuilder svg,
         FigureAnnotationExportItem annotation,
-        int dpi)
+        int dpi,
+        FigureGlobalStyle style)
     {
         Color color = WpfFigureExporter.ParseColor(annotation.Color);
         string fill = ColorHex(color);
@@ -128,11 +139,17 @@ internal static class WpfEditableFigureExporter
         if (string.Equals(annotation.Kind, "text", StringComparison.OrdinalIgnoreCase))
         {
             double fontSize = annotation.FontSizePt / 72.0 * dpi;
-            svg.Append($"  <text x=\"{F(annotation.X)}\" y=\"{F(annotation.Y)}\" font-family=\"Arial\" font-size=\"{F(fontSize)}\" font-weight=\"{(annotation.IsBold ? "700" : "400")}\" dominant-baseline=\"hanging\" fill=\"{fill}\"{opacity}>{Escape(annotation.Text)}</text>\n");
+            svg.Append($"  <text x=\"{F(annotation.X)}\" y=\"{F(annotation.Y)}\" font-family=\"{Escape(style.FontFamily)}\" font-size=\"{F(fontSize)}\" font-weight=\"{(annotation.IsBold ? "700" : "400")}\" dominant-baseline=\"hanging\" fill=\"{fill}\"{opacity}>{Escape(annotation.Text)}</text>\n");
             return;
         }
 
         double strokeWidth = annotation.StrokeWidthPt / 72.0 * dpi;
+        if (string.Equals(annotation.Kind, "line", StringComparison.OrdinalIgnoreCase))
+        {
+            svg.Append($"  <line x1=\"{F(annotation.X)}\" y1=\"{F(annotation.Y)}\" x2=\"{F(annotation.EndX)}\" y2=\"{F(annotation.EndY)}\" fill=\"none\" stroke=\"{fill}\" stroke-width=\"{F(strokeWidth)}\" stroke-linecap=\"round\"{opacity}/>\n");
+            return;
+        }
+
         if (string.Equals(annotation.Kind, "rectangle", StringComparison.OrdinalIgnoreCase))
         {
             svg.Append($"  <rect x=\"{F(annotation.X)}\" y=\"{F(annotation.Y)}\" width=\"{F(annotation.EndX - annotation.X)}\" height=\"{F(annotation.EndY - annotation.Y)}\" fill=\"none\" stroke=\"{fill}\" stroke-width=\"{F(strokeWidth)}\"{opacity}/>\n");
@@ -207,8 +224,13 @@ internal static class WpfEditableFigureExporter
             double x = imageRect.X * scale;
             double y = pageHeight - imageRect.Bottom * scale;
             content.Append($"q\n{F(imageRect.Width * scale)} 0 0 {F(imageRect.Height * scale)} {F(x)} {F(y)} cm\n/{imageName} Do\nQ\n");
-            AppendPdfScaleBar(content, panel, imageRect, document.Dpi, scale, pageHeight);
-            AppendPdfPanelLabel(content, panel.Label, panel.DestinationRect, document.Dpi, scale, pageHeight);
+            if (panel.IsInset)
+            {
+                AppendPdfColor(content, WpfFigureExporter.ParseColor(document.GlobalStyle.ShapeColor), fill: false);
+                content.Append($"0.5 w {F(imageRect.X * scale)} {F(pageHeight - imageRect.Bottom * scale)} {F(imageRect.Width * scale)} {F(imageRect.Height * scale)} re S\n");
+            }
+            AppendPdfScaleBar(content, panel, imageRect, document.Dpi, scale, pageHeight, document.GlobalStyle);
+            AppendPdfPanelLabel(content, panel.Label, panel.DestinationRect, document.Dpi, scale, pageHeight, document.GlobalStyle);
         }
 
         foreach (FigureAnnotationExportItem annotation in
@@ -216,7 +238,7 @@ internal static class WpfEditableFigureExporter
         {
             cancellationToken.ThrowIfCancellationRequested();
             WpfFigureExporter.ValidateAnnotation(annotation, document);
-            AppendPdfAnnotation(content, annotation, document.Dpi, scale, pageHeight);
+            AppendPdfAnnotation(content, annotation, document.Dpi, scale, pageHeight, document.GlobalStyle);
         }
 
         int contentObject = pdf.AddObject(BuildPdfStream(Encoding.ASCII.GetBytes(content.ToString())));
@@ -238,21 +260,23 @@ internal static class WpfEditableFigureExporter
         PixelRect64 destination,
         int dpi,
         double scale,
-        double pageHeight)
+        double pageHeight,
+        FigureGlobalStyle style)
     {
         if (string.IsNullOrWhiteSpace(label))
         {
             return;
         }
 
-        double fontSize = Math.Max(12, 7.0 / 72.0 * dpi);
+        double fontSize = Math.Max(12, style.FontSizePt / 72.0 * dpi);
         double padding = Math.Max(4, dpi / 75.0);
         double width = label.Length * fontSize * 0.68 + padding * 2;
         double height = fontSize * 1.35 + padding;
         AppendPdfColor(content, Colors.White, fill: true);
         AppendPdfRect(content, (destination.X + padding) * scale, pageHeight - (destination.Y + padding + height) * scale, width * scale, height * scale);
-        FormattedText text = CreateText(label, fontSize, FontWeights.Bold);
-        AppendPdfGeometry(content, text.BuildGeometry(new Point((destination.X + padding * 2), destination.Y + padding)), Colors.Black, scale, pageHeight, fill: true);
+        Color textColor = WpfFigureExporter.ParseColor(style.TextColor);
+        FormattedText text = CreateText(label, fontSize, FontWeights.Bold, style.FontFamily);
+        AppendPdfGeometry(content, text.BuildGeometry(new Point((destination.X + padding * 2), destination.Y + padding)), textColor, scale, pageHeight, fill: true);
     }
 
     private static void AppendPdfScaleBar(
@@ -261,7 +285,8 @@ internal static class WpfEditableFigureExporter
         Rect imageRect,
         int dpi,
         double scale,
-        double pageHeight)
+        double pageHeight,
+        FigureGlobalStyle style)
     {
         if (panel.ScaleBar is not { } scaleBar)
         {
@@ -271,22 +296,23 @@ internal static class WpfEditableFigureExporter
         double sourcePixels = scaleBar.PhysicalLength / scaleBar.PhysicalUnitsPerSourcePixel;
         double barWidth = sourcePixels * imageRect.Width / panel.SourceRect.Width;
         double margin = Math.Max(10, Math.Min(imageRect.Width, imageRect.Height) * 0.035);
-        double thickness = Math.Max(4, dpi / 60.0);
+        double thickness = Math.Max(2, style.StrokeWidthPt / 72.0 * dpi);
         double right = imageRect.Right - margin;
         double y = imageRect.Bottom - margin - thickness / 2;
         double left = right - barWidth;
         AppendPdfColor(content, Colors.Black, fill: false);
         content.Append($"{F((thickness + Math.Max(3, dpi / 100.0)) * scale)} w {F(left * scale)} {F(pageHeight - y * scale)} m {F(right * scale)} {F(pageHeight - y * scale)} l S\n");
-        AppendPdfColor(content, Colors.White, fill: false);
+        Color scaleBarColor = WpfFigureExporter.ParseColor(style.ScaleBarColor);
+        AppendPdfColor(content, scaleBarColor, fill: false);
         content.Append($"{F(thickness * scale)} w {F(left * scale)} {F(pageHeight - y * scale)} m {F(right * scale)} {F(pageHeight - y * scale)} l S\n");
         if (scaleBar.ShowLabel)
         {
             string textValue = $"{scaleBar.PhysicalLength:0.###} {scaleBar.Unit}";
-            double fontSize = Math.Max(12, 7.0 / 72.0 * dpi);
-            FormattedText text = CreateText(textValue, fontSize, FontWeights.Bold);
+            double fontSize = Math.Max(12, style.FontSizePt / 72.0 * dpi);
+            FormattedText text = CreateText(textValue, fontSize, FontWeights.Bold, style.FontFamily);
             double textX = right - text.Width;
             double textY = y - thickness - text.Height - Math.Max(3, dpi / 100.0);
-            AppendPdfGeometry(content, text.BuildGeometry(new Point(textX, textY)), Colors.White, scale, pageHeight, fill: true, stroke: Colors.Black, strokeWidth: Math.Max(2, dpi / 150.0) * scale);
+            AppendPdfGeometry(content, text.BuildGeometry(new Point(textX, textY)), scaleBarColor, scale, pageHeight, fill: true, stroke: Colors.Black, strokeWidth: Math.Max(2, dpi / 150.0) * scale);
         }
     }
 
@@ -295,7 +321,8 @@ internal static class WpfEditableFigureExporter
         FigureAnnotationExportItem annotation,
         int dpi,
         double scale,
-        double pageHeight)
+        double pageHeight,
+        FigureGlobalStyle style)
     {
         Color color = WpfFigureExporter.ParseColor(annotation.Color);
         if (string.Equals(annotation.Kind, "text", StringComparison.OrdinalIgnoreCase))
@@ -303,7 +330,8 @@ internal static class WpfEditableFigureExporter
             FormattedText text = CreateText(
                 annotation.Text,
                 annotation.FontSizePt / 72.0 * dpi,
-                annotation.IsBold ? FontWeights.Bold : FontWeights.Normal);
+                annotation.IsBold ? FontWeights.Bold : FontWeights.Normal,
+                style.FontFamily);
             AppendPdfGeometry(content, text.BuildGeometry(new Point(annotation.X, annotation.Y)), color, scale, pageHeight, fill: true);
             return;
         }
@@ -311,6 +339,12 @@ internal static class WpfEditableFigureExporter
         double strokeWidth = annotation.StrokeWidthPt / 72.0 * dpi * scale;
         AppendPdfColor(content, color, fill: false);
         content.Append($"{F(strokeWidth)} w ");
+        if (string.Equals(annotation.Kind, "line", StringComparison.OrdinalIgnoreCase))
+        {
+            content.Append($"{F(annotation.X * scale)} {F(pageHeight - annotation.Y * scale)} m {F(annotation.EndX * scale)} {F(pageHeight - annotation.EndY * scale)} l S\n");
+            return;
+        }
+
         if (string.Equals(annotation.Kind, "rectangle", StringComparison.OrdinalIgnoreCase))
         {
             AppendPdfRect(content, annotation.X * scale, pageHeight - annotation.EndY * scale, (annotation.EndX - annotation.X) * scale, (annotation.EndY - annotation.Y) * scale);
@@ -409,12 +443,12 @@ internal static class WpfEditableFigureExporter
         content.Append($"{F(cx + Kappa * rx)} {F(cy - ry)} {F(cx + rx)} {F(cy - Kappa * ry)} {F(cx + rx)} {F(cy)} c ");
     }
 
-    private static FormattedText CreateText(string text, double fontSize, FontWeight weight) =>
+    private static FormattedText CreateText(string text, double fontSize, FontWeight weight, string fontFamily) =>
         new(
             text,
             CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight,
-            new Typeface(new FontFamily("Arial"), FontStyles.Normal, weight, FontStretches.Normal),
+            new Typeface(new FontFamily(fontFamily), FontStyles.Normal, weight, FontStretches.Normal),
             fontSize,
             Brushes.Black,
             pixelsPerDip: 1.0);

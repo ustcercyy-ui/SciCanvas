@@ -51,6 +51,131 @@ public sealed class FigurePreflightTests
         Assert.Contains(result.Issues, issue => issue.Code == "UNSAVED_CHANGES");
     }
 
+    [Fact]
+    public void Check_FlagsPanelOverlapInvalidScaleBarAndTransparentBackground()
+    {
+        SourceAsset source = CreateSource(SourceLinkState.Verified);
+        var document = new FigureExportDocument(
+            500,
+            400,
+            300,
+            [
+                new FigurePanelExportItem(
+                    source,
+                    new PixelRect64(0, 0, 100, 100),
+                    new PixelRect64(20, 20, 200, 200),
+                    "a",
+                    true,
+                    new FigureScaleBarExportSpec(0, 10, "µm", true)),
+                new FigurePanelExportItem(
+                    source,
+                    new PixelRect64(0, 0, 100, 100),
+                    new PixelRect64(180, 160, 200, 200),
+                    "b",
+                    true),
+            ],
+            backgroundColor: "#00FFFFFF");
+
+        FigurePreflightResult result = FigurePreflight.Check(document, [source]);
+
+        Assert.Contains(result.Issues, issue => issue.Code == "TRANSPARENT_BACKGROUND");
+        Assert.Contains(result.Issues, issue => issue.Code == "INVALID_SCALE_BAR");
+        Assert.Contains(result.Issues, issue => issue.Code == "PANEL_OVERLAP");
+    }
+
+    [Fact]
+    public void Check_DoesNotTreatAllHiddenLabelsAsDuplicates()
+    {
+        SourceAsset source = CreateSource(SourceLinkState.Verified);
+        var document = new FigureExportDocument(
+            500,
+            400,
+            300,
+            [
+                new FigurePanelExportItem(
+                    source,
+                    new PixelRect64(0, 0, 100, 100),
+                    new PixelRect64(0, 0, 100, 100),
+                    string.Empty,
+                    true),
+                new FigurePanelExportItem(
+                    source,
+                    new PixelRect64(0, 0, 100, 100),
+                    new PixelRect64(200, 0, 100, 100),
+                    string.Empty,
+                    true),
+            ]);
+
+        FigurePreflightResult result = FigurePreflight.Check(document, [source]);
+
+        Assert.DoesNotContain(result.Issues, issue => issue.Code == "DUPLICATE_LABEL");
+        Assert.DoesNotContain(result.Issues, issue => issue.Code == "MISSING_LABEL");
+    }
+
+    [Fact]
+    public void AssistedReview_ReportsStyleContrastAndIntegrityRisksWithExplainableCodes()
+    {
+        SourceAsset source = CreateSource(SourceLinkState.Verified);
+        var document = new FigureExportDocument(
+            500,
+            400,
+            300,
+            [
+                new FigurePanelExportItem(
+                    source,
+                    new PixelRect64(0, 0, 10, 10),
+                    new PixelRect64(0, 0, 100, 100),
+                    "a",
+                    true,
+                    Adjustments: new ImageAdjustmentParameters { Contrast = 0.8 }),
+            ],
+            [
+                new FigureAnnotationExportItem(
+                    "text", 10, 10, 0, 0, "α", "#FF000000", 10, 1,
+                    IsBold: false, IsVisible: true, ZIndex: 0),
+            ],
+            backgroundColor: "#FFFFFFFF",
+            globalStyle: new FigureGlobalStyle(
+                "Arial", 8, 1, "#FFFFFFFF", "#FFFFFFFF", "#FF000000"));
+
+        FigurePreflightResult result = FigureAssistance.Review(document, [source]);
+
+        Assert.Contains(result.Issues, issue => issue.Code == "STYLE_HARMONIZATION");
+        Assert.Contains(result.Issues, issue => issue.Code == "LOW_COLOR_CONTRAST");
+        Assert.Contains(result.Issues, issue => issue.Code == "INTEGRITY_EXTREME_ADJUSTMENT");
+        Assert.Contains(result.Issues, issue => issue.Code == "INTEGRITY_NARROW_CROP");
+        Assert.Contains(result.Issues, issue => issue.Code == "INTEGRITY_NON_GENERATIVE_PIPELINE");
+    }
+
+    [Fact]
+    public void AssistedReview_FlagsDifferentAdjustmentsForSameSource()
+    {
+        SourceAsset source = CreateSource(SourceLinkState.Verified);
+        var document = new FigureExportDocument(
+            300,
+            120,
+            300,
+            [
+                new FigurePanelExportItem(
+                    source,
+                    new PixelRect64(0, 0, 100, 100),
+                    new PixelRect64(0, 0, 100, 100),
+                    "a",
+                    true),
+                new FigurePanelExportItem(
+                    source,
+                    new PixelRect64(0, 0, 100, 100),
+                    new PixelRect64(150, 0, 100, 100),
+                    "b",
+                    true,
+                    Adjustments: new ImageAdjustmentParameters { Brightness = 0.1 }),
+            ]);
+
+        FigurePreflightResult result = FigureAssistance.Review(document, [source]);
+
+        Assert.Contains(result.Issues, issue => issue.Code == "INTEGRITY_INCONSISTENT_ADJUSTMENT");
+    }
+
     private static SourceAsset CreateSource(SourceLinkState linkState) => new(
         Guid.NewGuid(),
         "sample.tif",
