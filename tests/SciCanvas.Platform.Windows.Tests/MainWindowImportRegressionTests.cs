@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using SciCanvas.App;
@@ -82,6 +84,103 @@ public sealed class MainWindowImportRegressionTests
 
         Assert.NotEqual(historyBeforeGesture, viewModel.HistoryStatusText);
         Assert.True(viewModel.IsDirty);
+    }
+
+    [Fact]
+    public void BlankCanvasPointerDown_StartsNewCropInsteadOfDoingNothing()
+    {
+        WpfTestHost.Invoke(() =>
+        {
+            MainWindow? window = null;
+            try
+            {
+                MainWindowViewModel viewModel = CreateViewModel();
+                SourceAssetItemViewModel source = CreateSourceItem();
+                viewModel.Sources.Add(source);
+                viewModel.SelectedSource = source;
+                window = new MainWindow
+                {
+                    DataContext = viewModel,
+                    Width = 1000,
+                    Height = 720,
+                };
+                window.Show();
+                window.UpdateLayout();
+                var canvas = Assert.IsType<Canvas>(window.FindName("ImageCanvas"));
+                Assert.Equal(new PixelRect64(0, 0, 2, 2), AssertCrop(viewModel.Crop));
+
+                canvas.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+                {
+                    RoutedEvent = UIElement.MouseLeftButtonDownEvent,
+                    Source = canvas,
+                });
+
+                Assert.Equal(1, viewModel.Crop.Width);
+                Assert.Equal(1, viewModel.Crop.Height);
+
+                canvas.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 1, MouseButton.Left)
+                {
+                    RoutedEvent = UIElement.MouseLeftButtonUpEvent,
+                    Source = canvas,
+                });
+                Assert.False(canvas.IsMouseCaptured);
+            }
+            finally
+            {
+                if (window is not null)
+                {
+                    window.DataContext = null;
+                    window.Close();
+                }
+            }
+        }, TimeSpan.FromSeconds(15));
+    }
+
+    [Fact]
+    public void CropResizeHandle_ReleasesMouseCaptureOnPointerUp()
+    {
+        WpfTestHost.Invoke(() =>
+        {
+            MainWindow? window = null;
+            try
+            {
+                MainWindowViewModel viewModel = CreateViewModel();
+                SourceAssetItemViewModel source = CreateSourceItem();
+                viewModel.Sources.Add(source);
+                viewModel.SelectedSource = source;
+                window = new MainWindow
+                {
+                    DataContext = viewModel,
+                    Width = 1000,
+                    Height = 720,
+                };
+                window.Show();
+                window.UpdateLayout();
+                var handle = Assert.IsType<Thumb>(window.FindName("CropBottomRightHandle"));
+
+                handle.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+                {
+                    RoutedEvent = UIElement.PreviewMouseLeftButtonDownEvent,
+                    Source = handle,
+                });
+                Assert.True(handle.IsMouseCaptured);
+
+                handle.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 1, MouseButton.Left)
+                {
+                    RoutedEvent = UIElement.PreviewMouseLeftButtonUpEvent,
+                    Source = handle,
+                });
+                Assert.False(handle.IsMouseCaptured);
+            }
+            finally
+            {
+                if (window is not null)
+                {
+                    window.DataContext = null;
+                    window.Close();
+                }
+            }
+        }, TimeSpan.FromSeconds(15));
     }
 
     [Fact]
