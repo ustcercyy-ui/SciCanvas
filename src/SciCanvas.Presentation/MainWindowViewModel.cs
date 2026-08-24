@@ -60,6 +60,8 @@ public sealed class MainWindowViewModel : ObservableObject
     private bool _isDirty;
     private bool _isRestoringProject;
     private bool _historyReady;
+    private int _historyGestureDepth;
+    private bool _historyGestureDirty;
     private bool _autosaveInProgress;
     private bool _autosavePending;
     private string _autosaveStatusText = "自动保存待命";
@@ -143,7 +145,7 @@ public sealed class MainWindowViewModel : ObservableObject
             Interval = TimeSpan.FromSeconds(10),
         };
         _autosaveTimer.Tick += OnAutosaveTimerTick;
-        Crop.PropertyChanged += OnCropPropertyChanged;
+        Crop.BoundsChanged += OnCropBoundsChanged;
         Figure.DocumentChanged += OnFigureDocumentChanged;
         Figure.EditCompleted += OnFigureEditCompleted;
         OpenSourcesCommand = new AsyncRelayCommand(
@@ -590,6 +592,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
                 OnPropertyChanged(nameof(HasSelection));
                 OnPropertyChanged(nameof(EmptyStateVisibility));
+                OnPropertyChanged(nameof(SourceCanvasVisibility));
                 OnPropertyChanged(nameof(MeasurementDockVisibility));
                 OnPropertyChanged(nameof(ActiveScienceToolHint));
                 OnPropertyChanged(nameof(CropOverlayVisibility));
@@ -615,6 +618,8 @@ public sealed class MainWindowViewModel : ObservableObject
     public bool HasSelection => SelectedSource is not null;
 
     public Visibility EmptyStateVisibility => HasSelection ? Visibility.Collapsed : Visibility.Visible;
+
+    public Visibility SourceCanvasVisibility => HasSelection ? Visibility.Visible : Visibility.Collapsed;
 
     public Visibility MeasurementDockVisibility =>
         WorkspaceMode == WorkspaceMode.Crop && HasSelection
@@ -652,7 +657,7 @@ public sealed class MainWindowViewModel : ObservableObject
     public bool IsPolylineToolActive => ActiveScienceTool == ScientificToolMode.Polyline;
 
     public Visibility CropOverlayVisibility =>
-        IsCropOverlayVisible && IsCropToolActive
+        HasSelection && Crop.IsConfigured && IsCropOverlayVisible && IsCropToolActive
             ? Visibility.Visible
             : Visibility.Collapsed;
 
@@ -3205,18 +3210,14 @@ public sealed class MainWindowViewModel : ObservableObject
         AutosaveStatusText = "已放弃未保存更改";
     }
 
-    private void OnCropPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    private void OnCropBoundsChanged(object? sender, EventArgs e)
     {
-        if (e.PropertyName is nameof(CropEditorViewModel.X) or nameof(CropEditorViewModel.Y) or
-            nameof(CropEditorViewModel.Width) or nameof(CropEditorViewModel.Height))
-        {
-            AddCurrentCropToFigureCommand.NotifyCanExecuteChanged();
-            AddCurrentCropToBatchQueueCommand.NotifyCanExecuteChanged();
-            ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
-            AnalyzeAssistedRegionsCommand.NotifyCanExecuteChanged();
-            MarkAssistedRegionAnalysisStale();
-            MarkDirty();
-        }
+        AddCurrentCropToFigureCommand.NotifyCanExecuteChanged();
+        AddCurrentCropToBatchQueueCommand.NotifyCanExecuteChanged();
+        ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
+        AnalyzeAssistedRegionsCommand.NotifyCanExecuteChanged();
+        MarkAssistedRegionAnalysisStale();
+        MarkDirty();
     }
 
     private void OnFigureDocumentChanged(object? sender, EventArgs e)
@@ -3510,7 +3511,34 @@ public sealed class MainWindowViewModel : ObservableObject
             _ => throw new InvalidDataException($"不支持的参考线方向：{orientation ?? "<空>"}"),
         };
 
-    public void CompleteHistoryGesture() => _history.BreakCoalescing();
+    public void BeginHistoryGesture()
+    {
+        if (_historyGestureDepth == 0)
+        {
+            _historyGestureDirty = false;
+            _history.BreakCoalescing();
+        }
+
+        _historyGestureDepth++;
+    }
+
+    public void CompleteHistoryGesture()
+    {
+        if (_historyGestureDepth > 0)
+        {
+            _historyGestureDepth--;
+            if (_historyGestureDepth == 0 && _historyGestureDirty)
+            {
+                _historyGestureDirty = false;
+                RecordDirtySnapshot();
+            }
+        }
+
+        if (_historyGestureDepth == 0)
+        {
+            _history.BreakCoalescing();
+        }
+    }
 
     private void Undo()
     {
@@ -3959,12 +3987,23 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         if (!_isRestoringProject && _historyReady)
         {
-            EditorHistorySnapshot current = CaptureHistorySnapshot();
-            EditorHistorySnapshot before = _history.CurrentSnapshot ?? current;
-            bool canCoalesce = CanCoalesceHistoryChange(before, current);
-            _history.Record(current, canCoalesce);
-            RefreshHistoryState();
+            if (_historyGestureDepth > 0)
+            {
+                _historyGestureDirty = true;
+                return;
+            }
+
+            RecordDirtySnapshot();
         }
+    }
+
+    private void RecordDirtySnapshot()
+    {
+        EditorHistorySnapshot current = CaptureHistorySnapshot();
+        EditorHistorySnapshot before = _history.CurrentSnapshot ?? current;
+        bool canCoalesce = CanCoalesceHistoryChange(before, current);
+        _history.Record(current, canCoalesce);
+        RefreshHistoryState();
     }
 
     private void HandleUnexpectedCommandError(Exception exception)

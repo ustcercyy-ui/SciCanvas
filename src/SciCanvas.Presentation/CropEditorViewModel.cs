@@ -24,6 +24,8 @@ public sealed class CropEditorViewModel : ObservableObject
         AlignBottomCommand = new RelayCommand(AlignBottom);
     }
 
+    public event EventHandler? BoundsChanged;
+
     public RelayCommand AlignLeftCommand { get; }
 
     public RelayCommand AlignHorizontalCenterCommand { get; }
@@ -39,51 +41,25 @@ public sealed class CropEditorViewModel : ObservableObject
     public long X
     {
         get => _x;
-        set
-        {
-            if (SetProperty(ref _x, value))
-            {
-                Validate();
-            }
-        }
+        set => SetBounds(value, Y, Width, Height);
     }
 
     public long Y
     {
         get => _y;
-        set
-        {
-            if (SetProperty(ref _y, value))
-            {
-                Validate();
-            }
-        }
+        set => SetBounds(X, value, Width, Height);
     }
 
     public long Width
     {
         get => _width;
-        set
-        {
-            if (SetProperty(ref _width, value))
-            {
-                OnPropertyChanged(nameof(SizeText));
-                Validate();
-            }
-        }
+        set => SetBounds(X, Y, value, Height);
     }
 
     public long Height
     {
         get => _height;
-        set
-        {
-            if (SetProperty(ref _height, value))
-            {
-                OnPropertyChanged(nameof(SizeText));
-                Validate();
-            }
-        }
+        set => SetBounds(X, Y, Width, value);
     }
 
     public bool IsConfigured
@@ -122,18 +98,8 @@ public sealed class CropEditorViewModel : ObservableObject
             : (sourceSize.Height - nextHeight) / 2;
 
         _sourceSize = sourceSize;
-        _width = nextWidth;
-        _height = nextHeight;
-        _x = nextX;
-        _y = nextY;
-
-        OnPropertyChanged(nameof(X));
-        OnPropertyChanged(nameof(Y));
-        OnPropertyChanged(nameof(Width));
-        OnPropertyChanged(nameof(Height));
-        OnPropertyChanged(nameof(SizeText));
         IsConfigured = true;
-        Validate();
+        SetBoundsCore(nextX, nextY, nextWidth, nextHeight, forceNotifications: true);
     }
 
     public bool RestoreForSource(PixelSize64 sourceSize, PixelRect64 crop)
@@ -145,35 +111,20 @@ public sealed class CropEditorViewModel : ObservableObject
         }
 
         _sourceSize = sourceSize;
-        _x = crop.X;
-        _y = crop.Y;
-        _width = crop.Width;
-        _height = crop.Height;
-        OnPropertyChanged(nameof(X));
-        OnPropertyChanged(nameof(Y));
-        OnPropertyChanged(nameof(Width));
-        OnPropertyChanged(nameof(Height));
-        OnPropertyChanged(nameof(SizeText));
         IsConfigured = true;
-        Validate();
+        SetBoundsCore(crop.X, crop.Y, crop.Width, crop.Height, forceNotifications: true);
         return true;
     }
 
     public void Reset()
     {
         _sourceSize = null;
-        _x = 0;
-        _y = 0;
-        _width = 1200;
-        _height = 800;
-        OnPropertyChanged(nameof(X));
-        OnPropertyChanged(nameof(Y));
-        OnPropertyChanged(nameof(Width));
-        OnPropertyChanged(nameof(Height));
-        OnPropertyChanged(nameof(SizeText));
         IsConfigured = false;
-        Validate();
+        SetBoundsCore(0, 0, 1200, 800, forceNotifications: true);
     }
+
+    public bool SetBounds(long x, long y, long width, long height) =>
+        SetBoundsCore(x, y, width, height, forceNotifications: false);
 
     public bool TryGetCrop(out PixelRect64 crop)
     {
@@ -240,6 +191,53 @@ public sealed class CropEditorViewModel : ObservableObject
         {
             Y = Math.Max(0, _sourceSize.Value.Height - Height);
         }
+    }
+
+    private bool SetBoundsCore(
+        long x,
+        long y,
+        long width,
+        long height,
+        bool forceNotifications)
+    {
+        bool xChanged = _x != x;
+        bool yChanged = _y != y;
+        bool widthChanged = _width != width;
+        bool heightChanged = _height != height;
+        if (!forceNotifications && !xChanged && !yChanged && !widthChanged && !heightChanged)
+        {
+            return false;
+        }
+
+        _x = x;
+        _y = y;
+        _width = width;
+        _height = height;
+
+        if (forceNotifications || xChanged)
+        {
+            OnPropertyChanged(nameof(X));
+        }
+        if (forceNotifications || yChanged)
+        {
+            OnPropertyChanged(nameof(Y));
+        }
+        if (forceNotifications || widthChanged)
+        {
+            OnPropertyChanged(nameof(Width));
+        }
+        if (forceNotifications || heightChanged)
+        {
+            OnPropertyChanged(nameof(Height));
+        }
+        if (forceNotifications || widthChanged || heightChanged)
+        {
+            OnPropertyChanged(nameof(SizeText));
+        }
+
+        Validate();
+        BoundsChanged?.Invoke(this, EventArgs.Empty);
+        return true;
     }
 
     private void Validate()

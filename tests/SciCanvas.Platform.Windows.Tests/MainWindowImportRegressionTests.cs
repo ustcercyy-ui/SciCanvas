@@ -19,6 +19,72 @@ namespace SciCanvas.Platform.Windows.Tests;
 public sealed class MainWindowImportRegressionTests
 {
     [Fact]
+    public void EmptyProject_HidesSourceViewportAndDefaultCropOverlay()
+    {
+        WpfTestHost.Invoke(() =>
+        {
+            MainWindow? window = null;
+            try
+            {
+                MainWindowViewModel viewModel = CreateViewModel();
+                window = new MainWindow
+                {
+                    DataContext = viewModel,
+                    Width = 1000,
+                    Height = 720,
+                };
+                window.Show();
+                window.UpdateLayout();
+
+                var viewport = Assert.IsType<ScrollViewer>(window.FindName("ImageViewport"));
+                var cropOverlay = Assert.IsType<Grid>(window.FindName("CropOverlay"));
+                Assert.Equal(Visibility.Collapsed, viewport.Visibility);
+                Assert.Equal(Visibility.Collapsed, cropOverlay.Visibility);
+
+                SourceAssetItemViewModel source = CreateSourceItem();
+                viewModel.Sources.Add(source);
+                viewModel.SelectedSource = source;
+                window.UpdateLayout();
+
+                Assert.Equal(Visibility.Visible, viewport.Visibility);
+                Assert.Equal(Visibility.Visible, cropOverlay.Visibility);
+            }
+            finally
+            {
+                if (window is not null)
+                {
+                    window.DataContext = null;
+                    window.Close();
+                }
+            }
+        }, TimeSpan.FromSeconds(15));
+    }
+
+    [Fact]
+    public void CropPointerGesture_DefersHistoryWorkUntilPointerRelease()
+    {
+        MainWindowViewModel viewModel = CreateViewModel();
+        SourceAssetItemViewModel source = CreateMeasurementSourceItem();
+        viewModel.Sources.Add(source);
+        viewModel.SelectedSource = source;
+        string historyBeforeGesture = viewModel.HistoryStatusText;
+
+        viewModel.BeginHistoryGesture();
+        for (int index = 1; index <= 200; index++)
+        {
+            viewModel.Crop.SetBounds(index, index, 600, 400);
+        }
+
+        Assert.Equal(historyBeforeGesture, viewModel.HistoryStatusText);
+        Assert.Equal(new PixelRect64(200, 200, 600, 400), AssertCrop(viewModel.Crop));
+
+        viewModel.CompleteHistoryGesture();
+
+        Assert.NotEqual(historyBeforeGesture, viewModel.HistoryStatusText);
+        Assert.True(viewModel.IsDirty);
+    }
+
+    [Fact]
     public void AddingFirstImportedSource_DoesNotThrowDuringTemplateLayout()
     {
         WpfTestHost.Invoke(() =>
@@ -400,6 +466,12 @@ public sealed class MainWindowImportRegressionTests
         new EmptyProjectFilePicker(),
         new NoOpProjectStore(),
         assistedRegionAnalyzer: assistedRegionAnalyzer);
+
+    private static PixelRect64 AssertCrop(CropEditorViewModel crop)
+    {
+        Assert.True(crop.TryGetCrop(out PixelRect64 bounds));
+        return bounds;
+    }
 
     private static SourceAssetItemViewModel CreateSourceItem()
     {

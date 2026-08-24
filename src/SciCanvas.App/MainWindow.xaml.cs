@@ -88,17 +88,20 @@ public partial class MainWindow : Window
         if (moveExisting)
         {
             _gesture = CropGesture.Move;
+            viewModel.BeginHistoryGesture();
             _moveOffsetX = position.X - viewModel.Crop.X;
             _moveOffsetY = position.Y - viewModel.Crop.Y;
         }
-        else if (_gesture == CropGesture.Move)
+        else
         {
             _gesture = CropGesture.Create;
             _anchor = position;
-            viewModel.Crop.X = (long)Math.Floor(position.X);
-            viewModel.Crop.Y = (long)Math.Floor(position.Y);
-            viewModel.Crop.Width = 1;
-            viewModel.Crop.Height = 1;
+            viewModel.BeginHistoryGesture();
+            viewModel.Crop.SetBounds(
+                (long)Math.Floor(position.X),
+                (long)Math.Floor(position.Y),
+                1,
+                1);
         }
 
         ImageCanvas.CaptureMouse();
@@ -135,17 +138,17 @@ public partial class MainWindow : Window
             long right = Math.Clamp((long)Math.Ceiling(Math.Max(_anchor.X, position.X)), left + 1, sourceWidth);
             long bottom = Math.Clamp((long)Math.Ceiling(Math.Max(_anchor.Y, position.Y)), top + 1, sourceHeight);
 
-            viewModel.Crop.X = left;
-            viewModel.Crop.Y = top;
-            viewModel.Crop.Width = right - left;
-            viewModel.Crop.Height = bottom - top;
+            viewModel.Crop.SetBounds(left, top, right - left, bottom - top);
         }
         else if (_gesture == CropGesture.Move)
         {
             long maxX = Math.Max(0, sourceWidth - viewModel.Crop.Width);
             long maxY = Math.Max(0, sourceHeight - viewModel.Crop.Height);
-            viewModel.Crop.X = Math.Clamp((long)Math.Round(position.X - _moveOffsetX), 0, maxX);
-            viewModel.Crop.Y = Math.Clamp((long)Math.Round(position.Y - _moveOffsetY), 0, maxY);
+            viewModel.Crop.SetBounds(
+                Math.Clamp((long)Math.Round(position.X - _moveOffsetX), 0, maxX),
+                Math.Clamp((long)Math.Round(position.Y - _moveOffsetY), 0, maxY),
+                viewModel.Crop.Width,
+                viewModel.Crop.Height);
         }
         else
         {
@@ -195,6 +198,13 @@ public partial class MainWindow : Window
         if (ImageCanvas.IsMouseCaptured)
         {
             ImageCanvas.ReleaseMouseCapture();
+        }
+
+        FrameworkElement? resizeCapture = _cropResizeCaptureElement;
+        _cropResizeCaptureElement = null;
+        if (resizeCapture?.IsMouseCaptured == true)
+        {
+            resizeCapture.ReleaseMouseCapture();
         }
 
         if (DataContext is MainWindowViewModel viewModel)
@@ -262,6 +272,7 @@ public partial class MainWindow : Window
         _cropResizeStartY = viewModel.Crop.Y;
         _cropResizeStartWidth = viewModel.Crop.Width;
         _cropResizeStartHeight = viewModel.Crop.Height;
+        viewModel.BeginHistoryGesture();
         _cropResizeCaptureElement = element;
         element.CaptureMouse();
         e.Handled = true;
@@ -333,10 +344,7 @@ public partial class MainWindow : Window
             bottom = Math.Clamp(y, top + 1, sourceHeight);
         }
 
-        viewModel.Crop.X = left;
-        viewModel.Crop.Y = top;
-        viewModel.Crop.Width = right - left;
-        viewModel.Crop.Height = bottom - top;
+        viewModel.Crop.SetBounds(left, top, right - left, bottom - top);
     }
 
     private static bool IsDescendantOf(DependencyObject ancestor, DependencyObject descendant)

@@ -413,6 +413,7 @@
 
                     <ScrollViewer x:Name="ImageViewport"
                                   Margin="12"
+                                  Visibility="{Binding SourceCanvasVisibility}"
                                   HorizontalScrollBarVisibility="Auto"
                                   VerticalScrollBarVisibility="Auto"
                                   HorizontalContentAlignment="Center"
@@ -427,6 +428,7 @@
                                 Width="{Binding SelectedSource.Width, FallbackValue=1}"
                                 Height="{Binding SelectedSource.Height, FallbackValue=1}"
                                 Background="Transparent"
+                                ClipToBounds="True"
                                 Cursor="Cross"
                                 MouseLeftButtonDown="ImageCanvas_OnMouseLeftButtonDown"
                                 MouseMove="ImageCanvas_OnMouseMove"
