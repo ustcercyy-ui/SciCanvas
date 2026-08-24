@@ -1,4 +1,4 @@
-# SciCanvas v1.2.1-alpha 发布验收台账
+# SciCanvas v1.2.2-alpha 发布验收台账
 
 验收日期：2026-08-24
 目标平台：Windows x64，.NET 10，WPF
@@ -6,7 +6,7 @@
 
 ## 结论
 
-分阶段升级路线的阶段 0–6 已完成，`v1.2.1-alpha` 进一步补齐画布缩放/平移、裁剪手柄、统一图层选择与测量对象编辑。Release 构建、自动化回归、核心界面视觉证据、成品 CLI、实际安装、包内容、版本号与 SHA-256 均通过发布门禁。此版本保持科研图像源文件只读，自动分析结果默认只是候选，必须经人工接受后才能进入测量数据。
+分阶段升级路线的阶段 0–6 已完成，`v1.2.1-alpha` 进一步补齐画布缩放/平移、裁剪手柄、统一图层选择与测量对象编辑，`v1.2.2-alpha` 修复空工程显示默认裁剪框、空白区域无法创建裁剪、缩放手柄未释放鼠标捕获以及拖动时反复序列化历史快照的问题。Release 构建、自动化回归、核心界面视觉证据、成品 CLI、实际安装、包内容、版本号与 SHA-256 均通过发布门禁。此版本保持科研图像源文件只读，自动分析结果默认只是候选，必须经人工接受后才能进入测量数据。
 
 ## 自动化回归
 
@@ -19,10 +19,12 @@ dotnet test .\SciCanvas.sln --configuration Release --no-restore
 | 测试程序集 | 通过 | 失败 | 跳过 |
 | --- | ---: | ---: | ---: |
 | SciCanvas.Core.Tests | 44 | 0 | 0 |
-| SciCanvas.Platform.Windows.Tests | 92 | 0 | 0 |
-| 合计 | 136 | 0 | 0 |
+| SciCanvas.Platform.Windows.Tests | 96 | 0 | 0 |
+| 合计 | 140 | 0 | 0 |
 
 覆盖范围包括标定与科学测量、工程 `1.2` 往返/迁移、撤销与审计、Figure QC、16-bit/位图/PDF/SVG 导出、强度剖面、XLSX、Inset、可解释辅助分析、CLI、WPF 主界面与像素坐标导出。
+
+`v1.2.2-alpha` 新增回归覆盖：空工程的源图视口和默认裁剪层必须折叠；一次裁剪边界更新只产生一次语义变更；连续 200 次指针更新在松开前不生成历史快照，松开时只提交一个可撤销步骤。
 
 ## DPI、缩放与键盘检查
 
@@ -48,15 +50,15 @@ dotnet test .\SciCanvas.sln --configuration Release --no-restore
 
 | 产物 | 字节数 | SHA-256 |
 | --- | ---: | --- |
-| `SciCanvas-v1.2.1-alpha-Portable.zip` | 65,634,372 | `C145DCADAF4555596A23334BB7E04870F4BE940F4C5C120E77C88B623BD349ED` |
-| `SciCanvas-v1.2.1-alpha-Setup.exe` | 181,700,798 | `1546DA10C6D842375E98F10899D7F94AC4AF58D94AB1D4AB0C20A0219207D1B0` |
+| `SciCanvas-v1.2.2-alpha-Portable.zip` | 65,634,851 | `736C101B49676C054036F7CA7B3D23B277478E81404AC90C9D2C31988A518627` |
+| `SciCanvas-v1.2.2-alpha-Setup.exe` | 181,704,894 | `D6118B7531537654634A0DC131E45730ABCF5CBA227572F4A33EDEEDF6FB340D` |
 
-- GUI、CLI、Setup 的文件版本均为 `1.2.1.0`，产品语义版本前缀均为 `1.2.1-alpha`（构建产物附带相同 Git 元数据后缀）。
+- GUI、CLI、Setup 的文件版本均为 `1.2.2.0`，产品语义版本为 `1.2.2-alpha+2290ad34b7cfc5cbf24b510f3a110d06a5e302f8`。
 - 便携包根目录包含 `SciCanvas.App.exe`、`SciCanvas.Cli.exe`、`Install-SciCanvas.cmd`、`Install-SciCanvas.ps1` 与 `README.txt`。
 - 便携包共核验 424 个 ZIP 条目，没有绝对路径、盘符路径或 `..` 路径穿越项。
 - 从发布目录执行 `SciCanvas.Cli.exe --help` 返回退出码 `0`。
 - 安装器在重定向到 `D:\Temp` 的隔离用户目录中返回退出码 `0`，生成 266 个安装文件和开始菜单快捷方式；安装后的 CLI 返回退出码 `0`，GUI 成功显示 `未命名工程 · SciCanvas` 后正常关闭。
-- `SciCanvas-v1.2.1-alpha-SHA256.txt` 已使用实际成品复算，两项均匹配。
+- `SciCanvas-v1.2.2-alpha-SHA256.txt` 已使用实际成品复算，两项均匹配。
 
 ## 智能辅助边界
 
