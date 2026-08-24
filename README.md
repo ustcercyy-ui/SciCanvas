@@ -138,9 +138,11 @@ dotnet publish .\src\SciCanvas.Cli\SciCanvas.Cli.csproj --configuration Release 
 
 当前已生成可直接交付的自包含 Windows x64 包：
 
-- `artifacts\SciCanvas-v1.2.2-alpha-Setup.exe`：双击安装到当前用户目录，不需要管理员权限，同时安装 GUI 与 CLI。
-- `artifacts\SciCanvas-v1.2.2-alpha-Portable.zip`：解压后运行 `SciCanvas.App.exe` 或 `SciCanvas.Cli.exe`，不需要安装 .NET。
-- `artifacts\SciCanvas-v1.2.2-alpha-SHA256.txt`：安装包与便携包的 SHA-256 校验值。
+- [SciCanvas-v1.2.2-alpha-Setup.exe](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v1.2.2-alpha/SciCanvas-v1.2.2-alpha-Setup.exe)：双击安装到当前用户目录，不需要管理员权限，同时安装 GUI 与 CLI。
+- [SciCanvas-v1.2.2-alpha-Portable.zip](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v1.2.2-alpha/SciCanvas-v1.2.2-alpha-Portable.zip)：解压后运行 `SciCanvas.App.exe` 或 `SciCanvas.Cli.exe`，不需要安装 .NET。
+- [SciCanvas-v1.2.2-alpha-SHA256.txt](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v1.2.2-alpha/SciCanvas-v1.2.2-alpha-SHA256.txt)：安装包与便携包的 SHA-256 校验值。
+
+完整修复内容、安装步骤和验证记录见 [v1.2.2-alpha Release](https://github.com/ustcercyy-ui/SciCanvas/releases/tag/v1.2.2-alpha)。
 
 构建与测试：
 
@@ -163,6 +165,7 @@ dotnet test .\SciCanvas.sln --configuration Debug
 - [技术架构](docs/ARCHITECTURE.md)
 - [分阶段升级路线与验收](docs/UPGRADE_ROADMAP.md)
 - [v1.2 发布验收与视觉台账](docs/RELEASE_1.2_QA.md)
+- [v1.2.2 裁剪修复与安装说明](docs/RELEASE_1.2.2.md)
 - [模板系统](docs/TEMPLATE_SYSTEM.md)
 - [工程文件 JSON Schema](schemas/scicanvas-project.schema.json)
 - [组图模板 JSON Schema](schemas/scicanvas-template.schema.json)
