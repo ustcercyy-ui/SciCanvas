@@ -34,6 +34,8 @@ public sealed class SourceAssetItemViewModel : ObservableObject
 
     public event EventHandler? ScienceEditCompleted;
 
+    public event EventHandler? MeasurementSelectionChanged;
+
     public SourceAsset Asset => _asset;
 
     public BitmapSource Preview => _preview;
@@ -65,6 +67,7 @@ public sealed class SourceAssetItemViewModel : ObservableObject
 
             OnPropertyChanged();
             OnPropertyChanged(nameof(SelectedMeasurementStatusText));
+            MeasurementSelectionChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 
@@ -168,7 +171,8 @@ public sealed class SourceAssetItemViewModel : ObservableObject
         Guid? id = null,
         string? strokeColor = null,
         double strokeWidthPixels = 3,
-        IReadOnlyList<MeasurementPoint>? pathPoints = null)
+        IReadOnlyList<MeasurementPoint>? pathPoints = null,
+        ScientificMeasurementVisualStyle? visualStyle = null)
     {
         var measurement = new ScientificMeasurementViewModel(
             id ?? Guid.NewGuid(),
@@ -185,6 +189,10 @@ public sealed class SourceAssetItemViewModel : ObservableObject
             StrokeColor = strokeColor ?? "#FF22C7E8",
             StrokeWidthPixels = strokeWidthPixels,
         };
+        if (visualStyle is not null)
+        {
+            measurement.RestoreVisualStyle(visualStyle);
+        }
         measurement.Changed += OnMeasurementChanged;
         Measurements.Add(measurement);
         SelectedMeasurement = measurement;
@@ -232,7 +240,7 @@ public sealed class SourceAssetItemViewModel : ObservableObject
         double referenceEndX,
         double referenceEndY,
         IEnumerable<ScientificMeasurement> measurements,
-        IReadOnlyDictionary<Guid, (string StrokeColor, double StrokeWidthPixels)>? styles = null)
+        IReadOnlyDictionary<Guid, ScientificMeasurementVisualStyle>? styles = null)
     {
         Calibration.Restore(
             calibration,
@@ -248,8 +256,8 @@ public sealed class SourceAssetItemViewModel : ObservableObject
         Measurements.Clear();
         foreach (ScientificMeasurement measurement in measurements)
         {
-            (string StrokeColor, double StrokeWidthPixels) style = styles?.GetValueOrDefault(
-                measurement.Id) ?? ("#FF22C7E8", 3);
+            ScientificMeasurementVisualStyle style = styles?.GetValueOrDefault(
+                measurement.Id) ?? ScientificMeasurementVisualStyle.Default;
             AddMeasurement(
                 measurement.Kind,
                 measurement.PointA,
@@ -258,7 +266,8 @@ public sealed class SourceAssetItemViewModel : ObservableObject
                 measurement.Id,
                 style.StrokeColor,
                 style.StrokeWidthPixels,
-                measurement.PathPoints);
+                measurement.PathPoints,
+                style);
         }
 
         SelectedMeasurement = Measurements.FirstOrDefault();

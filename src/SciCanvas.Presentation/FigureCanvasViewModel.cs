@@ -46,9 +46,11 @@ public sealed class FigureCanvasViewModel : ObservableObject
         _backgroundColor = NormalizeTemplateBackground(template.Canvas.Background);
         _lastValidBackgroundColor = _backgroundColor;
         _panelLabelSequence = NormalizeLabelSequence(template.LabelStyle.Sequence);
-        RemoveSelectedCommand = new RelayCommand(RemoveSelected, () => SelectedPanel is not null);
-        MoveLayerUpCommand = new RelayCommand(MoveLayerUp, () => SelectedPanel is not null);
-        MoveLayerDownCommand = new RelayCommand(MoveLayerDown, () => SelectedPanel is not null);
+        RemoveSelectedCommand = new RelayCommand(
+            RemoveSelected,
+            () => SelectedPanels.Any(panel => !panel.IsLocked));
+        MoveLayerUpCommand = new RelayCommand(MoveLayerUp, () => SelectedPanel is { IsLocked: false });
+        MoveLayerDownCommand = new RelayCommand(MoveLayerDown, () => SelectedPanel is { IsLocked: false });
         SelectAllPanelsCommand = new RelayCommand(SelectAllPanels, () => Panels.Count > 0);
         ClearPanelSelectionCommand = new RelayCommand(
             () => SelectOnlyPanel(null),
@@ -149,13 +151,13 @@ public sealed class FigureCanvasViewModel : ObservableObject
         AddEllipseAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Ellipse));
         RemoveSelectedAnnotationCommand = new RelayCommand(
             RemoveSelectedAnnotation,
-            () => SelectedAnnotation is not null);
+            () => SelectedAnnotation is { IsLocked: false });
         MoveAnnotationUpCommand = new RelayCommand(
             MoveAnnotationUp,
-            () => SelectedAnnotation is not null);
+            () => SelectedAnnotation is { IsLocked: false });
         MoveAnnotationDownCommand = new RelayCommand(
             MoveAnnotationDown,
-            () => SelectedAnnotation is not null);
+            () => SelectedAnnotation is { IsLocked: false });
     }
 
     public FigureTemplateDefinition Template { get; }
@@ -573,7 +575,16 @@ public sealed class FigureCanvasViewModel : ObservableObject
     public FigurePanelViewModel? SelectedPanel
     {
         get => _selectedPanel;
-        set => SelectOnlyPanel(value);
+        set
+        {
+            if (value is not null)
+            {
+                SelectedAnnotation = null;
+                SelectedGuide = null;
+            }
+
+            SelectOnlyPanel(value);
+        }
     }
 
     public FigureAnnotationViewModel? SelectedAnnotation
@@ -594,6 +605,8 @@ public sealed class FigureCanvasViewModel : ObservableObject
             _selectedAnnotation = value;
             if (_selectedAnnotation is not null)
             {
+                SelectOnlyPanel(null);
+                SelectedGuide = null;
                 _selectedAnnotation.IsSelected = true;
             }
 
@@ -623,6 +636,8 @@ public sealed class FigureCanvasViewModel : ObservableObject
             _selectedGuide = value;
             if (_selectedGuide is not null)
             {
+                SelectOnlyPanel(null);
+                SelectedAnnotation = null;
                 _selectedGuide.IsSelected = true;
             }
 
@@ -639,6 +654,9 @@ public sealed class FigureCanvasViewModel : ObservableObject
         {
             throw new InvalidOperationException("只能选择当前拼版中的面板。");
         }
+
+        SelectedAnnotation = null;
+        SelectedGuide = null;
 
         if (!toggle)
         {
@@ -1075,7 +1093,9 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
     private void RemoveSelected()
     {
-        FigurePanelViewModel[] selected = SelectedPanels.ToArray();
+        FigurePanelViewModel[] selected = SelectedPanels
+            .Where(panel => !panel.IsLocked)
+            .ToArray();
         if (selected.Length == 0)
         {
             return;
@@ -1197,7 +1217,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
     private void RemoveSelectedAnnotation()
     {
-        if (SelectedAnnotation is null)
+        if (SelectedAnnotation is null || SelectedAnnotation.IsLocked)
         {
             return;
         }
@@ -1863,11 +1883,20 @@ public sealed class FigureCanvasViewModel : ObservableObject
         {
             OnPropertyChanged(nameof(ExactSpacingStatusText));
             NotifyPanelAlignmentCanExecuteChanged();
+            RemoveSelectedCommand.NotifyCanExecuteChanged();
+            MoveLayerUpCommand.NotifyCanExecuteChanged();
+            MoveLayerDownCommand.NotifyCanExecuteChanged();
         }
 
         if (e.PropertyName == nameof(FigurePanelViewModel.IsSelected) &&
             !_isUpdatingPanelSelection && sender is FigurePanelViewModel panel)
         {
+            if (panel.IsSelected)
+            {
+                SelectedAnnotation = null;
+                SelectedGuide = null;
+            }
+
             SetPrimaryPanel(panel.IsSelected
                 ? panel
                 : ReferenceEquals(panel, SelectedPanel)
@@ -1895,6 +1924,13 @@ public sealed class FigureCanvasViewModel : ObservableObject
             nameof(FigureAnnotationViewModel.ZIndex))
         {
             DocumentChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        if (e.PropertyName == nameof(FigureAnnotationViewModel.IsLocked))
+        {
+            RemoveSelectedAnnotationCommand.NotifyCanExecuteChanged();
+            MoveAnnotationUpCommand.NotifyCanExecuteChanged();
+            MoveAnnotationDownCommand.NotifyCanExecuteChanged();
         }
     }
 

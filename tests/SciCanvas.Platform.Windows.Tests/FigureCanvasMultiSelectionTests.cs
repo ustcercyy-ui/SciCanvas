@@ -74,6 +74,7 @@ public sealed class FigureCanvasMultiSelectionTests
         FigureGuideViewModel guide = Assert.IsType<FigureGuideViewModel>(figure.SelectedGuide);
         guide.Position = 400;
         figure.SnapTolerancePixels = 12;
+        figure.SelectPanel(panel, toggle: false);
 
         (long movedX, long movedY) = figure.MoveSelectedPanelsBy(291, 0);
 
@@ -297,6 +298,46 @@ public sealed class FigureCanvasMultiSelectionTests
         Assert.Null(second.CropLinkGroupId);
         first.ReplaceSource(source, new PixelRect64(0, 0, 80, 80));
         Assert.Equal(synchronizedCrop, second.SourceRect);
+    }
+
+    [Fact]
+    public void LayerSelection_KeepsOnlyOneFigureLayerTypeActive()
+    {
+        FigureCanvasViewModel figure = CreateFigure();
+        FigurePanelViewModel panel = AddPanel(figure, CreateSource());
+        figure.AddTextAnnotationCommand.Execute(null);
+        Assert.NotNull(figure.SelectedAnnotation);
+        Assert.Null(figure.SelectedPanel);
+
+        figure.AddVerticalGuideCommand.Execute(null);
+        Assert.NotNull(figure.SelectedGuide);
+        Assert.Null(figure.SelectedAnnotation);
+
+        panel.IsSelected = true;
+
+        Assert.Same(panel, figure.SelectedPanel);
+        Assert.Null(figure.SelectedGuide);
+        Assert.Null(figure.SelectedAnnotation);
+    }
+
+    [Fact]
+    public void LockedLayers_CannotBeDeletedOrReorderedUntilUnlocked()
+    {
+        FigureCanvasViewModel figure = CreateFigure();
+        FigurePanelViewModel panel = AddPanel(figure, CreateSource());
+        panel.IsLocked = true;
+
+        Assert.False(figure.RemoveSelectedCommand.CanExecute(null));
+        Assert.False(figure.MoveLayerUpCommand.CanExecute(null));
+
+        figure.AddLineAnnotationCommand.Execute(null);
+        FigureAnnotationViewModel annotation = Assert.IsType<FigureAnnotationViewModel>(figure.SelectedAnnotation);
+        annotation.IsLocked = true;
+
+        Assert.False(figure.RemoveSelectedAnnotationCommand.CanExecute(null));
+        Assert.False(figure.MoveAnnotationUpCommand.CanExecute(null));
+        annotation.IsLocked = false;
+        Assert.True(figure.RemoveSelectedAnnotationCommand.CanExecute(null));
     }
 
     private static FigureCanvasViewModel CreateFigure() => new(

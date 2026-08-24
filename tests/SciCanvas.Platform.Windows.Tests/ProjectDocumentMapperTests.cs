@@ -100,6 +100,7 @@ public sealed class ProjectDocumentMapperTests
         Assert.Equal(panel.DestinationRect, restoredDestination);
 
         panel.IsLocked = false;
+        figure.SelectPanel(panel, toggle: false);
         figure.AlignPanelRightCommand.Execute(null);
         Assert.Equal(figure.CanvasWidth - panel.Width, panel.X);
         figure.AlignPanelVerticalCenterCommand.Execute(null);
@@ -131,6 +132,13 @@ public sealed class ProjectDocumentMapperTests
             new MeasurementPoint(40, 50));
         length.StrokeColor = "#FFFFD740";
         length.StrokeWidthPixels = 4;
+        length.LineStyle = "dash-dot";
+        length.MarkerSizePixels = 26;
+        length.ShowMarkers = false;
+        length.ShowLabel = false;
+        length.FillOpacityPercent = 22;
+        length.IsVisible = false;
+        length.IsLocked = true;
         MeasurementPoint[] polylinePoints =
         [
             new(5, 5),
@@ -175,6 +183,13 @@ public sealed class ProjectDocumentMapperTests
         Assert.Equal("length", savedMeasurement.Kind);
         Assert.Equal("#FFFFD740", savedMeasurement.StrokeColor);
         Assert.Equal(4, savedMeasurement.StrokeWidthPixels);
+        Assert.Equal("dash-dot", savedMeasurement.LineStyle);
+        Assert.Equal(26, savedMeasurement.MarkerSizePixels);
+        Assert.False(savedMeasurement.ShowMarkers);
+        Assert.False(savedMeasurement.ShowLabel);
+        Assert.Equal(22, savedMeasurement.FillOpacityPercent);
+        Assert.False(savedMeasurement.IsVisible);
+        Assert.True(savedMeasurement.IsLocked);
         ProjectMeasurementSnapshot savedPolyline = Assert.Single(
             document.Measurements,
             measurement => measurement.Kind == "polyline");

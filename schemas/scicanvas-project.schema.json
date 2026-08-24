@@ -531,6 +531,13 @@
         "y3": { "type": ["number", "null"] },
         "strokeColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{8}$" },
         "strokeWidthPixels": { "type": "number", "minimum": 1, "maximum": 12 },
+        "lineStyle": { "type": "string", "enum": ["solid", "dash", "dot", "dash-dot"], "default": "solid" },
+        "markerSizePixels": { "type": "number", "minimum": 8, "maximum": 48, "default": 18 },
+        "showMarkers": { "type": "boolean", "default": true },
+        "showLabel": { "type": "boolean", "default": true },
+        "fillOpacityPercent": { "type": "number", "minimum": 0, "maximum": 60, "default": 8 },
+        "isVisible": { "type": "boolean", "default": true },
+        "isLocked": { "type": "boolean", "default": false },
         "points": {
           "type": "array",
           "items": {

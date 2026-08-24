@@ -211,6 +211,7 @@ public sealed class MainWindowImportRegressionTests
     }
 
     [Theory]
+    [InlineData(720, 480, "minimum supported viewport")]
     [InlineData(1536, 864, "1920x1080 @ 125%")]
     [InlineData(1280, 720, "1920x1080 @ 150%")]
     [InlineData(1920, 1080, "3840x2160 @ 200%")]
@@ -230,6 +231,7 @@ public sealed class MainWindowImportRegressionTests
                     DataContext = CreateViewModel(),
                     Width = logicalWidth,
                     Height = logicalHeight,
+                    WindowState = WindowState.Normal,
                 };
                 window.Show();
                 window.UpdateLayout();
@@ -238,6 +240,13 @@ public sealed class MainWindowImportRegressionTests
                 Assert.True(inspector.ActualWidth > 0, scenario);
                 Assert.True(inspector.ViewportHeight > 0, scenario);
                 Assert.True(inspector.ExtentHeight >= inspector.ViewportHeight, scenario);
+                var layers = Assert.IsType<ScrollViewer>(window.FindName("LayersScrollViewer"));
+                Assert.Equal(ScrollBarVisibility.Disabled, layers.HorizontalScrollBarVisibility);
+                Assert.NotNull(window.FindName("ImageViewport"));
+                Assert.NotNull(window.FindName("FigureViewport"));
+                Assert.NotNull(window.FindName("CropTopLeftHandle"));
+                Assert.NotNull(window.FindName("CropBottomRightHandle"));
+                Assert.NotNull(window.FindName("MeasurementInspectorPanel"));
 
                 var bindings = window.InputBindings
                     .OfType<System.Windows.Input.KeyBinding>()
@@ -251,6 +260,67 @@ public sealed class MainWindowImportRegressionTests
                 Assert.Contains(bindings, binding =>
                     binding.Key == System.Windows.Input.Key.Enter &&
                     binding.Modifiers == System.Windows.Input.ModifierKeys.Control);
+            }
+            finally
+            {
+                if (window is not null)
+                {
+                    window.DataContext = null;
+                    window.Close();
+                }
+            }
+        }, TimeSpan.FromSeconds(15));
+    }
+
+    [Fact]
+    public void CanvasShortcuts_SelectToolAndDeleteSelectedMeasurement()
+    {
+        WpfTestHost.Invoke(() =>
+        {
+            MainWindow? window = null;
+            try
+            {
+                MainWindowViewModel viewModel = CreateViewModel();
+                SourceAssetItemViewModel source = CreateMeasurementSourceItem();
+                ScientificMeasurementViewModel measurement = source.AddMeasurement(
+                    ScientificMeasurementKind.Length,
+                    new MeasurementPoint(20, 30),
+                    new MeasurementPoint(120, 160));
+                viewModel.Sources.Add(source);
+                viewModel.SelectedSource = source;
+                window = new MainWindow
+                {
+                    DataContext = viewModel,
+                    WindowState = WindowState.Normal,
+                    Width = 1000,
+                    Height = 720,
+                };
+                window.Show();
+                window.UpdateLayout();
+
+                var selectLength = new System.Windows.Input.KeyEventArgs(
+                    System.Windows.Input.Keyboard.PrimaryDevice,
+                    PresentationSource.FromVisual(window),
+                    timestamp: 0,
+                    System.Windows.Input.Key.L)
+                {
+                    RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent,
+                };
+                window.RaiseEvent(selectLength);
+                Assert.Equal(ScientificToolMode.Length, viewModel.ActiveScienceTool);
+
+                source.SelectedMeasurement = measurement;
+                var delete = new System.Windows.Input.KeyEventArgs(
+                    System.Windows.Input.Keyboard.PrimaryDevice,
+                    PresentationSource.FromVisual(window),
+                    timestamp: 0,
+                    System.Windows.Input.Key.Delete)
+                {
+                    RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent,
+                };
+                window.RaiseEvent(delete);
+
+                Assert.Empty(source.Measurements);
             }
             finally
             {

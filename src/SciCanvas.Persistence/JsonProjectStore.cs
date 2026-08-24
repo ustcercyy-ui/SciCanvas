@@ -180,8 +180,14 @@ public sealed class JsonProjectStore : IProjectStore
                 !pathValid ||
                 (string.Equals(measurement.Kind, "polyline", StringComparison.OrdinalIgnoreCase) &&
                  measurement.Points.Count < 2) ||
+                !IsHexColor(measurement.StrokeColor) ||
                 !double.IsFinite(measurement.StrokeWidthPixels) ||
-                measurement.StrokeWidthPixels is < 1 or > 12)
+                measurement.StrokeWidthPixels is < 1 or > 12 ||
+                measurement.LineStyle is not ("solid" or "dash" or "dot" or "dash-dot") ||
+                !double.IsFinite(measurement.MarkerSizePixels) ||
+                measurement.MarkerSizePixels is < 8 or > 48 ||
+                !double.IsFinite(measurement.FillOpacityPercent) ||
+                measurement.FillOpacityPercent is < 0 or > 60)
             {
                 throw new InvalidDataException("工程包含无效的科学测量记录。");
             }

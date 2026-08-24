@@ -91,4 +91,11 @@ internal sealed record MeasurementHistorySnapshot(
     MeasurementPoint? PointC,
     IReadOnlyList<MeasurementPoint> PathPoints,
     string StrokeColor,
-    double StrokeWidthPixels);
+    double StrokeWidthPixels,
+    string LineStyle,
+    double MarkerSizePixels,
+    bool ShowMarkers,
+    bool ShowLabel,
+    double FillOpacityPercent,
+    bool IsVisible,
+    bool IsLocked);

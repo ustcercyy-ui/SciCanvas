@@ -134,6 +134,13 @@ internal static class ProjectDocumentMapper
                         Y3 = model.PointC?.Y,
                         StrokeColor = measurement.StrokeColor,
                         StrokeWidthPixels = measurement.StrokeWidthPixels,
+                        LineStyle = measurement.LineStyle,
+                        MarkerSizePixels = measurement.MarkerSizePixels,
+                        ShowMarkers = measurement.ShowMarkers,
+                        ShowLabel = measurement.ShowLabel,
+                        FillOpacityPercent = measurement.FillOpacityPercent,
+                        IsVisible = measurement.IsVisible,
+                        IsLocked = measurement.IsLocked,
                         Points = model.Kind == ScientificMeasurementKind.Polyline
                             ? model.EffectivePathPoints.Select(point => new ProjectMeasurementPointSnapshot
                             {

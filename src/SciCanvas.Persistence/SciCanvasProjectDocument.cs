@@ -294,6 +294,20 @@ public sealed class ProjectMeasurementSnapshot
 
     public double StrokeWidthPixels { get; init; } = 3;
 
+    public string LineStyle { get; init; } = "solid";
+
+    public double MarkerSizePixels { get; init; } = 18;
+
+    public bool ShowMarkers { get; init; } = true;
+
+    public bool ShowLabel { get; init; } = true;
+
+    public double FillOpacityPercent { get; init; } = 8;
+
+    public bool IsVisible { get; init; } = true;
+
+    public bool IsLocked { get; init; }
+
     public IReadOnlyList<ProjectMeasurementPointSnapshot> Points { get; init; } = [];
 }
 

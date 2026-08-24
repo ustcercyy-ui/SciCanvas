@@ -5,12 +5,15 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="{Binding ProjectDisplayName, StringFormat={}{0} · SciCanvas}"
-        Width="1440"
-        Height="900"
-        MinWidth="1120"
-        MinHeight="700"
+        Width="1360"
+        Height="860"
+        MinWidth="720"
+        MinHeight="480"
+        WindowState="Maximized"
         WindowStartupLocation="CenterScreen"
         Closing="MainWindow_OnClosing"
+        Loaded="MainWindow_OnLoaded"
+        PreviewKeyDown="MainWindow_OnPreviewKeyDown"
         Background="#0D1117"
         Foreground="#E8EDF4">
     <Window.InputBindings>
@@ -89,6 +92,16 @@
             </Style.Triggers>
         </Style>
 
+        <Style x:Key="HeaderButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="FontSize" Value="11" />
+        </Style>
+
+        <Style x:Key="CompactToolButtonStyle" TargetType="Button" BasedOn="{StaticResource ToolButtonStyle}">
+            <Setter Property="Padding" Value="7,5" />
+            <Setter Property="FontSize" Value="11" />
+        </Style>
+
         <Style TargetType="ComboBox">
             <Setter Property="Foreground" Value="#101820" />
             <Setter Property="Background" Value="#0F151D" />
@@ -154,7 +167,7 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="30" />
-            <RowDefinition Height="64" />
+            <RowDefinition Height="98" />
             <RowDefinition Height="*" />
             <RowDefinition Height="30" />
         </Grid.RowDefinitions>
@@ -163,7 +176,7 @@
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="30" />
-                    <RowDefinition Height="64" />
+                    <RowDefinition Height="98" />
                 </Grid.RowDefinitions>
                 <Menu Grid.Row="0" Margin="8,0" Background="Transparent" Foreground="#D8E0E8" VerticalContentAlignment="Center">
                     <Menu.Resources>
@@ -226,61 +239,62 @@
                         <MenuItem Header="关于与快捷键" Command="{Binding ShowHelpCommand}" />
                     </MenuItem>
                 </Menu>
-                <Grid Grid.Row="1" Margin="16,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-
-                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Width="30" Height="30" Margin="0,0,10,0" Background="#0A829B" CornerRadius="6">
-                        <TextBlock Text="SC" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold" FontSize="11" />
+                <Grid Grid.Row="1" Margin="14,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="50" />
+                        <RowDefinition Height="48" />
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Border Width="28" Height="28" Margin="0,0,8,0" Background="#0A829B" CornerRadius="6">
+                                <TextBlock Text="SC" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold" FontSize="10" />
+                            </Border>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="SciCanvas" FontSize="15" FontWeight="SemiBold" />
+                                <TextBlock Text="LOCAL · NON-DESTRUCTIVE" Foreground="{StaticResource MutedBrush}" FontSize="8" />
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="18,0" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Button Command="{Binding OpenSourcesCommand}" Style="{StaticResource AccentButtonStyle}" Padding="9,5" FontSize="11" Content="导入图像" />
+                            <Button Margin="6,0,0,0" Command="{Binding NewProjectCommand}" Style="{StaticResource HeaderButtonStyle}" Content="新建" />
+                            <Button Margin="6,0,0,0" Command="{Binding OpenProjectCommand}" Style="{StaticResource HeaderButtonStyle}" Content="打开" />
+                            <Button Margin="6,0,0,0" Command="{Binding SaveProjectCommand}" Style="{StaticResource HeaderButtonStyle}" Content="保存" />
+                            <Button Margin="6,0,0,0" Command="{Binding UndoCommand}" Style="{StaticResource HeaderButtonStyle}" Content="撤销" ToolTip="Ctrl+Z" />
+                            <Button Margin="6,0,0,0" Command="{Binding RedoCommand}" Style="{StaticResource HeaderButtonStyle}" Content="重做" ToolTip="Ctrl+Y 或 Ctrl+Shift+Z" />
+                        </StackPanel>
+                        <Border Grid.Column="2" Padding="8,4" Background="#10251E" BorderBrush="#256B51" BorderThickness="1" CornerRadius="12" VerticalAlignment="Center">
+                            <TextBlock Text="源文件只读保护" Foreground="#75D9AA" FontSize="10" />
+                        </Border>
+                    </Grid>
+                    <Border Grid.Row="1" Margin="0,3,0,5" Padding="6,0" Background="#0F151D" BorderBrush="#26313D" BorderThickness="1" CornerRadius="5">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Button Command="{Binding SelectCropToolCommand}" Style="{StaticResource CompactToolButtonStyle}" Tag="{Binding IsCropToolActive}" Content="裁剪" ToolTip="V · 裁剪工具" />
+                            <Button Command="{Binding SelectCalibrationToolCommand}" Style="{StaticResource CompactToolButtonStyle}" Tag="{Binding IsCalibrationToolActive}" Content="标定" ToolTip="K · 拖动参考线建立空间尺度" />
+                            <Button Command="{Binding SelectLengthToolCommand}" Style="{StaticResource CompactToolButtonStyle}" Tag="{Binding IsLengthToolActive}" Content="长度" ToolTip="L" />
+                            <Button Command="{Binding SelectAngleToolCommand}" Style="{StaticResource CompactToolButtonStyle}" Tag="{Binding IsAngleToolActive}" Content="角度" ToolTip="A" />
+                            <Button Command="{Binding SelectRectangleRoiToolCommand}" Style="{StaticResource CompactToolButtonStyle}" Tag="{Binding IsRectangleRoiToolActive}" Content="矩形 ROI" ToolTip="R" />
+                            <Button Command="{Binding SelectCircleRoiToolCommand}" Style="{StaticResource CompactToolButtonStyle}" Tag="{Binding IsCircleRoiToolActive}" Content="圆形" ToolTip="E" />
+                            <Button Command="{Binding SelectPolylineToolCommand}" Style="{StaticResource CompactToolButtonStyle}" Tag="{Binding IsPolylineToolActive}" Content="折线" ToolTip="P" />
+                            <Button Margin="12,0,0,0" Command="{Binding ShowFigureWorkspaceCommand}" Style="{StaticResource CompactToolButtonStyle}" Content="拼版视图" />
+                            <Button Margin="6,0,0,0" Command="{Binding AddCurrentCropToFigureCommand}" Style="{StaticResource AccentButtonStyle}" Padding="9,5" FontSize="11" Content="加入拼版" />
+                        </StackPanel>
                     </Border>
-                    <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="SciCanvas" FontSize="16" FontWeight="SemiBold" />
-                        <TextBlock Text="LOCAL · NON-DESTRUCTIVE" Foreground="{StaticResource MutedBrush}" FontSize="9" />
-                    </StackPanel>
-                </StackPanel>
-
-                <StackPanel Grid.Column="1" Margin="28,0,0,0" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Command="{Binding OpenSourcesCommand}" Style="{StaticResource AccentButtonStyle}" Content="＋ 导入图像" />
-                    <Button Margin="8,0,0,0" Command="{Binding NewProjectCommand}" Content="新建" />
-                    <Button Margin="8,0,0,0" Command="{Binding OpenProjectCommand}" Content="打开工程" />
-                    <Button Margin="8,0,0,0" Command="{Binding SaveProjectCommand}" Content="保存工程" />
-                    <Button Margin="8,0,0,0" Command="{Binding SaveProjectAsCommand}" Content="另存为" />
-                    <Button Margin="8,0,0,0" Command="{Binding UndoCommand}" Content="↶" ToolTip="撤销 · Ctrl+Z" />
-                    <Button Margin="6,0,0,0" Command="{Binding RedoCommand}" Content="↷" ToolTip="重做 · Ctrl+Y 或 Ctrl+Shift+Z" />
-                    <Button Margin="8,0,0,0" Command="{Binding ShowFigureWorkspaceCommand}" Content="{Binding TemplateLibraryLabel}" ToolTip="打开材料科研拼版模板库" />
-                </StackPanel>
-
-                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                    <Button Command="{Binding SelectCropToolCommand}" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsCropToolActive}" Content="裁剪" ToolTip="裁剪工具" />
-                    <Button Command="{Binding SelectCalibrationToolCommand}" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsCalibrationToolActive}" Content="标定" ToolTip="拖动参考线建立空间尺度" />
-                    <Button Command="{Binding SelectLengthToolCommand}" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsLengthToolActive}" Content="长度" />
-                    <Button Command="{Binding SelectAngleToolCommand}" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsAngleToolActive}" Content="角度" />
-                    <Button Command="{Binding SelectRectangleRoiToolCommand}" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsRectangleRoiToolActive}" Content="矩形 ROI" />
-                    <Button Command="{Binding SelectCircleRoiToolCommand}" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsCircleRoiToolActive}" Content="圆形" />
-                    <Button Command="{Binding SelectPolylineToolCommand}" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsPolylineToolActive}" Content="折线" />
-                    <Button Margin="8,0,0,0" Command="{Binding ShowFigureWorkspaceCommand}" Style="{StaticResource ToolButtonStyle}" Content="拼版视图" />
-                    <Button Margin="8,0,0,0" Command="{Binding AddCurrentCropToFigureCommand}" Style="{StaticResource AccentButtonStyle}" Content="加入拼版" />
-                </StackPanel>
-
-                <Border Grid.Column="3" Padding="10,5" Background="#10251E" BorderBrush="#256B51" BorderThickness="1" CornerRadius="12" VerticalAlignment="Center">
-                    <TextBlock Text="● 源文件保护已开启" Foreground="#75D9AA" FontSize="11" />
-                </Border>
                 </Grid>
             </Grid>
         </Border>
 
         <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="275" MinWidth="190" MaxWidth="520" />
+                <ColumnDefinition Width="0.75*" MinWidth="160" MaxWidth="340" />
                 <ColumnDefinition Width="6" />
-                <ColumnDefinition Width="*" MinWidth="360" />
+                <ColumnDefinition Width="2*" MinWidth="280" />
                 <ColumnDefinition Width="6" />
-                <ColumnDefinition Width="360" MinWidth="320" MaxWidth="520" />
+                <ColumnDefinition Width="1.05*" MinWidth="230" MaxWidth="420" />
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" Background="{StaticResource PanelBrush}">
@@ -367,9 +381,21 @@
 
                 <Border Grid.Row="0" Visibility="{Binding CropWorkspaceVisibility}" Background="#11171F" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
                     <Grid Margin="14,0">
-                        <TextBlock Text="画布 · 源像素坐标" Foreground="#B8C3CF" VerticalAlignment="Center" FontSize="11" />
-                        <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" FontSize="10"
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="源图画布 · 像素坐标" Foreground="#B8C3CF" VerticalAlignment="Center" FontSize="11" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="1" Margin="16,0" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" FontSize="10" TextTrimming="CharacterEllipsis"
                                    Text="{Binding ActiveScienceToolHint}" />
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Width="30" Height="28" Padding="0" Click="SourceZoomOut_OnClick" Content="−" ToolTip="缩小 · Ctrl+-" />
+                            <TextBlock x:Name="SourceZoomText" Width="54" Text="适合" TextAlignment="Center" VerticalAlignment="Center" Foreground="#8CE5F4" FontSize="10" />
+                            <Button Width="30" Height="28" Padding="0" Click="SourceZoomIn_OnClick" Content="＋" ToolTip="放大 · Ctrl++" />
+                            <Button Margin="6,0,0,0" Padding="8,4" Click="SourceZoomFit_OnClick" Content="适合" ToolTip="适合窗口 · Ctrl+0" />
+                            <Button Margin="4,0,0,0" Padding="8,4" Click="SourceZoomActual_OnClick" Content="1:1" ToolTip="100% · Ctrl+1" />
+                        </StackPanel>
                     </Grid>
                 </Border>
 
@@ -385,32 +411,59 @@
                         <Button Margin="0,20,0,0" Command="{Binding OpenSourcesCommand}" Style="{StaticResource AccentButtonStyle}" Content="选择图像" HorizontalAlignment="Center" />
                     </StackPanel>
 
-                    <Viewbox Margin="22" Stretch="Uniform" StretchDirection="Both">
+                    <ScrollViewer x:Name="ImageViewport"
+                                  Margin="12"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalContentAlignment="Center"
+                                  VerticalContentAlignment="Center"
+                                  CanContentScroll="False"
+                                  PreviewMouseWheel="ImageViewport_OnPreviewMouseWheel"
+                                  PreviewMouseDown="Viewport_OnPreviewMouseDown"
+                                  PreviewMouseMove="Viewport_OnPreviewMouseMove"
+                                  PreviewMouseUp="Viewport_OnPreviewMouseUp"
+                                  SizeChanged="ImageViewport_OnSizeChanged">
                         <Canvas x:Name="ImageCanvas"
                                 Width="{Binding SelectedSource.Width, FallbackValue=1}"
                                 Height="{Binding SelectedSource.Height, FallbackValue=1}"
                                 Background="Transparent"
                                 Cursor="Cross"
-                                PreviewMouseLeftButtonDown="ImageCanvas_OnMouseLeftButtonDown"
-                                PreviewMouseMove="ImageCanvas_OnMouseMove"
-                                PreviewMouseLeftButtonUp="ImageCanvas_OnMouseLeftButtonUp"
-                                LostMouseCapture="ImageCanvas_OnLostMouseCapture">
+                                MouseLeftButtonDown="ImageCanvas_OnMouseLeftButtonDown"
+                                MouseMove="ImageCanvas_OnMouseMove"
+                                MouseLeftButtonUp="ImageCanvas_OnMouseLeftButtonUp"
+                                LostMouseCapture="ImageCanvas_OnLostMouseCapture"
+                                SizeChanged="ImageCanvas_OnSizeChanged">
+                            <Canvas.LayoutTransform>
+                                <ScaleTransform x:Name="ImageZoomTransform" ScaleX="1" ScaleY="1" />
+                            </Canvas.LayoutTransform>
                             <Image Width="{Binding SelectedSource.Width}"
                                    Height="{Binding SelectedSource.Height}"
                                    Source="{Binding SelectedSource.Preview}"
                                    Stretch="Fill"
                                    RenderOptions.BitmapScalingMode="HighQuality" />
-                            <Rectangle x:Name="CropOverlay"
-                                       Canvas.Left="{Binding Crop.X}"
-                                       Canvas.Top="{Binding Crop.Y}"
-                                       Panel.ZIndex="2"
-                                       Width="{Binding Crop.Width}"
-                                       Height="{Binding Crop.Height}"
-                                       Fill="#2400D7FF"
-                                       Stroke="#17D9F4"
-                                       StrokeThickness="5"
-                                       Cursor="SizeAll"
-                                       Visibility="{Binding CropOverlayVisibility}" />
+                            <Grid x:Name="CropOverlay"
+                                  Canvas.Left="{Binding Crop.X}"
+                                  Canvas.Top="{Binding Crop.Y}"
+                                  Panel.ZIndex="2"
+                                  Width="{Binding Crop.Width}"
+                                  Height="{Binding Crop.Height}"
+                                  Cursor="SizeAll"
+                                  Visibility="{Binding CropOverlayVisibility}">
+                                <Rectangle Fill="#2400D7FF"
+                                           Stroke="#17D9F4"
+                                           StrokeThickness="5" />
+                                <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="7" Padding="7,3" Background="#D011171F" BorderBrush="#17D9F4" BorderThickness="1" CornerRadius="3" IsHitTestVisible="False">
+                                    <TextBlock Text="{Binding Crop.SizeText}" Foreground="#8CE5F4" FontSize="18" FontWeight="SemiBold" />
+                                </Border>
+                                <Thumb x:Name="CropTopLeftHandle" Uid="TopLeft" Width="26" Height="26" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="-13" Background="#FFF5FBFF" BorderBrush="#FF087E98" BorderThickness="5" Cursor="SizeNWSE" PreviewMouseLeftButtonDown="CropResizeHandle_OnMouseLeftButtonDown" PreviewMouseLeftButtonUp="CropResizeHandle_OnMouseLeftButtonUp" LostMouseCapture="CropResizeHandle_OnLostMouseCapture" />
+                                <Thumb x:Name="CropTopHandle" Uid="Top" Width="30" Height="18" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,-9,0,0" Background="#FFF5FBFF" BorderBrush="#FF087E98" BorderThickness="5" Cursor="SizeNS" PreviewMouseLeftButtonDown="CropResizeHandle_OnMouseLeftButtonDown" PreviewMouseLeftButtonUp="CropResizeHandle_OnMouseLeftButtonUp" LostMouseCapture="CropResizeHandle_OnLostMouseCapture" />
+                                <Thumb x:Name="CropTopRightHandle" Uid="TopRight" Width="26" Height="26" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="-13" Background="#FFF5FBFF" BorderBrush="#FF087E98" BorderThickness="5" Cursor="SizeNESW" PreviewMouseLeftButtonDown="CropResizeHandle_OnMouseLeftButtonDown" PreviewMouseLeftButtonUp="CropResizeHandle_OnMouseLeftButtonUp" LostMouseCapture="CropResizeHandle_OnLostMouseCapture" />
+                                <Thumb x:Name="CropRightHandle" Uid="Right" Width="18" Height="30" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,-9,0" Background="#FFF5FBFF" BorderBrush="#FF087E98" BorderThickness="5" Cursor="SizeWE" PreviewMouseLeftButtonDown="CropResizeHandle_OnMouseLeftButtonDown" PreviewMouseLeftButtonUp="CropResizeHandle_OnMouseLeftButtonUp" LostMouseCapture="CropResizeHandle_OnLostMouseCapture" />
+                                <Thumb x:Name="CropBottomRightHandle" Uid="BottomRight" Width="26" Height="26" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="-13" Background="#FFF5FBFF" BorderBrush="#FF087E98" BorderThickness="5" Cursor="SizeNWSE" PreviewMouseLeftButtonDown="CropResizeHandle_OnMouseLeftButtonDown" PreviewMouseLeftButtonUp="CropResizeHandle_OnMouseLeftButtonUp" LostMouseCapture="CropResizeHandle_OnLostMouseCapture" />
+                                <Thumb x:Name="CropBottomHandle" Uid="Bottom" Width="30" Height="18" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,-9" Background="#FFF5FBFF" BorderBrush="#FF087E98" BorderThickness="5" Cursor="SizeNS" PreviewMouseLeftButtonDown="CropResizeHandle_OnMouseLeftButtonDown" PreviewMouseLeftButtonUp="CropResizeHandle_OnMouseLeftButtonUp" LostMouseCapture="CropResizeHandle_OnLostMouseCapture" />
+                                <Thumb x:Name="CropBottomLeftHandle" Uid="BottomLeft" Width="26" Height="26" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-13" Background="#FFF5FBFF" BorderBrush="#FF087E98" BorderThickness="5" Cursor="SizeNESW" PreviewMouseLeftButtonDown="CropResizeHandle_OnMouseLeftButtonDown" PreviewMouseLeftButtonUp="CropResizeHandle_OnMouseLeftButtonUp" LostMouseCapture="CropResizeHandle_OnLostMouseCapture" />
+                                <Thumb x:Name="CropLeftHandle" Uid="Left" Width="18" Height="30" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="-9,0,0,0" Background="#FFF5FBFF" BorderBrush="#FF087E98" BorderThickness="5" Cursor="SizeWE" PreviewMouseLeftButtonDown="CropResizeHandle_OnMouseLeftButtonDown" PreviewMouseLeftButtonUp="CropResizeHandle_OnMouseLeftButtonUp" LostMouseCapture="CropResizeHandle_OnLostMouseCapture" />
+                            </Grid>
                             <Line X1="{Binding SelectedSource.Calibration.ReferenceStartX}"
                                   Y1="{Binding SelectedSource.Calibration.ReferenceStartY}"
                                   X2="{Binding SelectedSource.Calibration.ReferenceEndX}"
@@ -438,8 +491,7 @@
                             <ItemsControl Width="{Binding SelectedSource.Width}"
                                           Height="{Binding SelectedSource.Height}"
                                           ItemsSource="{Binding SelectedSource.Measurements}"
-                                          Panel.ZIndex="20"
-                                          IsHitTestVisible="False">
+                                          Panel.ZIndex="20">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
                                         <Canvas />
@@ -454,20 +506,50 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Canvas Width="{Binding DataContext.SelectedSource.Width, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                Height="{Binding DataContext.SelectedSource.Height, RelativeSource={RelativeSource AncestorType=Window}}">
+                                                Height="{Binding DataContext.SelectedSource.Height, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Tag="{Binding}"
+                                                Cursor="Hand"
+                                                MouseLeftButtonDown="Measurement_OnMouseLeftButtonDown"
+                                                PreviewMouseMove="Measurement_OnMouseMove"
+                                                PreviewMouseLeftButtonUp="Measurement_OnMouseLeftButtonUp"
+                                                LostMouseCapture="Measurement_OnLostMouseCapture">
+                                            <Line X1="{Binding X1}" Y1="{Binding Y1}" X2="{Binding X2}" Y2="{Binding Y2}"
+                                                  Stroke="Transparent" StrokeThickness="24"
+                                                  Visibility="{Binding LengthVisibility}" />
                                             <Line X1="{Binding X1}" Y1="{Binding Y1}" X2="{Binding X2}" Y2="{Binding Y2}"
                                                   Stroke="{Binding OverlayStroke}" StrokeThickness="{Binding OverlayThickness}"
+                                                  StrokeDashArray="{Binding StrokeDashArray}" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  IsHitTestVisible="False"
                                                   Visibility="{Binding LengthVisibility}" />
+                                            <Polyline Points="{Binding PolylinePoints}"
+                                                      Stroke="Transparent"
+                                                      StrokeThickness="24"
+                                                      StrokeLineJoin="Round"
+                                                      Visibility="{Binding PolylineVisibility}" />
                                             <Polyline Points="{Binding PolylinePoints}"
                                                       Stroke="{Binding OverlayStroke}"
                                                       StrokeThickness="{Binding OverlayThickness}"
+                                                      StrokeDashArray="{Binding StrokeDashArray}"
                                                       StrokeLineJoin="Round"
+                                                      StrokeStartLineCap="Round"
+                                                      StrokeEndLineCap="Round"
+                                                      IsHitTestVisible="False"
                                                       Visibility="{Binding PolylineVisibility}" />
                                             <Line X1="{Binding X1}" Y1="{Binding Y1}" X2="{Binding X2}" Y2="{Binding Y2}"
+                                                  Stroke="Transparent" StrokeThickness="24"
+                                                  Visibility="{Binding AngleVisibility}" />
+                                            <Line X1="{Binding X2}" Y1="{Binding Y2}" X2="{Binding X3}" Y2="{Binding Y3}"
+                                                  Stroke="Transparent" StrokeThickness="24"
+                                                  Visibility="{Binding AngleVisibility}" />
+                                            <Line X1="{Binding X1}" Y1="{Binding Y1}" X2="{Binding X2}" Y2="{Binding Y2}"
                                                   Stroke="{Binding OverlayStroke}" StrokeThickness="{Binding OverlayThickness}"
+                                                  StrokeDashArray="{Binding StrokeDashArray}" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  IsHitTestVisible="False"
                                                   Visibility="{Binding AngleVisibility}" />
                                             <Line X1="{Binding X2}" Y1="{Binding Y2}" X2="{Binding X3}" Y2="{Binding Y3}"
                                                   Stroke="{Binding OverlayStroke}" StrokeThickness="{Binding OverlayThickness}"
+                                                  StrokeDashArray="{Binding StrokeDashArray}" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  IsHitTestVisible="False"
                                                   Visibility="{Binding AngleVisibility}" />
                                             <Rectangle Canvas.Left="{Binding RectangleX}"
                                                        Canvas.Top="{Binding RectangleY}"
@@ -475,7 +557,8 @@
                                                        Height="{Binding RectangleHeight}"
                                                        Stroke="{Binding OverlayStroke}"
                                                        StrokeThickness="{Binding OverlayThickness}"
-                                                       Fill="#1816C7E8"
+                                                       StrokeDashArray="{Binding StrokeDashArray}"
+                                                       Fill="{Binding OverlayFill}"
                                                        Visibility="{Binding RectangleVisibility}" />
                                             <Ellipse Canvas.Left="{Binding RectangleX}"
                                                      Canvas.Top="{Binding RectangleY}"
@@ -483,30 +566,71 @@
                                                      Height="{Binding RectangleHeight}"
                                                      Stroke="{Binding OverlayStroke}"
                                                      StrokeThickness="{Binding OverlayThickness}"
-                                                     Fill="#1816C7E8"
+                                                     StrokeDashArray="{Binding StrokeDashArray}"
+                                                     Fill="{Binding OverlayFill}"
                                                      Visibility="{Binding CircleVisibility}" />
-                                            <Ellipse Canvas.Left="{Binding X1}" Canvas.Top="{Binding Y1}"
-                                                     Width="16" Height="16" Fill="#FF11171F"
-                                                     Stroke="{Binding OverlayStroke}" StrokeThickness="4" />
-                                            <Ellipse Canvas.Left="{Binding X2}" Canvas.Top="{Binding Y2}"
-                                                     Width="16" Height="16" Fill="#FF11171F"
-                                                     Stroke="{Binding OverlayStroke}" StrokeThickness="4" />
-                                            <Ellipse Canvas.Left="{Binding X3}" Canvas.Top="{Binding Y3}"
-                                                     Width="16" Height="16" Fill="#FF11171F"
-                                                     Stroke="{Binding OverlayStroke}" StrokeThickness="4"
-                                                     Visibility="{Binding AngleVisibility}" />
+                                            <Ellipse Canvas.Left="{Binding PointAMarkerX}" Canvas.Top="{Binding PointAMarkerY}"
+                                                     Width="{Binding MarkerSizePixels}" Height="{Binding MarkerSizePixels}" Fill="#FF11171F"
+                                                     Stroke="{Binding OverlayStroke}" StrokeThickness="3" IsHitTestVisible="False"
+                                                     Visibility="{Binding MarkerVisibility}" />
+                                            <Ellipse Canvas.Left="{Binding PointBMarkerX}" Canvas.Top="{Binding PointBMarkerY}"
+                                                     Width="{Binding MarkerSizePixels}" Height="{Binding MarkerSizePixels}" Fill="#FF11171F"
+                                                     Stroke="{Binding OverlayStroke}" StrokeThickness="3" IsHitTestVisible="False"
+                                                     Visibility="{Binding MarkerVisibility}" />
+                                            <Ellipse Canvas.Left="{Binding PointCMarkerX}" Canvas.Top="{Binding PointCMarkerY}"
+                                                     Width="{Binding MarkerSizePixels}" Height="{Binding MarkerSizePixels}" Fill="#FF11171F"
+                                                     Stroke="{Binding OverlayStroke}" StrokeThickness="3" IsHitTestVisible="False"
+                                                     Visibility="{Binding PointCMarkerVisibility}" />
                                             <Border Canvas.Left="{Binding LabelX}"
                                                     Canvas.Top="{Binding LabelY}"
                                                     Padding="9,4"
                                                     Background="#D011171F"
                                                     BorderBrush="{Binding OverlayStroke}"
                                                     BorderThickness="1"
-                                                    CornerRadius="3">
+                                                    CornerRadius="3"
+                                                    IsHitTestVisible="False"
+                                                    Visibility="{Binding LabelVisibility}">
                                                 <StackPanel Orientation="Horizontal">
                                                     <TextBlock Text="{Binding Number, StringFormat={}{0} · }" Foreground="#FFB8C3CF" FontSize="20" />
                                                     <TextBlock Text="{Binding ValueText}" Foreground="{Binding OverlayStroke}" FontSize="22" FontWeight="SemiBold" />
                                                 </StackPanel>
                                             </Border>
+                                            <Thumb x:Name="MeasurementPointAHandle"
+                                                   Canvas.Left="{Binding PointAHandleX}"
+                                                   Canvas.Top="{Binding PointAHandleY}"
+                                                   Width="{Binding SelectionHandleSizePixels}"
+                                                   Height="{Binding SelectionHandleSizePixels}"
+                                                   Background="#FFF5FBFF"
+                                                   BorderBrush="#FFFFB300"
+                                                   BorderThickness="6"
+                                                   Cursor="SizeAll"
+                                                   Tag="{Binding}"
+                                                   Visibility="{Binding SelectionHandleVisibility}"
+                                                   PreviewMouseLeftButtonDown="MeasurementResizeHandle_OnMouseLeftButtonDown" />
+                                            <Thumb x:Name="MeasurementPointBHandle"
+                                                   Canvas.Left="{Binding PointBHandleX}"
+                                                   Canvas.Top="{Binding PointBHandleY}"
+                                                   Width="{Binding SelectionHandleSizePixels}"
+                                                   Height="{Binding SelectionHandleSizePixels}"
+                                                   Background="#FFF5FBFF"
+                                                   BorderBrush="#FFFFB300"
+                                                   BorderThickness="6"
+                                                   Cursor="SizeAll"
+                                                   Tag="{Binding}"
+                                                   Visibility="{Binding SelectionHandleVisibility}"
+                                                   PreviewMouseLeftButtonDown="MeasurementResizeHandle_OnMouseLeftButtonDown" />
+                                            <Thumb x:Name="MeasurementPointCHandle"
+                                                   Canvas.Left="{Binding PointCHandleX}"
+                                                   Canvas.Top="{Binding PointCHandleY}"
+                                                   Width="{Binding SelectionHandleSizePixels}"
+                                                   Height="{Binding SelectionHandleSizePixels}"
+                                                   Background="#FFF5FBFF"
+                                                   BorderBrush="#FFFFB300"
+                                                   BorderThickness="6"
+                                                   Cursor="SizeAll"
+                                                   Tag="{Binding}"
+                                                   Visibility="{Binding PointCHandleVisibility}"
+                                                   PreviewMouseLeftButtonDown="MeasurementResizeHandle_OnMouseLeftButtonDown" />
                                         </Canvas>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -552,24 +676,51 @@
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                         </Canvas>
-                    </Viewbox>
+                    </ScrollViewer>
                 </Grid>
 
                 <Border Grid.Row="0" Visibility="{Binding FigureWorkspaceVisibility}" Background="#11171F" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
                     <Grid Margin="14,0">
-                        <TextBlock Text="论文拼版 · 模板像素坐标" Foreground="#B8C3CF" VerticalAlignment="Center" FontSize="11" />
-                        <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" FontSize="10"
-                                   Text="Ctrl+单击多选面板 · 拖动选择组 · 按模板 DPI 精确导出" />
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="论文拼版 · 模板像素坐标" Foreground="#B8C3CF" VerticalAlignment="Center" FontSize="11" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="1" Margin="16,0" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" FontSize="10" TextTrimming="CharacterEllipsis"
+                                   Text="Ctrl+单击多选 · 空格拖动画布 · Delete 删除选中" />
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Width="30" Height="28" Padding="0" Click="FigureZoomOut_OnClick" Content="−" ToolTip="缩小 · Ctrl+-" />
+                            <TextBlock x:Name="FigureZoomText" Width="54" Text="适合" TextAlignment="Center" VerticalAlignment="Center" Foreground="#8CE5F4" FontSize="10" />
+                            <Button Width="30" Height="28" Padding="0" Click="FigureZoomIn_OnClick" Content="＋" ToolTip="放大 · Ctrl++" />
+                            <Button Margin="6,0,0,0" Padding="8,4" Click="FigureZoomFit_OnClick" Content="适合" ToolTip="适合窗口 · Ctrl+0" />
+                            <Button Margin="4,0,0,0" Padding="8,4" Click="FigureZoomActual_OnClick" Content="1:1" ToolTip="100% · Ctrl+1" />
+                        </StackPanel>
                     </Grid>
                 </Border>
 
                 <Grid Grid.Row="1" Margin="24" ClipToBounds="True" Visibility="{Binding FigureWorkspaceVisibility}">
                     <Border Background="#0C1219" BorderBrush="#202B36" BorderThickness="1" />
-                    <Viewbox Margin="20" Stretch="Uniform" StretchDirection="Both">
+                    <ScrollViewer x:Name="FigureViewport"
+                                  Margin="12"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalContentAlignment="Center"
+                                  VerticalContentAlignment="Center"
+                                  CanContentScroll="False"
+                                  PreviewMouseWheel="FigureViewport_OnPreviewMouseWheel"
+                                  PreviewMouseDown="Viewport_OnPreviewMouseDown"
+                                  PreviewMouseMove="Viewport_OnPreviewMouseMove"
+                                  PreviewMouseUp="Viewport_OnPreviewMouseUp"
+                                  SizeChanged="FigureViewport_OnSizeChanged">
                         <Grid x:Name="FigureSurface"
                               Width="{Binding Figure.CanvasWidth}"
                               Height="{Binding Figure.CanvasHeight}"
+                              SizeChanged="FigureSurface_OnSizeChanged"
                               Background="{Binding Figure.BackgroundBrush}">
+                            <Grid.LayoutTransform>
+                                <ScaleTransform x:Name="FigureZoomTransform" ScaleX="1" ScaleY="1" />
+                            </Grid.LayoutTransform>
                             <ListBox Width="{Binding Figure.CanvasWidth}"
                                      Height="{Binding Figure.CanvasHeight}"
                                      Padding="0"
@@ -812,7 +963,7 @@
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                         </Grid>
-                    </Viewbox>
+                    </ScrollViewer>
 
                     <StackPanel Visibility="{Binding Figure.EmptyVisibility}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
                         <TextBlock Text="{Binding Figure.TemplateName}" Foreground="#17202A" FontSize="28" FontWeight="Bold" HorizontalAlignment="Center" />
@@ -1041,7 +1192,7 @@
                         </Border>
 
                         <TextBlock Margin="0,22,0,8" Style="{StaticResource SectionTitleStyle}" Text="当前测量" />
-                        <Border Padding="10" Background="#111B23" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4">
+                        <Border x:Name="MeasurementInspectorPanel" Padding="10" Background="#111B23" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4">
                             <StackPanel>
                                 <TextBlock Text="{Binding SelectedSource.SelectedMeasurementStatusText}" Foreground="#7DD9E9" FontSize="10" TextWrapping="Wrap" />
                                 <Grid Margin="0,8,0,0">
@@ -1059,6 +1210,52 @@
                                         <TextBox Margin="0,4,0,0" Text="{Binding SelectedSource.SelectedMeasurement.StrokeWidthPixels, UpdateSourceTrigger=PropertyChanged}" />
                                     </StackPanel>
                                 </Grid>
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="线型" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <ComboBox Margin="0,4,0,0"
+                                                  SelectedValue="{Binding SelectedSource.SelectedMeasurement.LineStyle, UpdateSourceTrigger=PropertyChanged}"
+                                                  SelectedValuePath="Tag">
+                                            <ComboBoxItem Tag="solid" Content="实线" />
+                                            <ComboBoxItem Tag="dash" Content="虚线" />
+                                            <ComboBoxItem Tag="dot" Content="点线" />
+                                            <ComboBoxItem Tag="dash-dot" Content="点划线" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="端点大小 / px" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding SelectedSource.SelectedMeasurement.MarkerSizePixels, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="ROI 填充透明度 / %" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding SelectedSource.SelectedMeasurement.FillOpacityPercent, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
+                                        <CheckBox IsChecked="{Binding SelectedSource.SelectedMeasurement.ShowMarkers}" Content="显示端点" />
+                                        <CheckBox Margin="0,6,0,0" IsChecked="{Binding SelectedSource.SelectedMeasurement.ShowLabel}" Content="显示数值标签" />
+                                    </StackPanel>
+                                </Grid>
+                                <Grid Margin="0,9,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox IsChecked="{Binding SelectedSource.SelectedMeasurement.IsVisible}" Content="图层可见" />
+                                    <CheckBox Grid.Column="1" IsChecked="{Binding SelectedSource.SelectedMeasurement.IsLocked}" Content="锁定图层" />
+                                </Grid>
+                                <TextBlock Margin="0,7,0,0" Text="选中后拖动图形可移动；拖动黄色端点手柄可改大小。" Foreground="{StaticResource MutedBrush}" FontSize="8" TextWrapping="Wrap" />
                                 <Button Margin="0,8,0,0" Command="{Binding DeleteSelectedMeasurementCommand}" Content="删除当前测量" />
                                 <Button Margin="0,6,0,0"
                                         Command="{Binding AnalyzeIntensityProfileCommand}"
@@ -2134,11 +2331,58 @@
                     </StackPanel>
                     </Grid>
                     </ScrollViewer>
-                    <ScrollViewer Grid.Row="1" Visibility="{Binding LayersTabVisibility}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" CanContentScroll="False">
+                    <ScrollViewer x:Name="LayersScrollViewer" Grid.Row="1" Visibility="{Binding LayersTabVisibility}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
                         <StackPanel Margin="16,16,16,24">
                             <TextBlock Text="图层" FontSize="15" FontWeight="SemiBold" />
-                            <TextBlock Margin="0,4,0,0" Text="显示、锁定、选择和调整拼版图层顺序" Foreground="{StaticResource MutedBrush}" FontSize="10" TextWrapping="Wrap" />
-                            <Border Margin="0,14,0,0" Padding="9" Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4">
+                            <TextBlock Margin="0,4,0,0" Text="当前工作区的图像、测量、标注与参考线统一在这里选择、显隐、锁定和删除。" Foreground="{StaticResource MutedBrush}" FontSize="10" TextWrapping="Wrap" />
+                            <Button Margin="0,10,0,0" Command="{Binding DeleteSelectionCommand}" Content="删除选中项 · Delete" />
+                            <Border Margin="0,14,0,0" Padding="9" Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4" Visibility="{Binding CropWorkspaceVisibility}">
+                                <StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="测量图层" FontWeight="SemiBold" />
+                                        <TextBlock Grid.Column="1" Text="{Binding SelectedSource.MeasurementCountText}" Foreground="{StaticResource MutedBrush}" FontSize="10" />
+                                    </Grid>
+                                    <ListBox Margin="0,9,0,0"
+                                             MinHeight="150"
+                                             MaxHeight="420"
+                                             Background="{StaticResource PanelBrush}"
+                                             BorderBrush="{StaticResource BorderBrush}"
+                                             BorderThickness="1"
+                                             ItemsSource="{Binding SelectedSource.Measurements}"
+                                             SelectedItem="{Binding SelectedSource.SelectedMeasurement}"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="ListBoxItem">
+                                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                                <Setter Property="Padding" Value="0" />
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="7,7">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <CheckBox IsChecked="{Binding IsVisible}" ToolTip="显示/隐藏测量图层" />
+                                                    <StackPanel Grid.Column="1" Margin="8,0">
+                                                        <TextBlock Text="{Binding LayerStateText}" FontSize="11" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding ValueText}" Foreground="{StaticResource MutedBrush}" FontSize="9" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                    <CheckBox Grid.Column="2" IsChecked="{Binding IsLocked}" Content="锁" FontSize="9" ToolTip="锁定测量图层" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <TextBlock Margin="0,7,0,0" Text="单击画布图形或列表均可选择；锁定后仍可查看，但不能移动、缩放或删除。" Foreground="{StaticResource MutedBrush}" FontSize="8" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                            <Border Margin="0,14,0,0" Padding="9" Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4" Visibility="{Binding FigureWorkspaceVisibility}">
                                 <StackPanel>
                                     <Grid>
                                         <Grid.ColumnDefinitions>
@@ -2185,10 +2429,94 @@
                                     </UniformGrid>
                                 </StackPanel>
                             </Border>
+                            <Border Margin="0,12,0,0" Padding="9" Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4" Visibility="{Binding FigureWorkspaceVisibility}">
+                                <StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="标注图层" FontWeight="SemiBold" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Figure.AnnotationCountText}" Foreground="{StaticResource MutedBrush}" FontSize="10" />
+                                    </Grid>
+                                    <ListBox Margin="0,9,0,0"
+                                             MinHeight="110"
+                                             MaxHeight="300"
+                                             Background="{StaticResource PanelBrush}"
+                                             BorderBrush="{StaticResource BorderBrush}"
+                                             BorderThickness="1"
+                                             ItemsSource="{Binding Figure.Annotations}"
+                                             SelectedItem="{Binding Figure.SelectedAnnotation}"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="ListBoxItem">
+                                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                                <Setter Property="Padding" Value="0" />
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="7,7">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <CheckBox IsChecked="{Binding IsVisible}" ToolTip="显示/隐藏标注图层" />
+                                                    <StackPanel Grid.Column="1" Margin="8,0">
+                                                        <TextBlock Text="{Binding KindDisplayName}" FontSize="11" FontWeight="SemiBold" />
+                                                        <TextBlock Text="{Binding Text}" Foreground="{StaticResource MutedBrush}" FontSize="9" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                    <CheckBox Grid.Column="2" IsChecked="{Binding IsLocked}" Content="锁" FontSize="9" ToolTip="锁定标注图层" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <UniformGrid Margin="0,8,0,0" Columns="3">
+                                        <Button Margin="0,0,5,0" Padding="7" Command="{Binding Figure.MoveAnnotationUpCommand}" Content="上移" />
+                                        <Button Margin="0,0,5,0" Padding="7" Command="{Binding Figure.MoveAnnotationDownCommand}" Content="下移" />
+                                        <Button Padding="7" Command="{Binding Figure.RemoveSelectedAnnotationCommand}" Content="删除" />
+                                    </UniformGrid>
+                                </StackPanel>
+                            </Border>
+                            <Border Margin="0,12,0,0" Padding="9" Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4" Visibility="{Binding FigureWorkspaceVisibility}">
+                                <StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="参考线图层" FontWeight="SemiBold" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Figure.GuideCountText}" Foreground="{StaticResource MutedBrush}" FontSize="10" />
+                                    </Grid>
+                                    <ListBox Margin="0,9,0,0"
+                                             MinHeight="80"
+                                             MaxHeight="220"
+                                             Background="{StaticResource PanelBrush}"
+                                             BorderBrush="{StaticResource BorderBrush}"
+                                             BorderThickness="1"
+                                             ItemsSource="{Binding Figure.Guides}"
+                                             SelectedItem="{Binding Figure.SelectedGuide}">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="7,6">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                     <TextBlock Text="{Binding Summary}" />
+                                                    <CheckBox Grid.Column="1" IsChecked="{Binding IsLocked}" Content="锁" FontSize="9" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <Button Margin="0,8,0,0" Command="{Binding Figure.RemoveSelectedGuideCommand}" Content="删除选中参考线" />
+                                </StackPanel>
+                            </Border>
                             <Border Margin="0,12,0,0" Padding="9" Background="#10212A" BorderBrush="#245A68" BorderThickness="1" CornerRadius="3">
                                 <StackPanel>
                                     <TextBlock Text="图层说明" Foreground="#8CE5F4" FontSize="10" FontWeight="SemiBold" />
-                                    <TextBlock Margin="0,4,0,0" Text="点击图层名称可选择；眼睛控制显示，锁控制拖动；上移/下移会改变导出层级。" Foreground="{StaticResource MutedBrush}" FontSize="9" TextWrapping="Wrap" />
+                                    <TextBlock Margin="0,4,0,0" Text="一次只激活一种图层类型；Delete 删除当前选中对象。眼睛控制显示，锁定会阻止拖动、改大小和删除。" Foreground="{StaticResource MutedBrush}" FontSize="9" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>

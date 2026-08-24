@@ -208,7 +208,8 @@ public sealed class MainWindowViewModel : ObservableObject
         SelectPolylineToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Polyline);
         DeleteSelectedMeasurementCommand = new RelayCommand(
             DeleteSelectedMeasurement,
-            () => SelectedSource?.SelectedMeasurement is not null && !IsBusy);
+            () => SelectedSource?.SelectedMeasurement is { IsLocked: false } && !IsBusy);
+        DeleteSelectionCommand = new RelayCommand(DeleteCurrentSelection, () => !IsBusy);
         CopyMeasurementsCommand = new RelayCommand(
             CopyMeasurements,
             () => SelectedSource?.Measurements.Count > 0 && !IsBusy);
@@ -239,7 +240,7 @@ public sealed class MainWindowViewModel : ObservableObject
         ApplyCalibrationToFigurePanelsCommand = new RelayCommand(
             ApplyCalibrationToFigurePanels,
             () => SelectedSource?.Calibration.IsCalibrated == true && !IsBusy);
-        ShowHelpCommand = new RelayCommand(() => StatusMessage = "SciCanvas v1.2.0-alpha · 科学测量/Figure QC/全局样式 · 快捷键：Ctrl+N/O/S/I/Enter，Ctrl+Z/Y");
+        ShowHelpCommand = new RelayCommand(() => StatusMessage = "快捷键 · V 裁剪，K 标定，L 长度，A 角度，R 矩形，E 圆形，P 折线；F 适合窗口，1 原始大小，Ctrl +/- 缩放，Space/中键平移，Delete 删除，方向键微调");
         AddCurrentCropToFigureCommand = new RelayCommand(
             AddCurrentCropToFigure,
             () => HasSelection && Figure.Panels.Count < Figure.SlotCount &&
@@ -533,6 +534,8 @@ public sealed class MainWindowViewModel : ObservableObject
     public RelayCommand SelectCircleRoiToolCommand { get; }
     public RelayCommand SelectPolylineToolCommand { get; }
     public RelayCommand DeleteSelectedMeasurementCommand { get; }
+
+    public RelayCommand DeleteSelectionCommand { get; }
     public RelayCommand CopyMeasurementsCommand { get; }
     public AsyncRelayCommand ExportMeasurementsCommand { get; }
     public AsyncRelayCommand AnalyzeIntensityProfileCommand { get; }
@@ -596,6 +599,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 AddCurrentCropToFigureCommand.NotifyCanExecuteChanged();
                 ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
                 DeleteSelectedMeasurementCommand.NotifyCanExecuteChanged();
+                DeleteSelectionCommand.NotifyCanExecuteChanged();
                 CopyMeasurementsCommand.NotifyCanExecuteChanged();
                 ExportMeasurementsCommand.NotifyCanExecuteChanged();
                 AnalyzeIntensityProfileCommand.NotifyCanExecuteChanged();
@@ -660,7 +664,7 @@ public sealed class MainWindowViewModel : ObservableObject
         ScientificToolMode.RectangleRoi => "矩形 ROI · 拖动建立研究区域",
         ScientificToolMode.CircleRoi => "圆形测量 · 拖动建立等宽高 ROI，自动计算等效直径、面积与周长",
         ScientificToolMode.Polyline => "折线工具 · 逐点单击添加路径，双击最后一点完成",
-        _ => "裁剪工具 · 拖动空白处新建裁剪框，拖动框体移动",
+        _ => "裁剪工具 · 拖动空白处新建，拖动框体移动，拖动八个手柄调整大小",
     };
 
     public bool IsBusy
@@ -1033,8 +1037,58 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
+        if (measurement.IsLocked)
+        {
+            StatusMessage = "测量图层已锁定 · 请先解锁后删除";
+            return;
+        }
+
         SelectedSource.RemoveMeasurement(measurement);
         StatusMessage = "已删除测量对象 · 原图未修改";
+    }
+
+    private void DeleteCurrentSelection()
+    {
+        if (WorkspaceMode == WorkspaceMode.Crop)
+        {
+            DeleteSelectedMeasurement();
+            return;
+        }
+
+        if (Figure.SelectedAnnotation is { } annotation)
+        {
+            if (annotation.IsLocked)
+            {
+                StatusMessage = "标注图层已锁定 · 请先解锁后删除";
+                return;
+            }
+
+            Figure.RemoveSelectedAnnotationCommand.Execute(null);
+            StatusMessage = "已删除选中标注";
+            return;
+        }
+
+        if (Figure.SelectedGuide is { } guide)
+        {
+            if (guide.IsLocked)
+            {
+                StatusMessage = "参考线已锁定 · 请先解锁后删除";
+                return;
+            }
+
+            Figure.RemoveSelectedGuideCommand.Execute(null);
+            StatusMessage = "已删除选中参考线";
+            return;
+        }
+
+        if (Figure.SelectedPanels.Any(panel => !panel.IsLocked))
+        {
+            Figure.RemoveSelectedCommand.Execute(null);
+            StatusMessage = "已删除选中拼版面板";
+            return;
+        }
+
+        StatusMessage = "没有可删除的选中对象";
     }
 
     private void CopyMeasurements()
@@ -1139,8 +1193,15 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         source.ScienceChanged -= OnSourceScienceChanged;
         source.ScienceEditCompleted -= OnSourceScienceEditCompleted;
+        source.MeasurementSelectionChanged -= OnMeasurementSelectionChanged;
         source.ScienceChanged += OnSourceScienceChanged;
         source.ScienceEditCompleted += OnSourceScienceEditCompleted;
+        source.MeasurementSelectionChanged += OnMeasurementSelectionChanged;
+    }
+
+    private void OnMeasurementSelectionChanged(object? sender, EventArgs e)
+    {
+        DeleteSelectedMeasurementCommand.NotifyCanExecuteChanged();
     }
 
     private void OnSourceScienceChanged(object? sender, EventArgs e)
@@ -2829,10 +2890,21 @@ public sealed class MainWindowViewModel : ObservableObject
                     throw new InvalidDataException($"源图 {source.DisplayName} 包含越界的测量坐标。");
                 }
 
-                Dictionary<Guid, (string StrokeColor, double StrokeWidthPixels)> styles =
+                Dictionary<Guid, ScientificMeasurementVisualStyle> styles =
                     measurementSnapshots.ToDictionary(
                         item => item.Id,
-                        item => (item.StrokeColor, item.StrokeWidthPixels));
+                        item => new ScientificMeasurementVisualStyle
+                        {
+                            StrokeColor = item.StrokeColor,
+                            StrokeWidthPixels = item.StrokeWidthPixels,
+                            LineStyle = item.LineStyle,
+                            MarkerSizePixels = item.MarkerSizePixels,
+                            ShowMarkers = item.ShowMarkers,
+                            ShowLabel = item.ShowLabel,
+                            FillOpacityPercent = item.FillOpacityPercent,
+                            IsVisible = item.IsVisible,
+                            IsLocked = item.IsLocked,
+                        });
                 source.RestoreScience(
                     calibration,
                     calibrationSnapshot?.ReferenceStartX ?? 0,
@@ -3573,7 +3645,14 @@ public sealed class MainWindowViewModel : ObservableObject
                     measurement.Measurement.PointC,
                     measurement.PathPoints,
                     measurement.StrokeColor,
-                    measurement.StrokeWidthPixels))
+                    measurement.StrokeWidthPixels,
+                    measurement.LineStyle,
+                    measurement.MarkerSizePixels,
+                    measurement.ShowMarkers,
+                    measurement.ShowLabel,
+                    measurement.FillOpacityPercent,
+                    measurement.IsVisible,
+                    measurement.IsLocked))
                 .ToArray());
     }
 
@@ -3677,7 +3756,18 @@ public sealed class MainWindowViewModel : ObservableObject
                         PathPoints: item.PathPoints)),
                     measurementSnapshots.ToDictionary(
                         item => item.Id,
-                        item => (item.StrokeColor, item.StrokeWidthPixels)));
+                        item => new ScientificMeasurementVisualStyle
+                        {
+                            StrokeColor = item.StrokeColor,
+                            StrokeWidthPixels = item.StrokeWidthPixels,
+                            LineStyle = item.LineStyle,
+                            MarkerSizePixels = item.MarkerSizePixels,
+                            ShowMarkers = item.ShowMarkers,
+                            ShowLabel = item.ShowLabel,
+                            FillOpacityPercent = item.FillOpacityPercent,
+                            IsVisible = item.IsVisible,
+                            IsLocked = item.IsLocked,
+                        }));
                 SynchronizeScaleBarsForSource(source);
             }
 
