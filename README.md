@@ -105,7 +105,7 @@ CLI 退出码：`0` 成功、`2` 参数错误、`3` 工程或源图验证失败�
 
 ## v1.2 科学工作流与可审计辅助分析
 
-`v1.2.0-alpha` 按分阶段升级路线补齐了从标定到投稿的主工作流：
+`v1.2.0-alpha` 按分阶段升级路线补齐了从标定到投稿的主工作流；`v1.2.1-alpha` 继续完善画布缩放/平移、裁剪手柄、统一图层选择与测量对象编辑：
 
 - 源图级 X/Y Calibration、metadata/手动标定、Length/Angle/Rectangle/Circle/Polyline 测量、真实单位优先显示、面积/周长、统计直方图、强度剖面，以及 CSV/XLSX/复制表格。
 - 测量对象可作为独立图层整体移动或用端点手柄改大小；支持实线、虚线、点线、点划线、描边色/宽、端点大小、端点/标签开关、ROI 填充透明度、显隐与锁定，全部随工程和撤销历史保存。
@@ -138,9 +138,9 @@ dotnet publish .\src\SciCanvas.Cli\SciCanvas.Cli.csproj --configuration Release 
 
 当前已生成可直接交付的自包含 Windows x64 包：
 
-- `artifacts\SciCanvas-v1.2.0-alpha-Setup.exe`：双击安装到当前用户目录，不需要管理员权限，同时安装 GUI 与 CLI。
-- `artifacts\SciCanvas-v1.2.0-alpha-Portable.zip`：解压后运行 `SciCanvas.App.exe` 或 `SciCanvas.Cli.exe`，不需要安装 .NET。
-- `artifacts\SciCanvas-v1.2.0-alpha-SHA256.txt`：安装包与便携包的 SHA-256 校验值。
+- `artifacts\SciCanvas-v1.2.1-alpha-Setup.exe`：双击安装到当前用户目录，不需要管理员权限，同时安装 GUI 与 CLI。
+- `artifacts\SciCanvas-v1.2.1-alpha-Portable.zip`：解压后运行 `SciCanvas.App.exe` 或 `SciCanvas.Cli.exe`，不需要安装 .NET。
+- `artifacts\SciCanvas-v1.2.1-alpha-SHA256.txt`：安装包与便携包的 SHA-256 校验值。
 
 构建与测试：
 

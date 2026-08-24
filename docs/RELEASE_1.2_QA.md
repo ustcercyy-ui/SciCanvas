@@ -1,4 +1,4 @@
-# SciCanvas v1.2.0-alpha 发布验收台账
+# SciCanvas v1.2.1-alpha 发布验收台账
 
 验收日期：2026-08-24
 目标平台：Windows x64，.NET 10，WPF
@@ -6,7 +6,7 @@
 
 ## 结论
 
-分阶段升级路线的阶段 0–6 已完成，Release 构建、自动化回归、核心界面视觉证据、成品 CLI、包内容、版本号与 SHA-256 均通过发布门禁。此版本保持科研图像源文件只读，自动分析结果默认只是候选，必须经人工接受后才能进入测量数据。
+分阶段升级路线的阶段 0–6 已完成，`v1.2.1-alpha` 进一步补齐画布缩放/平移、裁剪手柄、统一图层选择与测量对象编辑。Release 构建、自动化回归、核心界面视觉证据、成品 CLI、实际安装、包内容、版本号与 SHA-256 均通过发布门禁。此版本保持科研图像源文件只读，自动分析结果默认只是候选，必须经人工接受后才能进入测量数据。
 
 ## 自动化回归
 
@@ -19,8 +19,8 @@ dotnet test .\SciCanvas.sln --configuration Release --no-restore
 | 测试程序集 | 通过 | 失败 | 跳过 |
 | --- | ---: | ---: | ---: |
 | SciCanvas.Core.Tests | 44 | 0 | 0 |
-| SciCanvas.Platform.Windows.Tests | 85 | 0 | 0 |
-| 合计 | 129 | 0 | 0 |
+| SciCanvas.Platform.Windows.Tests | 92 | 0 | 0 |
+| 合计 | 136 | 0 | 0 |
 
 覆盖范围包括标定与科学测量、工程 `1.2` 往返/迁移、撤销与审计、Figure QC、16-bit/位图/PDF/SVG 导出、强度剖面、XLSX、Inset、可解释辅助分析、CLI、WPF 主界面与像素坐标导出。
 
@@ -48,13 +48,15 @@ dotnet test .\SciCanvas.sln --configuration Release --no-restore
 
 | 产物 | 字节数 | SHA-256 |
 | --- | ---: | --- |
-| `SciCanvas-v1.2.0-alpha-Portable.zip` | 65,613,438 | `6E131585F71EC436A336D9B50BB29CB91E8793842AC1B69A4DF32EAAFE40AE61` |
-| `SciCanvas-v1.2.0-alpha-Setup.exe` | 181,680,318 | `6C0DD5C47D3F53716C1FA983D68BDDA74D7B25958D6D57E06DCB0A703DE5D2A1` |
+| `SciCanvas-v1.2.1-alpha-Portable.zip` | 65,634,372 | `C145DCADAF4555596A23334BB7E04870F4BE940F4C5C120E77C88B623BD349ED` |
+| `SciCanvas-v1.2.1-alpha-Setup.exe` | 181,700,798 | `1546DA10C6D842375E98F10899D7F94AC4AF58D94AB1D4AB0C20A0219207D1B0` |
 
-- GUI、CLI、Setup 的文件版本均为 `1.2.0.0`，产品语义版本前缀均为 `1.2.0-alpha`（构建产物附带相同 Git 元数据后缀）。
+- GUI、CLI、Setup 的文件版本均为 `1.2.1.0`，产品语义版本前缀均为 `1.2.1-alpha`（构建产物附带相同 Git 元数据后缀）。
 - 便携包根目录包含 `SciCanvas.App.exe`、`SciCanvas.Cli.exe`、`Install-SciCanvas.cmd`、`Install-SciCanvas.ps1` 与 `README.txt`。
+- 便携包共核验 424 个 ZIP 条目，没有绝对路径、盘符路径或 `..` 路径穿越项。
 - 从发布目录执行 `SciCanvas.Cli.exe --help` 返回退出码 `0`。
-- `SciCanvas-v1.2.0-alpha-SHA256.txt` 已使用实际成品复算，两项均匹配。
+- 安装器在重定向到 `D:\Temp` 的隔离用户目录中返回退出码 `0`，生成 266 个安装文件和开始菜单快捷方式；安装后的 CLI 返回退出码 `0`，GUI 成功显示 `未命名工程 · SciCanvas` 后正常关闭。
+- `SciCanvas-v1.2.1-alpha-SHA256.txt` 已使用实际成品复算，两项均匹配。
 
 ## 智能辅助边界
 
