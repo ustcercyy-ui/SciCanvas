@@ -83,12 +83,12 @@
             <Setter Property="BorderBrush" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0,0,0,2" />
             <Style.Triggers>
-                <Trigger Property="Tag" Value="True">
+                <DataTrigger Binding="{Binding RelativeSource={RelativeSource Self}, Path=Tag}" Value="True">
                     <Setter Property="Background" Value="#087E98" />
                     <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
                     <Setter Property="Foreground" Value="#F5FBFF" />
                     <Setter Property="FontWeight" Value="SemiBold" />
-                </Trigger>
+                </DataTrigger>
             </Style.Triggers>
         </Style>
 
@@ -300,18 +300,36 @@
             <Border Grid.Column="0" Background="{StaticResource PanelBrush}">
                 <Grid>
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="54" />
+                        <RowDefinition Height="106" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <Grid Grid.Row="0" Margin="14,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="源图像" FontWeight="SemiBold" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="1" Text="{Binding Sources.Count, StringFormat={}{0} 项}" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" />
+                    <Grid Grid.Row="0" Margin="10,8,10,7">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="30" />
+                            <RowDefinition Height="30" />
+                            <RowDefinition Height="32" />
+                        </Grid.RowDefinitions>
+                        <UniformGrid Columns="4">
+                            <Button Padding="5,3" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsAssetWorkspaceActive}" Command="{Binding ShowCropWorkspaceCommand}" Content="Assets" ToolTip="项目资产库" />
+                            <Button Padding="5,3" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsFigureWorkspaceActive}" Command="{Binding ShowFigureWorkspaceCommand}" Content="Figures" ToolTip="当前 Figure 工作区" />
+                            <Button Padding="5,3" Style="{StaticResource ToolButtonStyle}" Tag="{Binding IsLayersTabActive}" Command="{Binding ShowLayersTabCommand}" Content="Layers" ToolTip="科学对象与图层" />
+                            <Button Padding="5,3" Style="{StaticResource ToolButtonStyle}" Command="{Binding ShowFigureWorkspaceCommand}" Content="Templates" ToolTip="Figure 模板" />
+                        </UniformGrid>
+                        <Grid Grid.Row="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Asset Library" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="{Binding Sources.Count, StringFormat={}{0} 项}" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" />
+                        </Grid>
+                        <TextBox Grid.Row="2"
+                                 Padding="7,4"
+                                 Text="{Binding AssetSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                 ToolTip="按名称、路径、类型或链接状态筛选"
+                                 AutomationProperties.Name="搜索项目资产" />
                     </Grid>
 
                     <ListBox Grid.Row="1"
@@ -319,7 +337,7 @@
                              Padding="0"
                              Background="Transparent"
                              BorderThickness="0"
-                             ItemsSource="{Binding Sources}"
+                             ItemsSource="{Binding AssetsView}"
                              SelectedItem="{Binding SelectedSource}"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         <ListBox.ItemContainerStyle>
@@ -354,6 +372,14 @@
                                                        Text="{Binding DetailsText, Mode=OneWay}"
                                                        Foreground="{StaticResource MutedBrush}"
                                                        FontSize="9" />
+                                            <StackPanel Margin="0,4,0,0" Orientation="Horizontal">
+                                                <Border Padding="4,1" Background="#163B46" CornerRadius="3">
+                                                    <TextBlock Text="{Binding AssetKindText}" Foreground="#80DDEA" FontSize="8" />
+                                                </Border>
+                                                <TextBlock Margin="6,0,0,0" Text="{Binding UsageText}" Foreground="#B8C4D1" FontSize="8" />
+                                                <TextBlock Margin="6,0,0,0" Text="{Binding SourceRevisionText}" Foreground="{StaticResource MutedBrush}" FontSize="8" />
+                                                <TextBlock Margin="6,0,0,0" Text="{Binding LinkStateText}" Foreground="#75D9AA" FontSize="8" />
+                                            </StackPanel>
                                         </StackPanel>
                                     </Grid>
                                 </Border>
@@ -1392,6 +1418,10 @@
                             </StackPanel>
                         </Grid>
                         <TextBlock Margin="0,9,0,0" Text="{Binding Crop.ValidationMessage}" Foreground="#7DD9E9" FontSize="10" TextWrapping="Wrap" />
+                        <Button Margin="0,8,0,0"
+                                Command="{Binding AutoTrimCurrentSourceCommand}"
+                                Content="Auto Trim · 白色/透明边界"
+                                ToolTip="基于只读预览生成建议并映射回源像素；不会修改源文件。" />
                         <CheckBox Margin="0,10,0,0"
                                   IsChecked="{Binding LockCropSizeAcrossSources}"
                                   Content="切换源图像时保持相同宽高"
@@ -1560,9 +1590,14 @@
                             </StackPanel>
                         </Border>
 
-                        <TextBlock Margin="0,18,0,8" Style="{StaticResource SectionTitleStyle}" Text="全局图样式" />
+                        <TextBlock Margin="0,18,0,8" Style="{StaticResource SectionTitleStyle}" Text="Project Style · 继承与覆盖" />
                         <Border Padding="10" Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4">
                             <StackPanel>
+                                <TextBlock Margin="0,0,0,8"
+                                           Text="Project → Figure → Panel → Scientific Object；下级只保存局部覆盖，未覆盖项持续继承项目样式。"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           FontSize="8"
+                                           TextWrapping="Wrap" />
                                 <TextBlock Text="字体家族" Foreground="{StaticResource MutedBrush}" FontSize="9" />
                                 <TextBox Margin="0,4,0,0" Text="{Binding Figure.GlobalFontFamily, UpdateSourceTrigger=PropertyChanged}" />
                                 <Grid Margin="0,8,0,0">
@@ -1717,8 +1752,21 @@
                                     <TextBox Margin="0,3,0,0" Text="{Binding Figure.SelectedPanel.FrameNumber, UpdateSourceTrigger=PropertyChanged}" />
                                 </StackPanel>
                                 <TextBlock Margin="0,5,0,0" Text="{Binding Figure.SelectedPanel.EffectiveDpiText}" Foreground="#80DDEA" FontSize="10" />
+                                <Border Margin="0,6,0,0"
+                                        Padding="7"
+                                        Background="#2A2414"
+                                        BorderBrush="#8D7735"
+                                        BorderThickness="1"
+                                        CornerRadius="3"
+                                        Visibility="{Binding Figure.SelectedPanel.RequiresScientificReview, Converter={StaticResource BooleanToVisibility}}">
+                                    <TextBlock Text="{Binding Figure.SelectedPanel.ScientificValidityText}" Foreground="#F2D272" FontSize="9" TextWrapping="Wrap" />
+                                </Border>
                                 <TextBlock Margin="0,4,0,0" Text="{Binding Figure.SelectedPanel.HelpText}" Foreground="{StaticResource MutedBrush}" FontSize="9" TextWrapping="Wrap" />
                                 <Button Margin="0,8,0,0" Command="{Binding ReplaceSelectedPanelSourceCommand}" Content="用当前源图替换面板" />
+                                <TextBlock Margin="0,8,0,0" Text="图像适配" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <ComboBox Margin="0,4,0,0"
+                                          ItemsSource="{Binding Figure.SelectedPanel.AvailableFitModes}"
+                                          SelectedItem="{Binding Figure.SelectedPanel.FitMode}" />
                                 <Grid Margin="0,10,0,0">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
@@ -1726,16 +1774,16 @@
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel>
-                                        <TextBlock Text="X" Foreground="{StaticResource MutedBrush}" FontSize="9" />
-                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedPanel.X, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Text="X / mm" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedPanel.XMm, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" />
                                     </StackPanel>
                                     <StackPanel Grid.Column="2">
-                                        <TextBlock Text="Y" Foreground="{StaticResource MutedBrush}" FontSize="9" />
-                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedPanel.Y, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Text="Y / mm" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedPanel.YMm, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" />
                                     </StackPanel>
                                 </Grid>
 
-                                <TextBlock Margin="0,12,0,6" Text="尺寸与比例 / 画布 px" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <TextBlock Margin="0,12,0,6" Text="Panel Frame / mm" Foreground="{StaticResource MutedBrush}" FontSize="9" />
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
@@ -1744,11 +1792,11 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel>
                                         <TextBlock Text="宽度" Foreground="{StaticResource MutedBrush}" FontSize="9" />
-                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedPanel.Width, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedPanel.WidthMm, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" />
                                     </StackPanel>
                                     <StackPanel Grid.Column="2">
                                         <TextBlock Text="高度" Foreground="{StaticResource MutedBrush}" FontSize="9" />
-                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedPanel.Height, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedPanel.HeightMm, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" />
                                     </StackPanel>
                                 </Grid>
                                 <CheckBox Margin="0,8,0,0"
@@ -2287,6 +2335,20 @@
                                         <TextBlock Margin="0,3,0,0" Text="{Binding FigureQcCountText}" Foreground="{StaticResource MutedBrush}" FontSize="8" />
                                     </StackPanel>
                                     <Button Grid.Column="1" Margin="8,0,0,0" Padding="9,5" Command="{Binding RunFigureQcCommand}" Content="重新检查" />
+                                </Grid>
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="92" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="项目最小有效分辨率 / dpi"
+                                               Foreground="{StaticResource MutedBrush}"
+                                               FontSize="9"
+                                               VerticalAlignment="Center" />
+                                    <TextBox Grid.Column="2"
+                                             Text="{Binding FigureQcMinimumDpi, UpdateSourceTrigger=PropertyChanged}"
+                                             AutomationProperties.Name="Figure QC 最小有效 DPI" />
                                 </Grid>
                                 <ListBox Margin="0,9,0,0"
                                          MinHeight="54"

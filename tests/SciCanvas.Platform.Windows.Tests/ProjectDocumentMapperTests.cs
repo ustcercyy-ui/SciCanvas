@@ -168,7 +168,7 @@ public sealed class ProjectDocumentMapperTests
             lockCropSizeAcrossSources: true,
             cropOverlayVisible: true);
 
-        Assert.Equal("1.2", document.SchemaVersion);
+        Assert.Equal("2.0", document.SchemaVersion);
         ProjectCalibrationSnapshot savedCalibration = Assert.Single(document.Calibrations);
         Assert.Equal(source.Asset.Id, savedCalibration.SourceAssetId);
         Assert.Equal(0.02, savedCalibration.UnitsPerPixelX);
@@ -218,6 +218,7 @@ public sealed class ProjectDocumentMapperTests
         var figure = new FigureCanvasViewModel(new BuiltInTemplateCatalog().LoadAll()[0]);
         FigurePanelViewModel reference = Assert.IsType<FigurePanelViewModel>(
             figure.AddPanel(source, new PixelRect64(0, 0, 80, 60)));
+        reference.FitMode = SciCanvas.Core.Workspace.PanelFitMode.Fill;
         figure.CreateInsetCommand.Execute(null);
         FigurePanelViewModel inset = Assert.Single(figure.Panels, panel => panel.IsInset);
         figure.SelectPanel(reference, toggle: false);
@@ -241,6 +242,19 @@ public sealed class ProjectDocumentMapperTests
         Assert.StartsWith("inset:", insetSlot, StringComparison.Ordinal);
         Guid groupId = Assert.IsType<Guid>(reference.CropLinkGroupId);
         Assert.All(document.Layers, layer => Assert.Equal(groupId, layer.CropLinkGroupId));
+        ProjectSourceSnapshot savedSource = Assert.Single(document.Sources);
+        Assert.Equal(1, savedSource.SourceRevision);
+        Assert.Equal("other", savedSource.AssetKind);
+        ProjectImageLayerSnapshot savedReference = Assert.Single(
+            document.Layers,
+            layer => layer.Id == reference.Id);
+        Assert.Equal("fill", savedReference.FitMode);
+        Assert.NotNull(savedReference.NormalizedCrop);
+        Assert.NotNull(savedReference.FrameMm);
+        Assert.Equal("valid", savedReference.ScientificValidity.State);
+        ProjectFigureSnapshot savedFigure = Assert.Single(document.Workspace.Figures);
+        Assert.Contains(reference.Id, savedFigure.LayerIds);
+        Assert.Equal(300, document.Workspace.MinimumEffectiveDpi);
     }
 
     private static SourceAssetItemViewModel CreateSourceItem()

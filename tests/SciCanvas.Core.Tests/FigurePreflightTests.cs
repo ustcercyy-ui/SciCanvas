@@ -52,6 +52,34 @@ public sealed class FigurePreflightTests
     }
 
     [Fact]
+    public void Check_UsesProjectSpecificEffectiveDpiThreshold()
+    {
+        SourceAsset source = CreateSource(SourceLinkState.Verified);
+        var document = new FigureExportDocument(
+            100,
+            100,
+            300,
+            [new FigurePanelExportItem(
+                source,
+                new PixelRect64(0, 0, 100, 100),
+                new PixelRect64(0, 0, 100, 100),
+                "a",
+                true)]);
+
+        FigurePreflightResult relaxed = FigurePreflight.Check(
+            document,
+            [source],
+            configuration: new FigurePreflightConfiguration { MinimumEffectiveDpi = 250 });
+        FigurePreflightResult strict = FigurePreflight.Check(
+            document,
+            [source],
+            configuration: new FigurePreflightConfiguration { MinimumEffectiveDpi = 350 });
+
+        Assert.DoesNotContain(relaxed.Issues, issue => issue.Code == "LOW_EFFECTIVE_DPI");
+        Assert.Contains(strict.Issues, issue => issue.Code == "LOW_EFFECTIVE_DPI");
+    }
+
+    [Fact]
     public void Check_FlagsPanelOverlapInvalidScaleBarAndTransparentBackground()
     {
         SourceAsset source = CreateSource(SourceLinkState.Verified);

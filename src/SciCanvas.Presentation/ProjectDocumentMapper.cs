@@ -4,6 +4,7 @@ using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
 using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
+using SciCanvas.Core.Workspace;
 using SciCanvas.Persistence;
 
 namespace SciCanvas.Presentation;
@@ -22,7 +23,8 @@ internal static class ProjectDocumentMapper
         bool lockCropSizeAcrossSources,
         bool cropOverlayVisible,
         IReadOnlyList<ProjectAuditEntrySnapshot>? auditTrail = null,
-        IReadOnlyList<FigureExportProfile>? exportProfiles = null)
+        IReadOnlyList<FigureExportProfile>? exportProfiles = null,
+        int minimumEffectiveDpi = 300)
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
         ProjectPixelRectSnapshot? activeCrop = crop.TryGetCrop(out PixelRect64 cropRect)
@@ -205,6 +207,7 @@ internal static class ProjectDocumentMapper
                     })
                     .ToArray(),
             },
+            Workspace = CreateWorkspaceSnapshot(projectId, title, figure, minimumEffectiveDpi),
             AuditTrail = (auditTrail ?? [])
                 .Concat(
                 [
@@ -339,6 +342,9 @@ internal static class ProjectDocumentMapper
                 Ome = ToSnapshot(metadata.Ome),
             },
             LinkState = source.LinkState.ToString().ToLowerInvariant(),
+            AssetKind = InferAssetKind(source.DisplayName),
+            Tags = [],
+            SourceRevision = item.SourceRevision,
         };
     }
 
@@ -376,7 +382,98 @@ internal static class ProjectDocumentMapper
             Grayscale = panel.Adjustments.Grayscale,
             Channel = panel.Adjustments.Channel,
         }],
+        NormalizedCrop = new ProjectNormalizedRectSnapshot
+        {
+            X = panel.NormalizedCrop.X,
+            Y = panel.NormalizedCrop.Y,
+            Width = panel.NormalizedCrop.Width,
+            Height = panel.NormalizedCrop.Height,
+        },
+        FrameMm = new ProjectFigureRectMmSnapshot
+        {
+            X = panel.FrameMm.X,
+            Y = panel.FrameMm.Y,
+            Width = panel.FrameMm.Width,
+            Height = panel.FrameMm.Height,
+        },
+        FitMode = panel.FitMode.ToString().ToLowerInvariant(),
+        RotationDegrees = panel.RotationDegrees,
+        ScientificValidity = new ProjectScientificValiditySnapshot
+        {
+            State = panel.ReplacementValidity.State.ToString().ToLowerInvariant(),
+            Reasons = panel.ReplacementValidity.Reasons,
+        },
     };
+
+    public static PanelFitMode ParsePanelFitMode(string? fitMode) => fitMode?.ToLowerInvariant() switch
+    {
+        "fit" => PanelFitMode.Fit,
+        "fill" => PanelFitMode.Fill,
+        _ => PanelFitMode.Manual,
+    };
+
+    public static ScientificValidity ToScientificValidity(ProjectScientificValiditySnapshot snapshot)
+    {
+        string[] reasons = snapshot.Reasons.ToArray();
+        return snapshot.State.ToLowerInvariant() switch
+        {
+            "warning" => ScientificValidity.Warning(reasons),
+            "invalid" => ScientificValidity.Invalid(reasons),
+            "reviewrequired" => ScientificValidity.ReviewRequired(reasons),
+            _ => ScientificValidity.Valid,
+        };
+    }
+
+    private static ProjectWorkspaceSnapshot CreateWorkspaceSnapshot(
+        Guid projectId,
+        string title,
+        FigureCanvasViewModel figure,
+        int minimumEffectiveDpi)
+    {
+        Guid figureId = CreateStableFigureId(projectId);
+        return new ProjectWorkspaceSnapshot
+        {
+            ActiveFigureId = figureId,
+            MinimumEffectiveDpi = Math.Clamp(minimumEffectiveDpi, 1, 2400),
+            Figures =
+            [
+                new ProjectFigureSnapshot
+                {
+                    Id = figureId,
+                    Name = string.IsNullOrWhiteSpace(title) ? "Figure 1" : title,
+                    WidthMm = figure.CanvasWidth / (double)figure.Dpi * 25.4,
+                    HeightMm = figure.CanvasHeight / (double)figure.Dpi * 25.4,
+                    Dpi = figure.Dpi,
+                    TemplateId = figure.Template.Id,
+                    LayerIds = figure.Panels.OrderBy(panel => panel.ZIndex).Select(panel => panel.Id).ToArray(),
+                },
+            ],
+        };
+    }
+
+    private static Guid CreateStableFigureId(Guid projectId)
+    {
+        byte[] bytes = projectId.ToByteArray();
+        bytes[0] ^= 0x53;
+        bytes[1] ^= 0x43;
+        bytes[2] ^= 0x49;
+        return new Guid(bytes);
+    }
+
+    private static string InferAssetKind(string displayName)
+    {
+        string value = displayName.ToLowerInvariant();
+        if (value.Contains("sem")) return "sem";
+        if (value.Contains("stem")) return "stem";
+        if (value.Contains("tem")) return "tem";
+        if (value.Contains("ebsd")) return "ebsd";
+        if (value.Contains("eds") || value.Contains("edx")) return "eds";
+        if (value.Contains("afm")) return "afm";
+        if (value.Contains("xrd")) return "xrd";
+        if (value.Contains("graph") || value.Contains("plot")) return "graph";
+        if (value.Contains("schematic")) return "schematic";
+        return "other";
+    }
 
     private static ProjectPixelRectSnapshot ToSnapshot(PixelRect64 rect) => new()
     {

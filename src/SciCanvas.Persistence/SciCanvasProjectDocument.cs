@@ -7,7 +7,7 @@ public sealed class SciCanvasProjectDocument
     [JsonPropertyName("$schema")]
     public string Schema { get; init; } = "https://scicanvas.org/schemas/scicanvas-project.schema.json";
 
-    public string SchemaVersion { get; init; } = "1.2";
+    public string SchemaVersion { get; init; } = ProjectMigrationPipeline.CurrentVersion;
 
     public Guid ProjectId { get; init; }
 
@@ -36,6 +36,40 @@ public sealed class SciCanvasProjectDocument
     public ProjectTemplateSnapshot? TemplateSnapshot { get; init; }
 
     public IReadOnlyList<ProjectAuditEntrySnapshot> AuditTrail { get; init; } = [];
+
+    public ProjectWorkspaceSnapshot Workspace { get; init; } = new();
+}
+
+public sealed class ProjectWorkspaceSnapshot
+{
+    public Guid ActiveFigureId { get; init; }
+
+    public int MinimumEffectiveDpi { get; init; } = 300;
+
+    public double AlignmentToleranceMm { get; init; } = 0.2;
+
+    public double SpacingToleranceMm { get; init; } = 0.2;
+
+    public bool VerifySourceHashes { get; init; } = true;
+
+    public IReadOnlyList<ProjectFigureSnapshot> Figures { get; init; } = [];
+}
+
+public sealed class ProjectFigureSnapshot
+{
+    public Guid Id { get; init; }
+
+    public string Name { get; init; } = "Figure 1";
+
+    public double WidthMm { get; init; }
+
+    public double HeightMm { get; init; }
+
+    public int Dpi { get; init; } = 300;
+
+    public string TemplateId { get; init; } = string.Empty;
+
+    public IReadOnlyList<Guid> LayerIds { get; init; } = [];
 }
 
 public sealed class ProjectCanvasSnapshot
@@ -64,6 +98,12 @@ public sealed class ProjectSourceSnapshot
     public ProjectImageMetadataSnapshot Metadata { get; init; } = new();
 
     public string LinkState { get; init; } = "verified";
+
+    public string AssetKind { get; init; } = "other";
+
+    public IReadOnlyList<string> Tags { get; init; } = [];
+
+    public long SourceRevision { get; init; } = 1;
 }
 
 public sealed class ProjectFingerprintSnapshot
@@ -156,6 +196,38 @@ public sealed class ProjectImageLayerSnapshot
     public ProjectTransformSnapshot Transform { get; init; } = new();
 
     public IReadOnlyList<ProjectImageAdjustmentSnapshot> Adjustments { get; init; } = [];
+
+    public ProjectNormalizedRectSnapshot? NormalizedCrop { get; init; }
+
+    public ProjectFigureRectMmSnapshot? FrameMm { get; init; }
+
+    public string FitMode { get; init; } = "manual";
+
+    public double RotationDegrees { get; init; }
+
+    public ProjectScientificValiditySnapshot ScientificValidity { get; init; } = new();
+}
+
+public sealed class ProjectNormalizedRectSnapshot
+{
+    public double X { get; init; }
+    public double Y { get; init; }
+    public double Width { get; init; } = 1;
+    public double Height { get; init; } = 1;
+}
+
+public sealed class ProjectFigureRectMmSnapshot
+{
+    public double X { get; init; }
+    public double Y { get; init; }
+    public double Width { get; init; }
+    public double Height { get; init; }
+}
+
+public sealed class ProjectScientificValiditySnapshot
+{
+    public string State { get; init; } = "valid";
+    public IReadOnlyList<string> Reasons { get; init; } = [];
 }
 
 public sealed class ProjectImageAdjustmentSnapshot

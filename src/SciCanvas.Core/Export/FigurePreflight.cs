@@ -28,16 +28,39 @@ public sealed record FigurePreflightResult(IReadOnlyList<FigurePreflightIssue> I
             : "投稿预检通过。";
 }
 
+public sealed record FigurePreflightConfiguration
+{
+    public int MinimumEffectiveDpi { get; init; } = 300;
+
+    public bool BlockUnverifiedSources { get; init; } = true;
+
+    public double MaximumScaleBarWidthFraction { get; init; } = 0.8;
+
+    public FigurePreflightConfiguration Validate()
+    {
+        if (MinimumEffectiveDpi is < 1 or > 2400 ||
+            !double.IsFinite(MaximumScaleBarWidthFraction) ||
+            MaximumScaleBarWidthFraction is <= 0 or > 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(MinimumEffectiveDpi));
+        }
+
+        return this;
+    }
+}
+
 /// <summary>Deterministic, side-effect-free checks run before a figure export.</summary>
 public static class FigurePreflight
 {
     public static FigurePreflightResult Check(
         FigureExportDocument document,
         IReadOnlyCollection<SourceAsset> projectSources,
-        bool hasUnsavedChanges = false)
+        bool hasUnsavedChanges = false,
+        FigurePreflightConfiguration? configuration = null)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(projectSources);
+        configuration = (configuration ?? new FigurePreflightConfiguration()).Validate();
         List<FigurePreflightIssue> issues = [];
 
         if (document.BackgroundColor.StartsWith("#00", StringComparison.OrdinalIgnoreCase))
@@ -66,7 +89,8 @@ public static class FigurePreflight
                 issues.Add(new(FigurePreflightSeverity.Error, "SOURCE_NOT_IN_PROJECT", $"面板 {panel.Label} 引用了不在当前工程中的源图。", panel.Label));
             }
 
-            if (panel.Source.LinkState != SourceLinkState.Verified)
+            if (panel.Source.LinkState != SourceLinkState.Verified &&
+                configuration.BlockUnverifiedSources)
             {
                 issues.Add(new(FigurePreflightSeverity.Error, "SOURCE_UNVERIFIED", $"面板 {panel.Label} 的源图未通过完整性验证。", panel.Label));
             }
@@ -91,9 +115,13 @@ public static class FigurePreflight
             double effectiveDpi = Math.Min(
                 panel.SourceRect.Width / Math.Max(1, panel.DestinationRect.Width) * document.Dpi,
                 panel.SourceRect.Height / Math.Max(1, panel.DestinationRect.Height) * document.Dpi);
-            if (effectiveDpi < 300)
+            if (effectiveDpi < configuration.MinimumEffectiveDpi)
             {
-                issues.Add(new(FigurePreflightSeverity.Warning, "LOW_EFFECTIVE_DPI", $"面板 {panel.Label} 的有效分辨率约 {effectiveDpi:0} dpi。", panel.Label));
+                issues.Add(new(
+                    FigurePreflightSeverity.Warning,
+                    "LOW_EFFECTIVE_DPI",
+                    $"面板 {panel.Label} 的有效分辨率约 {effectiveDpi:0} dpi，低于项目阈值 {configuration.MinimumEffectiveDpi} dpi。",
+                    panel.Label));
             }
 
             if (panel.ScaleBar is { } scaleBar &&
@@ -106,7 +134,8 @@ public static class FigurePreflight
                 issues.Add(new(FigurePreflightSeverity.Error, "INVALID_SCALE_BAR", $"面板 {panel.Label} 的比例尺校准参数无效。", panel.Label));
             }
             else if (panel.ScaleBar is { } validScaleBar &&
-                     validScaleBar.PhysicalLength / validScaleBar.PhysicalUnitsPerSourcePixel > panel.SourceRect.Width * 0.8)
+                     validScaleBar.PhysicalLength / validScaleBar.PhysicalUnitsPerSourcePixel >
+                     panel.SourceRect.Width * configuration.MaximumScaleBarWidthFraction)
             {
                 issues.Add(new(FigurePreflightSeverity.Error, "SCALE_BAR_TOO_LONG", $"面板 {panel.Label} 的比例尺超过图像宽度 80%。", panel.Label));
             }

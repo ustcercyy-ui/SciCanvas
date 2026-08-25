@@ -29,8 +29,9 @@ public sealed class JsonProjectStore : IProjectStore
             JsonOptions,
             cancellationToken) ?? throw new InvalidDataException("工程文件为空或结构无效。");
 
-        Validate(document);
-        return document;
+        SciCanvasProjectDocument migrated = ProjectMigrationPipeline.MigrateToCurrent(document);
+        Validate(migrated);
+        return migrated;
     }
 
     public async Task SaveAsync(
@@ -39,6 +40,7 @@ public sealed class JsonProjectStore : IProjectStore
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(document);
+        document = ProjectMigrationPipeline.MigrateToCurrent(document);
         Validate(document);
 
         string fullPath = NormalizeProjectPath(path);
@@ -105,7 +107,7 @@ public sealed class JsonProjectStore : IProjectStore
 
     private static void Validate(SciCanvasProjectDocument document)
     {
-        if (document.SchemaVersion is not ("0.1" or "0.9" or "1.1" or "1.2"))
+        if (document.SchemaVersion != ProjectMigrationPipeline.CurrentVersion)
         {
             throw new NotSupportedException($"暂不支持工程版本 {document.SchemaVersion}。");
         }
@@ -128,6 +130,7 @@ public sealed class JsonProjectStore : IProjectStore
         foreach (ProjectSourceSnapshot source in document.Sources)
         {
             if (string.IsNullOrWhiteSpace(source.OriginalPath) ||
+                source.SourceRevision < 1 ||
                 source.Fingerprint.Sha256.Length != 64 ||
                 !source.Fingerprint.Sha256.All(Uri.IsHexDigit) ||
                 source.Metadata.Width <= 0 ||
@@ -146,6 +149,52 @@ public sealed class JsonProjectStore : IProjectStore
             {
                 throw new InvalidDataException($"图层 {layer.Name} 的工程记录无效。");
             }
+
+            if (layer.NormalizedCrop is { } crop &&
+                (!double.IsFinite(crop.X) || !double.IsFinite(crop.Y) ||
+                 !double.IsFinite(crop.Width) || !double.IsFinite(crop.Height) ||
+                 crop.X < 0 || crop.Y < 0 || crop.Width <= 0 || crop.Height <= 0 ||
+                 crop.X + crop.Width > 1.000000001 || crop.Y + crop.Height > 1.000000001))
+            {
+                throw new InvalidDataException($"图层 {layer.Name} 的标准化裁剪区域无效。");
+            }
+
+            if (layer.FrameMm is { } frame &&
+                (!double.IsFinite(frame.X) || !double.IsFinite(frame.Y) ||
+                 !double.IsFinite(frame.Width) || !double.IsFinite(frame.Height) ||
+                 frame.X < 0 || frame.Y < 0 || frame.Width <= 0 || frame.Height <= 0))
+            {
+                throw new InvalidDataException($"图层 {layer.Name} 的毫米 Frame 无效。");
+            }
+
+            if (layer.FitMode is not ("fit" or "fill" or "manual") ||
+                !double.IsFinite(layer.RotationDegrees) ||
+                layer.ScientificValidity.State is not ("valid" or "warning" or "invalid" or "reviewrequired"))
+            {
+                throw new InvalidDataException($"图层 {layer.Name} 的 V2 工作区状态无效。");
+            }
+        }
+
+        ProjectWorkspaceSnapshot workspace = document.Workspace;
+        if (workspace.MinimumEffectiveDpi is < 1 or > 2400 ||
+            !double.IsFinite(workspace.AlignmentToleranceMm) || workspace.AlignmentToleranceMm < 0 ||
+            !double.IsFinite(workspace.SpacingToleranceMm) || workspace.SpacingToleranceMm < 0 ||
+            workspace.Figures.Select(figure => figure.Id).Distinct().Count() != workspace.Figures.Count)
+        {
+            throw new InvalidDataException("工程工作区配置无效。");
+        }
+
+        if (workspace.Figures.Count > 0 &&
+            (!workspace.Figures.Any(figure => figure.Id == workspace.ActiveFigureId) ||
+             workspace.Figures.Any(figure =>
+                 figure.Id == Guid.Empty ||
+                 string.IsNullOrWhiteSpace(figure.Name) ||
+                 !double.IsFinite(figure.WidthMm) || figure.WidthMm <= 0 ||
+                 !double.IsFinite(figure.HeightMm) || figure.HeightMm <= 0 ||
+                 figure.Dpi is < 1 or > 2400 ||
+                 figure.LayerIds.Any(layerId => document.Layers.All(layer => layer.Id != layerId)))))
+        {
+            throw new InvalidDataException("工程 Figure 列表无效。");
         }
 
         foreach (ProjectCalibrationSnapshot calibration in document.Calibrations)

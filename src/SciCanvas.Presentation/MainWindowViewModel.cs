@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.IO;
 using System.Text;
@@ -82,6 +83,8 @@ public sealed class MainWindowViewModel : ObservableObject
     private int _minimumRegionAreaPixels = 16;
     private string _assistedRegionStatusText = "在当前裁剪 ROI 中生成可人工复核的候选区域";
     private string _smartAssistStatusText = "可解释规则会给出布局、样式、QC 与科研诚信建议；建议默认不自动成为事实。";
+    private string _assetSearchText = string.Empty;
+    private int _figureQcMinimumDpi = 300;
 
     public MainWindowViewModel(
         IImageFilePicker filePicker,
@@ -133,6 +136,7 @@ public sealed class MainWindowViewModel : ObservableObject
         AvailableTemplates = new ObservableCollection<FigureTemplateDefinition>(_figureTemplates);
         _selectedFigureTemplate = _figureTemplates[0];
         _figure = new FigureCanvasViewModel(_selectedFigureTemplate);
+        Sources.CollectionChanged += OnSourcesCollectionChanged;
         foreach (FigureExportProfile profile in FigureExportProfile.BuiltIns)
         {
             var editor = new ExportProfileEditorViewModel(profile);
@@ -163,6 +167,9 @@ public sealed class MainWindowViewModel : ObservableObject
         AddCurrentCropToBatchQueueCommand = new RelayCommand(
             AddCurrentCropToBatchQueue,
             () => HasSelection && Crop.TryGetCrop(out _) && !IsBusy);
+        AutoTrimCurrentSourceCommand = new RelayCommand(
+            AutoTrimCurrentSource,
+            () => HasSelection && !IsBusy);
         RemoveSelectedBatchCropCommand = new RelayCommand(
             RemoveSelectedBatchCrop,
             () => SelectedBatchCrop is not null && !IsBusy);
@@ -287,6 +294,8 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public RelayCommand AddCurrentCropToBatchQueueCommand { get; }
 
+    public RelayCommand AutoTrimCurrentSourceCommand { get; }
+
     public RelayCommand RemoveSelectedBatchCropCommand { get; }
 
     public RelayCommand ClearBatchCropQueueCommand { get; }
@@ -294,6 +303,20 @@ public sealed class MainWindowViewModel : ObservableObject
 
 
     public ObservableCollection<SourceAssetItemViewModel> Sources { get; } = [];
+
+    public ObservableCollection<SourceAssetItemViewModel> AssetsView { get; } = [];
+
+    public string AssetSearchText
+    {
+        get => _assetSearchText;
+        set
+        {
+            if (SetProperty(ref _assetSearchText, value ?? string.Empty))
+            {
+                RefreshAssetLibrary();
+            }
+        }
+    }
 
     public ObservableCollection<BatchCropQueueItemViewModel> BatchCropQueue { get; } = [];
 
@@ -336,6 +359,20 @@ public sealed class MainWindowViewModel : ObservableObject
         $"{FigureQcIssues.Count(issue => issue.Severity == FigurePreflightSeverity.Error)} 错误 · " +
         $"{FigureQcIssues.Count(issue => issue.Severity == FigurePreflightSeverity.Warning)} 提醒 · " +
         $"{FigureQcIssues.Count(issue => issue.Severity == FigurePreflightSeverity.Info)} 信息";
+
+    public int FigureQcMinimumDpi
+    {
+        get => _figureQcMinimumDpi;
+        set
+        {
+            int normalized = Math.Clamp(value, 1, 2400);
+            if (SetProperty(ref _figureQcMinimumDpi, normalized))
+            {
+                MarkFigureQcStale();
+                MarkDirty();
+            }
+        }
+    }
 
     public IntensityProfileResult? IntensityProfile
     {
@@ -766,6 +803,8 @@ public sealed class MainWindowViewModel : ObservableObject
                 OnPropertyChanged(nameof(FigureWorkspaceVisibility));
                 OnPropertyChanged(nameof(WorkspaceModeText));
                 OnPropertyChanged(nameof(MeasurementDockVisibility));
+                OnPropertyChanged(nameof(IsAssetWorkspaceActive));
+                OnPropertyChanged(nameof(IsFigureWorkspaceActive));
                 MarkDirty();
             }
         }
@@ -776,6 +815,10 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public Visibility FigureWorkspaceVisibility =>
         WorkspaceMode == WorkspaceMode.Figure ? Visibility.Visible : Visibility.Collapsed;
+
+    public bool IsAssetWorkspaceActive => WorkspaceMode == WorkspaceMode.Crop;
+
+    public bool IsFigureWorkspaceActive => WorkspaceMode == WorkspaceMode.Figure;
 
     public bool IsLayersTabActive
     {
@@ -2380,7 +2423,8 @@ public sealed class MainWindowViewModel : ObservableObject
                     FigurePreflightResult preflight = FigurePreflight.Check(
                         variant,
                         figureSources,
-                        IsDirty);
+                        IsDirty,
+                        CreateFigurePreflightConfiguration());
                     if (preflight.HasErrors)
                     {
                         throw new InvalidDataException(string.Join(Environment.NewLine, preflight.Issues
@@ -2511,6 +2555,7 @@ public sealed class MainWindowViewModel : ObservableObject
             SelectedBatchCrop = null;
             OnPropertyChanged(nameof(BatchCropQueueSummary));
             ReplaceFigure(_selectedFigureTemplate, markDirty: false);
+            FigureQcMinimumDpi = 300;
             SelectedSource = null;
             Crop.Reset();
             WorkspaceMode = WorkspaceMode.Crop;
@@ -2583,7 +2628,8 @@ public sealed class MainWindowViewModel : ObservableObject
                 LockCropSizeAcrossSources,
                 IsCropOverlayVisible,
                 _auditTrail,
-                CreateValidatedExportProfiles());
+                CreateValidatedExportProfiles(),
+                FigureQcMinimumDpi);
 
             string? previousProjectPath = _projectPath;
             await _projectStore.SaveAsync(normalizedPath, document);
@@ -2739,6 +2785,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 {
                     (SourceAssetItemViewModel item, bool relinked) =
                         await ResolveProjectSourceAsync(snapshot);
+                    item.RestoreSourceRevision(snapshot.SourceRevision);
                     restoredSources.Add(item);
                     sourceMap.Add(snapshot.Id, item);
                     if (relinked)
@@ -2866,6 +2913,7 @@ public sealed class MainWindowViewModel : ObservableObject
         try
         {
             ReplaceFigure(projectTemplate, markDirty: false);
+            FigureQcMinimumDpi = document.Workspace.MinimumEffectiveDpi;
             Sources.Clear();
             BatchCropQueue.Clear();
             SelectedBatchCrop = null;
@@ -2975,6 +3023,10 @@ public sealed class MainWindowViewModel : ObservableObject
 
                 restored.Label = layer.PanelLabel ?? restored.Label;
                 restored.CropLinkGroupId = layer.CropLinkGroupId;
+                restored.RestoreWorkspaceState(
+                    ProjectDocumentMapper.ParsePanelFitMode(layer.FitMode),
+                    layer.RotationDegrees,
+                    ProjectDocumentMapper.ToScientificValidity(layer.ScientificValidity));
 
                 if (scaleBars.TryGetValue(layer.Id, out ProjectScaleBarSnapshot? scaleBar))
                 {
@@ -3220,6 +3272,28 @@ public sealed class MainWindowViewModel : ObservableObject
         MarkDirty();
     }
 
+    private void AutoTrimCurrentSource()
+    {
+        SourceAssetItemViewModel? source = SelectedSource;
+        if (source is null)
+        {
+            return;
+        }
+
+        AutoTrimPreviewResult? suggestion = WpfAutoTrimAnalyzer.Suggest(
+            source.Preview,
+            source.Asset.Metadata.PixelSize);
+        if (suggestion is null)
+        {
+            StatusMessage = "Auto Trim 未发现可安全移除的白色或透明边界";
+            return;
+        }
+
+        Crop.RestoreForSource(source.Asset.Metadata.PixelSize, suggestion.Crop);
+        StatusMessage = $"已应用 Auto Trim 建议 · {suggestion.Crop.Width:N0} × {suggestion.Crop.Height:N0} px · {suggestion.Reason} · 可撤销";
+        CompleteHistoryGesture();
+    }
+
     private void OnFigureDocumentChanged(object? sender, EventArgs e)
     {
         OnPropertyChanged(nameof(IsTemplateSelectionEnabled));
@@ -3227,8 +3301,45 @@ public sealed class MainWindowViewModel : ObservableObject
         ExportFigureVariantsCommand.NotifyCanExecuteChanged();
         AddCurrentCropToFigureCommand.NotifyCanExecuteChanged();
         ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
+        RefreshAssetUsageCounts();
         MarkFigureQcStale();
         MarkDirty();
+    }
+
+    private bool FilterAsset(object item)
+    {
+        if (item is not SourceAssetItemViewModel source ||
+            string.IsNullOrWhiteSpace(AssetSearchText))
+        {
+            return true;
+        }
+
+        string query = AssetSearchText.Trim();
+        return source.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+               source.OriginalPath.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+               source.AssetKindText.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+               source.LinkStateText.Contains(query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void OnSourcesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
+        RefreshAssetLibrary();
+
+    private void RefreshAssetLibrary()
+    {
+        SourceAssetItemViewModel[] visible = Sources.Where(FilterAsset).ToArray();
+        AssetsView.Clear();
+        foreach (SourceAssetItemViewModel source in visible)
+        {
+            AssetsView.Add(source);
+        }
+    }
+
+    private void RefreshAssetUsageCounts()
+    {
+        foreach (SourceAssetItemViewModel source in Sources)
+        {
+            source.UpdateUsageCount(Figure.Panels.Count(panel => panel.Source.Asset.Id == source.Asset.Id));
+        }
     }
 
     private void ApplySmartLayout()
@@ -3411,10 +3522,16 @@ public sealed class MainWindowViewModel : ObservableObject
         FigurePreflightResult result = FigurePreflight.Check(
             document,
             Sources.Select(item => item.Asset).ToArray(),
-            IsDirty);
+            IsDirty,
+            CreateFigurePreflightConfiguration());
         UpdateFigureQcIssues(result);
         return result;
     }
+
+    private FigurePreflightConfiguration CreateFigurePreflightConfiguration() => new()
+    {
+        MinimumEffectiveDpi = FigureQcMinimumDpi,
+    };
 
     private void UpdateFigureQcIssues(FigurePreflightResult result)
     {
@@ -3608,6 +3725,7 @@ public sealed class MainWindowViewModel : ObservableObject
             Figure.IsSnappingEnabled,
             Figure.SnapTolerancePixels,
             Figure.ExactSpacingPixels,
+            FigureQcMinimumDpi,
             Figure.Panels
                 .OrderBy(panel => panel.ZIndex)
                 .Select(panel => new PanelHistorySnapshot(
@@ -3628,7 +3746,10 @@ public sealed class MainWindowViewModel : ObservableObject
                     panel.FrameIndex,
                     panel.Adjustments,
                     panel.IsAspectRatioLocked,
-                    panel.CropLinkGroupId))
+                    panel.CropLinkGroupId,
+                    panel.FitMode,
+                    panel.RotationDegrees,
+                    panel.ReplacementValidity))
                 .ToArray(),
             Figure.Annotations
                 .OrderBy(annotation => annotation.ZIndex)
@@ -3729,6 +3850,10 @@ public sealed class MainWindowViewModel : ObservableObject
                 restored.ScaleBarShowLabel = panelSnapshot.ScaleBarShowLabel;
                 restored.ShowScaleBar = panelSnapshot.ShowScaleBar;
                 restored.CropLinkGroupId = panelSnapshot.CropLinkGroupId;
+                restored.RestoreWorkspaceState(
+                    panelSnapshot.FitMode,
+                    panelSnapshot.RotationDegrees,
+                    panelSnapshot.ReplacementValidity);
             }
 
             foreach (AnnotationHistorySnapshot annotation in
@@ -3802,6 +3927,7 @@ public sealed class MainWindowViewModel : ObservableObject
             Figure.IsSnappingEnabled = snapshot.SnappingEnabled;
             Figure.SnapTolerancePixels = snapshot.SnapTolerancePixels;
             Figure.ExactSpacingPixels = snapshot.ExactSpacingPixels;
+            FigureQcMinimumDpi = snapshot.FigureQcMinimumDpi;
             Figure.BackgroundColor = snapshot.BackgroundColor;
             Figure.RestoreGlobalStyle(snapshot.GlobalStyle);
             Figure.RestoreScientificColors(snapshot.ScientificColors);
@@ -3911,7 +4037,8 @@ public sealed class MainWindowViewModel : ObservableObject
                 LockCropSizeAcrossSources,
                 IsCropOverlayVisible,
                 _auditTrail,
-                CreateValidatedExportProfiles());
+                CreateValidatedExportProfiles(),
+                FigureQcMinimumDpi);
 
             await _projectRecoveryStore.SaveAsync(_projectId, _projectPath, document);
             AutosaveStatusText = $"自动保存 {DateTime.Now:HH:mm:ss}";
@@ -3969,6 +4096,7 @@ public sealed class MainWindowViewModel : ObservableObject
         Figure = new FigureCanvasViewModel(template);
         Figure.DocumentChanged += OnFigureDocumentChanged;
         Figure.EditCompleted += OnFigureEditCompleted;
+        RefreshAssetUsageCounts();
         FigureQcIssues.Clear();
         SelectedFigureQcIssue = null;
         _isFigureQcStale = true;

@@ -5,6 +5,7 @@ using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Cropping;
 using SciCanvas.Core.Images;
 using SciCanvas.Core.Science;
+using SciCanvas.Core.Workspace;
 using SciCanvas.Imaging;
 using SciCanvas.Templates;
 
@@ -32,17 +33,28 @@ public sealed class FigurePanelViewModel : ObservableObject
     private ImageAdjustmentParameters _adjustments = new();
     private int _frameIndex;
     private Guid? _cropLinkGroupId;
+    private readonly int _figureDpi;
+    private PanelFitMode _fitMode = PanelFitMode.Manual;
+    private NormalizedRect _manualCrop;
+    private double _rotationDegrees;
+    private ScientificValidity _replacementValidity = ScientificValidity.Valid;
 
     public FigurePanelViewModel(
         SourceAssetItemViewModel source,
         PixelRect64 sourceRect,
         TemplateSlotLayout slot,
         int zIndex,
+        int figureDpi,
         Guid? id = null)
     {
         Source = source ?? throw new ArgumentNullException(nameof(source));
         Id = id ?? Guid.NewGuid();
         SourceRect = sourceRect;
+        _figureDpi = Math.Max(1, figureDpi);
+        _manualCrop = NormalizedRect.FromSourcePixels(
+            sourceRect,
+            source.Asset.Metadata.PixelSize.Width,
+            source.Asset.Metadata.PixelSize.Height);
         SlotId = slot.Id;
         _label = slot.Label;
         Role = slot.Role;
@@ -72,6 +84,95 @@ public sealed class FigurePanelViewModel : ObservableObject
     public Guid Id { get; }
 
     public PixelRect64 SourceRect { get; private set; }
+
+    public NormalizedRect NormalizedCrop => NormalizedRect.FromSourcePixels(
+        SourceRect,
+        Source.Asset.Metadata.PixelSize.Width,
+        Source.Asset.Metadata.PixelSize.Height);
+
+    public FigureRectMm FrameMm => new(XMm, YMm, WidthMm, HeightMm);
+
+    public PanelFitMode FitMode
+    {
+        get => _fitMode;
+        set
+        {
+            if (_fitMode == value)
+            {
+                return;
+            }
+
+            if (_fitMode == PanelFitMode.Manual)
+            {
+                _manualCrop = NormalizedCrop;
+            }
+
+            _fitMode = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(FitModeText));
+            ApplyFitModeCrop();
+        }
+    }
+
+    public IReadOnlyList<PanelFitMode> AvailableFitModes { get; } =
+        [PanelFitMode.Fit, PanelFitMode.Fill, PanelFitMode.Manual];
+
+    public string FitModeText => FitMode switch
+    {
+        PanelFitMode.Fit => "Fit · 完整显示",
+        PanelFitMode.Fill => "Fill · 填满画框",
+        _ => "Manual Crop · 手动裁剪",
+    };
+
+    public double RotationDegrees
+    {
+        get => _rotationDegrees;
+        set
+        {
+            double normalized = double.IsFinite(value)
+                ? ((value % 360) + 360) % 360
+                : 0;
+            SetProperty(ref _rotationDegrees, normalized);
+        }
+    }
+
+    public ScientificValidity ReplacementValidity
+    {
+        get => _replacementValidity;
+        private set
+        {
+            if (Equals(_replacementValidity, value))
+            {
+                return;
+            }
+
+            _replacementValidity = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(RequiresScientificReview));
+            OnPropertyChanged(nameof(ScientificValidityText));
+        }
+    }
+
+    public bool RequiresScientificReview =>
+        ReplacementValidity.State is ScientificValidityState.ReviewRequired or ScientificValidityState.Invalid;
+
+    public string ScientificValidityText => ReplacementValidity.State switch
+    {
+        ScientificValidityState.Valid => "科学对象有效",
+        ScientificValidityState.Warning => $"警告 · {string.Join("；", ReplacementValidity.Reasons)}",
+        ScientificValidityState.Invalid => $"无效 · {string.Join("；", ReplacementValidity.Reasons)}",
+        _ => $"需复核 · {string.Join("；", ReplacementValidity.Reasons)}",
+    };
+
+    internal void RestoreWorkspaceState(
+        PanelFitMode fitMode,
+        double rotationDegrees,
+        ScientificValidity validity)
+    {
+        RotationDegrees = rotationDegrees;
+        ReplacementValidity = validity ?? ScientificValidity.Valid;
+        FitMode = fitMode;
+    }
 
     public bool IsInset => SlotId.StartsWith("inset:", StringComparison.Ordinal);
 
@@ -186,8 +287,14 @@ public sealed class FigurePanelViewModel : ObservableObject
             throw new InvalidOperationException("替换面板时，裁剪区域必须位于新源图边界内。");
         }
 
+        Guid previousAssetId = Source.Asset.Id;
         Source = source;
         SourceRect = sourceRect;
+        _manualCrop = NormalizedRect.FromSourcePixels(
+            sourceRect,
+            source.Asset.Metadata.PixelSize.Width,
+            source.Asset.Metadata.PixelSize.Height);
+        _fitMode = PanelFitMode.Manual;
         _frameIndex = Math.Clamp(_frameIndex, 0, FrameCount - 1);
         double physicalUnitsPerPixel = source.Asset.Metadata.PhysicalSizeX ?? 0;
         _physicalUnitsPerSourcePixel = physicalUnitsPerPixel;
@@ -198,11 +305,24 @@ public sealed class FigurePanelViewModel : ObservableObject
         }
         else
         {
-            _showScaleBar = false;
+            ReplacementValidity = ScientificValidity.Invalid(
+                "新源图缺少有效尺度校准；比例尺不可用于科学输出。");
+        }
+        if (previousAssetId != source.Asset.Id && physicalUnitsPerPixel > 0)
+        {
+            ReplacementValidity = ScientificValidity.ReviewRequired(
+                "源图已替换；标注、测量、ROI、Inset 与色条必须复核。");
+        }
+        else if (previousAssetId == source.Asset.Id)
+        {
+            ReplacementValidity = ScientificValidity.Valid;
         }
         _preview = CreateCropPreview(source, sourceRect, _adjustments, _frameIndex);
         OnPropertyChanged(nameof(Source));
         OnPropertyChanged(nameof(SourceRect));
+        OnPropertyChanged(nameof(NormalizedCrop));
+        OnPropertyChanged(nameof(FitMode));
+        OnPropertyChanged(nameof(FitModeText));
         OnPropertyChanged(nameof(AspectRatioText));
         OnPropertyChanged(nameof(ScalePercent));
         OnPropertyChanged(nameof(SizeStatusText));
@@ -284,13 +404,27 @@ public sealed class FigurePanelViewModel : ObservableObject
     public long X
     {
         get => _x;
-        set => SetProperty(ref _x, value);
+        set
+        {
+            if (SetProperty(ref _x, value))
+            {
+                OnPropertyChanged(nameof(XMm));
+                OnPropertyChanged(nameof(FrameMm));
+            }
+        }
     }
 
     public long Y
     {
         get => _y;
-        set => SetProperty(ref _y, value);
+        set
+        {
+            if (SetProperty(ref _y, value))
+            {
+                OnPropertyChanged(nameof(YMm));
+                OnPropertyChanged(nameof(FrameMm));
+            }
+        }
     }
 
     public long Width
@@ -303,6 +437,30 @@ public sealed class FigurePanelViewModel : ObservableObject
     {
         get => _height;
         set => SetHeight(value);
+    }
+
+    public double XMm
+    {
+        get => PixelsToMillimeters(X);
+        set => X = MillimetersToPixels(value);
+    }
+
+    public double YMm
+    {
+        get => PixelsToMillimeters(Y);
+        set => Y = MillimetersToPixels(value);
+    }
+
+    public double WidthMm
+    {
+        get => PixelsToMillimeters(Width);
+        set => Width = Math.Max(1, MillimetersToPixels(value));
+    }
+
+    public double HeightMm
+    {
+        get => PixelsToMillimeters(Height);
+        set => Height = Math.Max(1, MillimetersToPixels(value));
     }
 
     /// <summary>Locks panel resizing to the source crop aspect ratio.</summary>
@@ -524,9 +682,12 @@ public sealed class FigurePanelViewModel : ObservableObject
 
     public PixelRect64 DestinationRect => new(X, Y, Width, Height);
 
-    public double EffectiveDpi => Math.Min(
-        SourceRect.Width / (Width / 300.0),
-        SourceRect.Height / (Height / 300.0));
+    public double EffectiveDpi => EffectiveDpiCalculator.Calculate(
+        Source.Asset.Metadata.PixelSize.Width,
+        Source.Asset.Metadata.PixelSize.Height,
+        NormalizedCrop,
+        WidthMm,
+        HeightMm);
 
     public string EffectiveDpiText => $"有效分辨率约 {EffectiveDpi:0} dpi";
 
@@ -562,7 +723,8 @@ public sealed class FigurePanelViewModel : ObservableObject
         if (!calibration.IsValid)
         {
             PhysicalUnitsPerSourcePixel = 0;
-            ShowScaleBar = false;
+            ReplacementValidity = ScientificValidity.Invalid(
+                "源图缺少有效校准；比例尺保持可见但已标记为无效。");
             return;
         }
 
@@ -584,6 +746,24 @@ public sealed class FigurePanelViewModel : ObservableObject
         OnPropertyChanged(nameof(EffectiveDpiText));
         OnPropertyChanged(nameof(IsBelowMinimumDpi));
         NotifyScaleBarGeometryChanged();
+    }
+
+    private void ApplyFitModeCrop()
+    {
+        NormalizedRect crop = PanelCropCalculator.Resolve(
+            FitMode,
+            Source.Asset.Metadata.PixelSize.Width,
+            Source.Asset.Metadata.PixelSize.Height,
+            FrameMm,
+            _manualCrop);
+        SourceRect = crop.ToSourcePixels(
+            Source.Asset.Metadata.PixelSize.Width,
+            Source.Asset.Metadata.PixelSize.Height);
+        RefreshPreview();
+        OnPropertyChanged(nameof(SourceRect));
+        OnPropertyChanged(nameof(NormalizedCrop));
+        OnPropertyChanged(nameof(AspectRatioText));
+        OnPropertyChanged(nameof(ScalePercent));
     }
 
     private void UpdateAdjustment(Func<ImageAdjustmentParameters, ImageAdjustmentParameters> update)
@@ -629,12 +809,19 @@ public sealed class FigurePanelViewModel : ObservableObject
 
         OnPropertyChanged(nameof(Width));
         OnPropertyChanged(nameof(Height));
+        OnPropertyChanged(nameof(WidthMm));
+        OnPropertyChanged(nameof(HeightMm));
+        OnPropertyChanged(nameof(FrameMm));
         OnPropertyChanged(nameof(ScalePercent));
         OnPropertyChanged(nameof(SizeStatusText));
         OnPropertyChanged(nameof(EffectiveDpi));
         OnPropertyChanged(nameof(EffectiveDpiText));
         OnPropertyChanged(nameof(IsBelowMinimumDpi));
         NotifyScaleBarGeometryChanged();
+        if (FitMode == PanelFitMode.Fill)
+        {
+            ApplyFitModeCrop();
+        }
     }
 
     internal void RestoreDestinationSize(PixelRect64 destination, bool lockAspectRatio)
@@ -653,6 +840,9 @@ public sealed class FigurePanelViewModel : ObservableObject
 
         OnPropertyChanged(nameof(Width));
         OnPropertyChanged(nameof(Height));
+        OnPropertyChanged(nameof(WidthMm));
+        OnPropertyChanged(nameof(HeightMm));
+        OnPropertyChanged(nameof(FrameMm));
         OnPropertyChanged(nameof(IsAspectRatioLocked));
         OnPropertyChanged(nameof(ScalePercent));
         OnPropertyChanged(nameof(SizeStatusText));
@@ -699,6 +889,14 @@ public sealed class FigurePanelViewModel : ObservableObject
     }
 
     private static long NormalizeDimension(long value) => Math.Max(1, value);
+
+    private double PixelsToMillimeters(long pixels) => pixels / (double)_figureDpi * 25.4;
+
+    private long MillimetersToPixels(double millimeters)
+    {
+        double normalized = double.IsFinite(millimeters) ? Math.Max(0, millimeters) : 0;
+        return Math.Max(0, (long)Math.Round(normalized / 25.4 * _figureDpi));
+    }
 
     private double ContainedScale => Math.Min(
         Width / (double)SourceRect.Width,

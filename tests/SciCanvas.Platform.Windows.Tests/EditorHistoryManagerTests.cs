@@ -63,6 +63,7 @@ public sealed class EditorHistoryManagerTests
         true,
         12,
         24,
+        300,
         [],
         [],
         [],

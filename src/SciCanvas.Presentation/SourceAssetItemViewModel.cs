@@ -15,6 +15,8 @@ public sealed class SourceAssetItemViewModel : ObservableObject
     private BitmapSource _preview;
     private readonly Dictionary<int, BitmapSource> _framePreviews = [];
     private ScientificMeasurementViewModel? _selectedMeasurement;
+    private long _sourceRevision = 1;
+    private int _usageCount;
 
     public SourceAssetItemViewModel(SourceAsset asset, BitmapSource preview)
     {
@@ -37,6 +39,41 @@ public sealed class SourceAssetItemViewModel : ObservableObject
     public event EventHandler? MeasurementSelectionChanged;
 
     public SourceAsset Asset => _asset;
+
+    public long SourceRevision => _sourceRevision;
+
+    public string SourceRevisionText => $"Revision {_sourceRevision}";
+
+    public string LinkStateText => Asset.LinkState switch
+    {
+        SourceLinkState.Verified => "Verified",
+        SourceLinkState.Relocated => "Relinked",
+        SourceLinkState.Modified => "Changed",
+        SourceLinkState.Missing => "Missing",
+        _ => "Unverified",
+    };
+
+    public string AssetKindText
+    {
+        get
+        {
+            string value = DisplayName.ToLowerInvariant();
+            if (value.Contains("sem")) return "SEM";
+            if (value.Contains("stem")) return "STEM";
+            if (value.Contains("tem")) return "TEM";
+            if (value.Contains("ebsd")) return "EBSD";
+            if (value.Contains("eds") || value.Contains("edx")) return "EDS";
+            if (value.Contains("afm")) return "AFM";
+            if (value.Contains("xrd")) return "XRD";
+            if (value.Contains("graph") || value.Contains("plot")) return "Graph";
+            if (value.Contains("schematic")) return "Schematic";
+            return "Other";
+        }
+    }
+
+    public int UsageCount => _usageCount;
+
+    public string UsageText => _usageCount == 0 ? "未使用" : $"{_usageCount} 个 Panel";
 
     public BitmapSource Preview => _preview;
 
@@ -334,6 +371,7 @@ public sealed class SourceAssetItemViewModel : ObservableObject
         }
 
         _asset = asset;
+        _sourceRevision++;
         _preview = preview;
         _framePreviews.Clear();
         _framePreviews[0] = preview;
@@ -342,6 +380,9 @@ public sealed class SourceAssetItemViewModel : ObservableObject
             asset.Metadata.PhysicalSizeY,
             asset.Metadata.PhysicalUnit);
         OnPropertyChanged(nameof(Asset));
+        OnPropertyChanged(nameof(SourceRevision));
+        OnPropertyChanged(nameof(SourceRevisionText));
+        OnPropertyChanged(nameof(LinkStateText));
         OnPropertyChanged(nameof(Preview));
         OnPropertyChanged(nameof(DisplayName));
         OnPropertyChanged(nameof(OriginalPath));
@@ -354,6 +395,26 @@ public sealed class SourceAssetItemViewModel : ObservableObject
         OnPropertyChanged(nameof(OmeText));
         OnPropertyChanged(nameof(DetailsText));
         OnPropertyChanged(nameof(Sha256Short));
+    }
+
+    internal void RestoreSourceRevision(long sourceRevision)
+    {
+        _sourceRevision = Math.Max(1, sourceRevision);
+        OnPropertyChanged(nameof(SourceRevision));
+        OnPropertyChanged(nameof(SourceRevisionText));
+    }
+
+    internal void UpdateUsageCount(int usageCount)
+    {
+        int normalized = Math.Max(0, usageCount);
+        if (_usageCount == normalized)
+        {
+            return;
+        }
+
+        _usageCount = normalized;
+        OnPropertyChanged(nameof(UsageCount));
+        OnPropertyChanged(nameof(UsageText));
     }
 
     private void OnCalibrationChanged(object? sender, EventArgs e)

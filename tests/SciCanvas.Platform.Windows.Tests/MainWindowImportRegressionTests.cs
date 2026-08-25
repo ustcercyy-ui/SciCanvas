@@ -228,6 +228,98 @@ public sealed class MainWindowImportRegressionTests
     }
 
     [Fact]
+    public void V2ScientificFigureWorkspace_RendersAndCanCaptureVisualEvidence()
+    {
+        string? capturePath = Environment.GetEnvironmentVariable("SCICANVAS_QA_V2_SCREENSHOT_PATH");
+        WpfTestHost.Invoke(() =>
+        {
+            MainWindow? window = null;
+            try
+            {
+                MainWindowViewModel viewModel = CreateViewModel();
+                SourceAssetItemViewModel source = CreateMeasurementSourceItem();
+                source.Calibration.Restore(
+                    new SpatialCalibration(
+                        source.Asset.Id,
+                        0.001603,
+                        0.001603,
+                        "µm",
+                        CalibrationOrigin.Manual),
+                    90,
+                    85,
+                    402,
+                    85);
+                viewModel.Sources.Add(source);
+                viewModel.SelectedSource = source;
+                viewModel.WorkspaceMode = WorkspaceMode.Figure;
+                FigurePanelViewModel panel = Assert.IsType<FigurePanelViewModel>(
+                    viewModel.Figure.AddPanel(
+                        source,
+                        new PixelRect64(120, 80, 760, 600)));
+                panel.FitMode = SciCanvas.Core.Workspace.PanelFitMode.Fill;
+                panel.ShowScaleBar = true;
+                panel.ApplySpatialCalibration(source.Calibration.Calibration);
+                viewModel.RunFigureQcCommand.Execute(null);
+
+                window = new MainWindow
+                {
+                    DataContext = viewModel,
+                    Width = 1600,
+                    Height = 1000,
+                    WindowState = WindowState.Normal,
+                };
+                window.Show();
+                window.UpdateLayout();
+                var screenshot = new RenderTargetBitmap(
+                    Math.Max(1, (int)Math.Round(window.ActualWidth)),
+                    Math.Max(1, (int)Math.Round(window.ActualHeight)),
+                    96,
+                    96,
+                    PixelFormats.Pbgra32);
+                screenshot.Render(window);
+                if (!string.IsNullOrWhiteSpace(capturePath))
+                {
+                    string fullPath = Path.GetFullPath(capturePath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+                    var encoder = new PngBitmapEncoder();
+                    encoder.Frames.Add(BitmapFrame.Create(screenshot));
+                    using FileStream output = new(fullPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                    encoder.Save(output);
+
+                    var inspector = Assert.IsType<ScrollViewer>(window.FindName("InspectorScrollViewer"));
+                    inspector.ScrollToVerticalOffset(1050);
+                    window.UpdateLayout();
+                    var panelScreenshot = new RenderTargetBitmap(
+                        Math.Max(1, (int)Math.Round(window.ActualWidth)),
+                        Math.Max(1, (int)Math.Round(window.ActualHeight)),
+                        96,
+                        96,
+                        PixelFormats.Pbgra32);
+                    panelScreenshot.Render(window);
+                    var panelEncoder = new PngBitmapEncoder();
+                    panelEncoder.Frames.Add(BitmapFrame.Create(panelScreenshot));
+                    string panelPath = Path.Combine(
+                        Path.GetDirectoryName(fullPath)!,
+                        $"{Path.GetFileNameWithoutExtension(fullPath)}-panel{Path.GetExtension(fullPath)}");
+                    using FileStream panelOutput = new(panelPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                    panelEncoder.Save(panelOutput);
+                }
+
+                window.DataContext = null;
+                window.Close();
+            }
+            finally
+            {
+                if (window?.IsVisible == true)
+                {
+                    window.DataContext = null;
+                    window.Close();
+                }
+            }
+        }, TimeSpan.FromSeconds(15));
+    }
+
+    [Fact]
     public void Stage1MeasurementWorkspace_RendersAndCanCaptureVisualEvidence()
     {
         string? capturePath = Environment.GetEnvironmentVariable("SCICANVAS_QA_SCREENSHOT_PATH");

@@ -861,7 +861,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
             return null;
         }
 
-        var panel = new FigurePanelViewModel(source, sourceRect, slot, Panels.Count);
+        var panel = new FigurePanelViewModel(source, sourceRect, slot, Panels.Count, _layout.Dpi);
         panel.PropertyChanged += OnPanelPropertyChanged;
         Panels.Add(panel);
         RenumberPanelLabels(force: false);
@@ -896,7 +896,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
             return null;
         }
 
-        var panel = new FigurePanelViewModel(source, sourceRect, slot, zIndex, layerId)
+        var panel = new FigurePanelViewModel(source, sourceRect, slot, zIndex, _layout.Dpi, layerId)
         {
             X = destinationRect.X,
             Y = destinationRect.Y,
@@ -1626,7 +1626,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
             Math.Max(0, CanvasHeight - height));
         string slotId = $"inset:{Guid.NewGuid():N}";
         TemplateSlotLayout slot = CreateInsetSlot(slotId, new PixelRect64(x, y, width, height));
-        var inset = new FigurePanelViewModel(reference.Source, insetCrop, slot, Panels.Count)
+        var inset = new FigurePanelViewModel(reference.Source, insetCrop, slot, Panels.Count, _layout.Dpi)
         {
             Adjustments = reference.Adjustments,
             FrameIndex = reference.FrameIndex,

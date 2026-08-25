@@ -2,6 +2,7 @@ using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
 using SciCanvas.Core.Science;
 using SciCanvas.Core.Export;
+using SciCanvas.Core.Workspace;
 
 namespace SciCanvas.Presentation;
 
@@ -26,6 +27,7 @@ internal sealed record EditorHistorySnapshot(
     bool SnappingEnabled,
     double SnapTolerancePixels,
     long ExactSpacingPixels,
+    int FigureQcMinimumDpi,
     IReadOnlyList<PanelHistorySnapshot> Panels,
     IReadOnlyList<AnnotationHistorySnapshot> Annotations,
     IReadOnlyList<GuideHistorySnapshot> Guides,
@@ -50,7 +52,10 @@ internal sealed record PanelHistorySnapshot(
     int FrameIndex,
     ImageAdjustmentParameters Adjustments,
     bool IsAspectRatioLocked,
-    Guid? CropLinkGroupId);
+    Guid? CropLinkGroupId,
+    PanelFitMode FitMode,
+    double RotationDegrees,
+    ScientificValidity ReplacementValidity);
 
 internal sealed record AnnotationHistorySnapshot(
     Guid Id,
