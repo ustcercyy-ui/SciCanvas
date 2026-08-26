@@ -61,6 +61,65 @@ public sealed class MainWindowImportRegressionTests
             }
         }, TimeSpan.FromSeconds(15));
     }
+    [Fact]
+    public void WorkspacePanels_CollapseAndExpandToIncreaseCanvasSpace()
+    {
+        WpfTestHost.Invoke(() =>
+        {
+            MainWindow? window = null;
+            try
+            {
+                MainWindowViewModel viewModel = CreateViewModel();
+                SourceAssetItemViewModel source = CreateSourceItem();
+                viewModel.Sources.Add(source);
+                viewModel.SelectedSource = source;
+                window = new MainWindow
+                {
+                    DataContext = viewModel,
+                    Width = 1280,
+                    Height = 820,
+                };
+                window.Show();
+                window.UpdateLayout();
+
+                var viewport = Assert.IsType<ScrollViewer>(window.FindName("ImageViewport"));
+                double widthBefore = viewport.ActualWidth;
+                var leftColumn = Assert.IsType<ColumnDefinition>(window.FindName("LeftSidebarColumn"));
+                var rightColumn = Assert.IsType<ColumnDefinition>(window.FindName("RightSidebarColumn"));
+                var headerArea = Assert.IsType<Grid>(window.FindName("HeaderCommandArea"));
+                var dock = Assert.IsType<Border>(window.FindName("MeasurementDockPanel"));
+                var leftToggle = Assert.IsType<Button>(window.FindName("LeftSidebarToggleButton"));
+                var rightToggle = Assert.IsType<Button>(window.FindName("RightSidebarToggleButton"));
+                var headerToggle = Assert.IsType<Button>(window.FindName("HeaderToggleButton"));
+                var dockToggle = Assert.IsType<Button>(window.FindName("MeasurementDockToggleButton"));
+
+                leftToggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                rightToggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                headerToggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                dockToggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                window.UpdateLayout();
+
+                Assert.Equal(34, leftColumn.ActualWidth);
+                Assert.Equal(34, rightColumn.ActualWidth);
+                Assert.Equal(Visibility.Collapsed, headerArea.Visibility);
+                Assert.Equal(36, dock.Height);
+                Assert.True(viewport.ActualWidth > widthBefore);
+
+                leftToggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                rightToggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                Assert.True(leftColumn.Width.IsStar);
+                Assert.True(rightColumn.Width.IsStar);
+            }
+            finally
+            {
+                if (window is not null)
+                {
+                    window.DataContext = null;
+                    window.Close();
+                }
+            }
+        }, TimeSpan.FromSeconds(15));
+    }
 
     [Fact]
     public void CropPointerGesture_DefersHistoryWorkUntilPointerRelease()
@@ -608,6 +667,125 @@ public sealed class MainWindowImportRegressionTests
     }
 
     [Fact]
+    public void MeasurementDrawingStyle_CarriesAcrossConsecutiveMeasurements()
+    {
+        MainWindowViewModel viewModel = CreateViewModel();
+        SourceAssetItemViewModel source = CreateMeasurementSourceItem();
+        viewModel.Sources.Add(source);
+        viewModel.SelectedSource = source;
+        viewModel.ActiveScienceTool = ScientificToolMode.Length;
+
+        Assert.True(viewModel.BeginScientificGesture(20, 30));
+        viewModel.UpdateScientificGesture(120, 160);
+        viewModel.CompleteScientificGesture();
+        ScientificMeasurementViewModel first = Assert.Single(source.Measurements);
+        first.StrokeColor = "#FF7C3AED";
+        first.StrokeWidthPixels = 6;
+        first.LineStyle = "dash-dot";
+        first.MarkerSizePixels = 28;
+        first.ShowMarkers = false;
+        first.ShowLabel = false;
+        first.FillOpacityPercent = 24;
+
+        Assert.True(viewModel.BeginScientificGesture(220, 230));
+        viewModel.UpdateScientificGesture(420, 360);
+        viewModel.CompleteScientificGesture();
+
+        ScientificMeasurementViewModel second = source.Measurements.Single(item => item.Id != first.Id);
+        Assert.Equal(first.VisualStyle, second.VisualStyle);
+    }
+
+    [Fact]
+    public void FigureAnnotationStyle_CarriesAcrossAnnotationKinds()
+    {
+        MainWindowViewModel viewModel = CreateViewModel();
+        viewModel.Figure.AddArrowAnnotationCommand.Execute(null);
+        FigureAnnotationViewModel arrow = Assert.IsType<FigureAnnotationViewModel>(
+            viewModel.Figure.SelectedAnnotation);
+        arrow.Color = "#FF0EA5E9";
+        arrow.StrokeWidthPt = 2.75;
+        arrow.FontSizePt = 12;
+        arrow.IsBold = true;
+
+        viewModel.Figure.AddRectangleAnnotationCommand.Execute(null);
+
+        FigureAnnotationViewModel rectangle = Assert.IsType<FigureAnnotationViewModel>(
+            viewModel.Figure.SelectedAnnotation);
+        Assert.Equal(arrow.Color, rectangle.Color);
+        Assert.Equal(arrow.StrokeWidthPt, rectangle.StrokeWidthPt);
+        Assert.Equal(arrow.FontSizePt, rectangle.FontSizePt);
+        Assert.Equal(arrow.IsBold, rectangle.IsBold);
+    }
+
+    [Fact]
+    public void TemplateSwitchAndCustomCanvasSize_MigrateExistingFigureContent()
+    {
+        MainWindowViewModel viewModel = CreateViewModel();
+        SourceAssetItemViewModel source = CreateMeasurementSourceItem();
+        viewModel.Sources.Add(source);
+        viewModel.SelectedSource = source;
+        FigurePanelViewModel panel = Assert.IsType<FigurePanelViewModel>(
+            viewModel.Figure.AddPanel(source, new PixelRect64(0, 0, 600, 400)));
+        viewModel.Figure.AddArrowAnnotationCommand.Execute(null);
+        FigureAnnotationViewModel annotation = Assert.IsType<FigureAnnotationViewModel>(
+            viewModel.Figure.SelectedAnnotation);
+        viewModel.Figure.AddVerticalGuideCommand.Execute(null);
+        Guid panelId = panel.Id;
+        Guid annotationId = annotation.Id;
+
+        FigureTemplateDefinition alternate = viewModel.AvailableTemplates.First(
+            template => !string.Equals(template.Id, viewModel.Figure.Template.Id, StringComparison.Ordinal));
+        TemplateCanvasLayout alternateLayout = TemplateLayoutEngine.CreateLayout(alternate);
+        viewModel.SelectedFigureTemplate = alternate;
+
+        Assert.Equal(alternate.Id, viewModel.Figure.Template.Id);
+        FigurePanelViewModel switchedPanel = Assert.Single(
+            viewModel.Figure.Panels, item => item.Id == panelId);
+        Assert.Equal(alternateLayout.Slots[0].PixelRect, switchedPanel.DestinationRect);
+        Assert.Contains(viewModel.Figure.Annotations, item => item.Id == annotationId);
+        Assert.Single(viewModel.Figure.Guides);
+        int templateWidth = viewModel.Figure.CanvasWidth;
+        int templateHeight = viewModel.Figure.CanvasHeight;
+
+        viewModel.CustomCanvasWidth = 1432;
+        viewModel.CustomCanvasHeight = 987;
+        viewModel.ApplyCustomCanvasSizeCommand.Execute(null);
+
+        Assert.Equal(1432, viewModel.Figure.CanvasWidth);
+        Assert.Equal(987, viewModel.Figure.CanvasHeight);
+        FigurePanelViewModel migratedPanel = Assert.Single(viewModel.Figure.Panels);
+        Assert.InRange(migratedPanel.X, 0, viewModel.Figure.CanvasWidth - 1);
+        Assert.InRange(migratedPanel.Y, 0, viewModel.Figure.CanvasHeight - 1);
+        Assert.True(migratedPanel.X + migratedPanel.Width <= viewModel.Figure.CanvasWidth);
+        Assert.True(migratedPanel.Y + migratedPanel.Height <= viewModel.Figure.CanvasHeight);
+        Assert.Single(viewModel.Figure.Annotations);
+        Assert.Single(viewModel.Figure.Guides);
+
+        viewModel.UndoCommand.Execute(null);
+        Assert.Equal(templateWidth, viewModel.Figure.CanvasWidth);
+        Assert.Equal(templateHeight, viewModel.Figure.CanvasHeight);
+    }
+
+    [Fact]
+    public void NewProject_WhenCurrentProjectIsDirty_CanDiscardAndReplaceIt()
+    {
+        var prompt = new AlwaysDiscardUnsavedChangesPrompt();
+        MainWindowViewModel viewModel = CreateViewModel(unsavedChangesPrompt: prompt);
+        viewModel.Sources.Add(CreateSourceItem());
+        viewModel.Figure.BackgroundColor = "#FF101820";
+        Assert.True(viewModel.IsDirty);
+
+        viewModel.NewProjectCommand.Execute(null);
+
+        Assert.True(SpinWait.SpinUntil(
+            () => viewModel.Sources.Count == 0 && !viewModel.IsBusy,
+            TimeSpan.FromSeconds(2)));
+        Assert.Null(viewModel.ProjectPath);
+        Assert.False(viewModel.IsDirty);
+        Assert.Equal(1, prompt.CallCount);
+    }
+
+    [Fact]
     public void AssistedRegions_RequireHumanDecisionBeforeMeasurementsAreCreated()
     {
         MainWindowViewModel viewModel = CreateViewModel(new FixedAssistedRegionAnalyzer());
@@ -645,7 +823,8 @@ public sealed class MainWindowImportRegressionTests
     }
 
     private static MainWindowViewModel CreateViewModel(
-        IAssistedRegionAnalyzer? assistedRegionAnalyzer = null) => new(
+        IAssistedRegionAnalyzer? assistedRegionAnalyzer = null,
+        IUnsavedChangesPrompt? unsavedChangesPrompt = null) => new(
         new EmptyImageFilePicker(),
         new NoOpSourceAssetReader(),
         new NoOpPreviewLoader(),
@@ -656,7 +835,8 @@ public sealed class MainWindowImportRegressionTests
         new BuiltInTemplateCatalog().LoadAll(),
         new EmptyProjectFilePicker(),
         new NoOpProjectStore(),
-        assistedRegionAnalyzer: assistedRegionAnalyzer);
+        assistedRegionAnalyzer: assistedRegionAnalyzer,
+        unsavedChangesPrompt: unsavedChangesPrompt);
 
     private static PixelRect64 AssertCrop(CropEditorViewModel crop)
     {
@@ -811,6 +991,18 @@ public sealed class MainWindowImportRegressionTests
             CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
+    private sealed class AlwaysDiscardUnsavedChangesPrompt : IUnsavedChangesPrompt
+    {
+        public int CallCount { get; private set; }
+
+        public UnsavedChangesDecision ConfirmProjectReplacement(
+            string actionLabel,
+            string currentProjectDisplayName)
+        {
+            CallCount++;
+            return UnsavedChangesDecision.Discard;
+        }
+    }
     private sealed class EmptyProjectFilePicker : IProjectFilePicker
     {
         public string? PickProjectToOpen() => null;

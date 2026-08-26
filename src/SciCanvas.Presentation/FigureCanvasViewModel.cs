@@ -1169,12 +1169,20 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
     private void AddAnnotation(FigureAnnotationKind kind)
     {
+        FigureAnnotationViewModel? previous = SelectedAnnotation;
         var annotation = new FigureAnnotationViewModel(
             kind,
             CanvasWidth,
             CanvasHeight,
             Dpi,
-            Annotations.Count);
+            Annotations.Count)
+        {
+            Color = previous?.Color ??
+                    (kind == FigureAnnotationKind.Text ? GlobalTextColor : GlobalShapeColor),
+            FontSizePt = previous?.FontSizePt ?? GlobalFontSizePt,
+            StrokeWidthPt = previous?.StrokeWidthPt ?? GlobalStrokeWidthPt,
+            IsBold = previous?.IsBold ?? false,
+        };
         annotation.PropertyChanged += OnAnnotationPropertyChanged;
         Annotations.Add(annotation);
         SelectedAnnotation = annotation;

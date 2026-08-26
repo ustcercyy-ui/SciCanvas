@@ -607,11 +607,64 @@ public sealed class ProjectRoundTripIntegrationTests
         Assert.Contains("取消", viewModel.StatusMessage, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task OpenProjectCommand_WhenCurrentProjectIsDirty_CanDiscardAndOpenAnotherProject()
+    {
+        using var workspace = new TestWorkspace();
+        string currentPath = Path.Combine(workspace.Root, "current.scicanvas");
+        string otherPath = Path.Combine(workspace.Root, "other.scicanvas");
+        MainWindowViewModel seed = CreateViewModel();
+        await seed.SaveProjectToPathAsync(otherPath);
+
+        var prompt = new AlwaysDiscardUnsavedChangesPrompt();
+        MainWindowViewModel editor = CreateViewModel(
+            projectFilePicker: new FixedProjectPicker(otherPath),
+            unsavedChangesPrompt: prompt);
+        await editor.SaveProjectToPathAsync(currentPath);
+        editor.Figure.BackgroundColor = "#FF101820";
+        Assert.True(editor.IsDirty);
+
+        editor.OpenProjectCommand.Execute(null);
+
+        Assert.True(SpinWait.SpinUntil(
+            () => string.Equals(editor.ProjectPath, otherPath, StringComparison.OrdinalIgnoreCase) &&
+                  !editor.IsBusy,
+            TimeSpan.FromSeconds(3)));
+        Assert.Null(editor.LastError);
+        Assert.False(editor.IsDirty);
+        Assert.Equal(1, prompt.CallCount);
+        Assert.Equal("#FFFFFFFF", editor.Figure.NormalizedBackgroundColor);
+    }
+
+    [Fact]
+    public async Task CustomCanvasSize_SaveAndOpen_PreservesPixelDimensions()
+    {
+        using var workspace = new TestWorkspace();
+        string projectPath = Path.Combine(workspace.Root, "custom-canvas.scicanvas");
+        MainWindowViewModel original = CreateViewModel();
+        original.CustomCanvasWidth = 1375;
+        original.CustomCanvasHeight = 945;
+        original.ApplyCustomCanvasSizeCommand.Execute(null);
+        await original.SaveProjectToPathAsync(projectPath);
+
+        MainWindowViewModel restored = CreateViewModel();
+        await restored.OpenProjectFromPathAsync(projectPath);
+
+        Assert.Null(restored.LastError);
+        Assert.Equal(1375, restored.Figure.CanvasWidth);
+        Assert.Equal(945, restored.Figure.CanvasHeight);
+        Assert.Equal(1375, restored.CustomCanvasWidth);
+        Assert.Equal(945, restored.CustomCanvasHeight);
+        Assert.Equal(original.Figure.Template.Id, restored.Figure.Template.Id);
+    }
+
     private static MainWindowViewModel CreateViewModel(
         IProjectRecoveryStore? recoveryStore = null,
         IProjectRecoveryPrompt? recoveryPrompt = null,
         ISourceRelinkFilePicker? sourceRelinkFilePicker = null,
-        ISourceRevisionAcceptancePrompt? sourceRevisionAcceptancePrompt = null)
+        ISourceRevisionAcceptancePrompt? sourceRevisionAcceptancePrompt = null,
+        IProjectFilePicker? projectFilePicker = null,
+        IUnsavedChangesPrompt? unsavedChangesPrompt = null)
     {
         var identity = new WindowsFileIdentityProvider();
         return new MainWindowViewModel(
@@ -623,12 +676,13 @@ public sealed class ProjectRoundTripIntegrationTests
             new NoOpCropExporter(),
             new NoOpFigureExporter(),
             new BuiltInTemplateCatalog().LoadAll(),
-            new EmptyProjectPicker(),
+            projectFilePicker ?? new EmptyProjectPicker(),
             new JsonProjectStore(),
             recoveryStore,
             recoveryPrompt,
             sourceRelinkFilePicker,
-            sourceRevisionAcceptancePrompt);
+            sourceRevisionAcceptancePrompt,
+            unsavedChangesPrompt: unsavedChangesPrompt);
     }
 
     private static ReadOnlySourceAssetReader CreateReader() => new(
@@ -678,6 +732,26 @@ public sealed class ProjectRoundTripIntegrationTests
     private sealed class EmptyExportPicker : IExportFilePicker
     {
         public string? PickNewExportPath(string suggestedFileName) => null;
+    }
+
+    private sealed class FixedProjectPicker(string path) : IProjectFilePicker
+    {
+        public string? PickProjectToOpen() => path;
+
+        public string? PickProjectToSave(string suggestedFileName, string? currentPath) => null;
+    }
+
+    private sealed class AlwaysDiscardUnsavedChangesPrompt : IUnsavedChangesPrompt
+    {
+        public int CallCount { get; private set; }
+
+        public UnsavedChangesDecision ConfirmProjectReplacement(
+            string actionLabel,
+            string currentProjectDisplayName)
+        {
+            CallCount++;
+            return UnsavedChangesDecision.Discard;
+        }
     }
 
     private sealed class EmptyProjectPicker : IProjectFilePicker

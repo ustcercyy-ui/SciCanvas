@@ -37,6 +37,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly ITemplateFilePicker? _templateFilePicker;
     private readonly IUserTemplateCatalog? _userTemplateCatalog;
     private readonly IBatchExportFolderPicker? _batchExportFolderPicker;
+    private readonly IUnsavedChangesPrompt _unsavedChangesPrompt;
     private readonly IReadOnlyList<FigureTemplateDefinition> _figureTemplates;
     private readonly IIntensityProfileAnalyzer _intensityProfileAnalyzer;
     private readonly IAssistedRegionAnalyzer _assistedRegionAnalyzer;
@@ -85,6 +86,9 @@ public sealed class MainWindowViewModel : ObservableObject
     private string _smartAssistStatusText = "可解释规则会给出布局、样式、QC 与科研诚信建议；建议默认不自动成为事实。";
     private string _assetSearchText = string.Empty;
     private int _figureQcMinimumDpi = 300;
+    private ScientificMeasurementVisualStyle _measurementDrawingStyle = ScientificMeasurementVisualStyle.Default;
+    private int _customCanvasWidth;
+    private int _customCanvasHeight;
 
     public MainWindowViewModel(
         IImageFilePicker filePicker,
@@ -105,7 +109,8 @@ public sealed class MainWindowViewModel : ObservableObject
         IUserTemplateCatalog? userTemplateCatalog = null,
         IBatchExportFolderPicker? batchExportFolderPicker = null,
         IIntensityProfileAnalyzer? intensityProfileAnalyzer = null,
-        IAssistedRegionAnalyzer? assistedRegionAnalyzer = null)
+        IAssistedRegionAnalyzer? assistedRegionAnalyzer = null,
+        IUnsavedChangesPrompt? unsavedChangesPrompt = null)
     {
         _filePicker = filePicker ?? throw new ArgumentNullException(nameof(filePicker));
         _sourceReader = sourceReader ?? throw new ArgumentNullException(nameof(sourceReader));
@@ -126,6 +131,7 @@ public sealed class MainWindowViewModel : ObservableObject
             new DeclineSourceRevisionAcceptancePrompt();
         _intensityProfileAnalyzer = intensityProfileAnalyzer ?? new WpfIntensityProfileAnalyzer();
         _assistedRegionAnalyzer = assistedRegionAnalyzer ?? new WpfAssistedRegionAnalyzer();
+        _unsavedChangesPrompt = unsavedChangesPrompt ?? new CancelUnsavedChangesPrompt();
         ArgumentNullException.ThrowIfNull(figureTemplates);
         if (figureTemplates.Count == 0)
         {
@@ -136,6 +142,8 @@ public sealed class MainWindowViewModel : ObservableObject
         AvailableTemplates = new ObservableCollection<FigureTemplateDefinition>(_figureTemplates);
         _selectedFigureTemplate = _figureTemplates[0];
         _figure = new FigureCanvasViewModel(_selectedFigureTemplate);
+        _customCanvasWidth = _figure.CanvasWidth;
+        _customCanvasHeight = _figure.CanvasHeight;
         Sources.CollectionChanged += OnSourcesCollectionChanged;
         foreach (FigureExportProfile profile in FigureExportProfile.BuiltIns)
         {
@@ -179,6 +187,7 @@ public sealed class MainWindowViewModel : ObservableObject
         ImportTemplateCommand = new RelayCommand(
             ImportTemplate,
             () => _templateFilePicker is not null && _userTemplateCatalog is not null && !IsBusy);
+        ApplyCustomCanvasSizeCommand = new RelayCommand(ApplyCustomCanvasSize);
         AcceptSourceRevisionCommand = new AsyncRelayCommand(
             AcceptSelectedSourceRevisionAsync,
             () => HasSelection && !IsBusy,
@@ -269,7 +278,10 @@ public sealed class MainWindowViewModel : ObservableObject
             SaveProjectAsAsync,
             () => !IsBusy,
             HandleUnexpectedCommandError);
-        NewProjectCommand = new RelayCommand(NewProject);
+        NewProjectCommand = new AsyncRelayCommand(
+            NewProjectAsync,
+            () => !IsBusy,
+            HandleUnexpectedCommandError);
         UndoCommand = new RelayCommand(Undo, () => _history.CanUndo && !IsBusy);
         RedoCommand = new RelayCommand(Redo, () => _history.CanRedo && !IsBusy);
         _history.Reset(CaptureHistorySnapshot(), markSaved: true);
@@ -514,26 +526,50 @@ public sealed class MainWindowViewModel : ObservableObject
         get => _selectedFigureTemplate;
         set
         {
-            if (value is null || ReferenceEquals(value, _selectedFigureTemplate))
+            if (value is null)
             {
                 return;
             }
 
-            if (!IsTemplateSelectionEnabled)
-            {
-                OnPropertyChanged();
-                return;
-            }
-
-            ReplaceFigure(value);
+            SwitchFigureTemplate(value, value);
         }
     }
 
-    public bool IsTemplateSelectionEnabled =>
-        Figure.Panels.Count == 0 && Figure.Annotations.Count == 0 &&
-        Figure.Guides.Count == 0 && !IsBusy;
+    public bool IsTemplateSelectionEnabled => !IsBusy;
 
     public string TemplateLibraryLabel => $"模板库 · {AvailableTemplates.Count}";
+
+    public int CustomCanvasWidth
+    {
+        get => _customCanvasWidth;
+        set
+        {
+            if (SetProperty(ref _customCanvasWidth, value))
+            {
+                OnPropertyChanged(nameof(CustomCanvasSizeValidationMessage));
+            }
+        }
+    }
+
+    public int CustomCanvasHeight
+    {
+        get => _customCanvasHeight;
+        set
+        {
+            if (SetProperty(ref _customCanvasHeight, value))
+            {
+                OnPropertyChanged(nameof(CustomCanvasSizeValidationMessage));
+            }
+        }
+    }
+
+    public string CustomCanvasSizeValidationMessage =>
+        CustomCanvasWidth is >= 100 and <= 20_000 &&
+        CustomCanvasHeight is >= 100 and <= 20_000
+            ? "可应用 · 现有内容会按比例迁移"
+            : "宽高必须为 100–20,000 px";
+
+    public RelayCommand ApplyCustomCanvasSizeCommand { get; }
 
     public AsyncRelayCommand OpenSourcesCommand { get; }
 
@@ -596,7 +632,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public AsyncRelayCommand SaveProjectAsCommand { get; }
 
-    public RelayCommand NewProjectCommand { get; }
+    public AsyncRelayCommand NewProjectCommand { get; }
 
     public RelayCommand UndoCommand { get; }
 
@@ -748,6 +784,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 OpenProjectCommand.NotifyCanExecuteChanged();
                 SaveProjectCommand.NotifyCanExecuteChanged();
                 SaveProjectAsCommand.NotifyCanExecuteChanged();
+                NewProjectCommand.NotifyCanExecuteChanged();
                 UndoCommand.NotifyCanExecuteChanged();
                 RedoCommand.NotifyCanExecuteChanged();
                 OnPropertyChanged(nameof(IsTemplateSelectionEnabled));
@@ -882,21 +919,24 @@ public sealed class MainWindowViewModel : ObservableObject
                 StatusMessage = "拖动参考线 · 松开后输入已知真实距离";
                 return true;
             case ScientificToolMode.Length:
-                _pendingMeasurement = source.AddMeasurement(
+                _pendingMeasurement = AddMeasurementWithCurrentStyle(
+                    source,
                     ScientificMeasurementKind.Length,
                     point,
                     point);
                 StatusMessage = "正在测量长度…";
                 return true;
             case ScientificToolMode.RectangleRoi:
-                _pendingMeasurement = source.AddMeasurement(
+                _pendingMeasurement = AddMeasurementWithCurrentStyle(
+                    source,
                     ScientificMeasurementKind.RectangleRoi,
                     point,
                     point);
                 StatusMessage = "正在创建矩形 ROI…";
                 return true;
             case ScientificToolMode.CircleRoi:
-                _pendingMeasurement = source.AddMeasurement(
+                _pendingMeasurement = AddMeasurementWithCurrentStyle(
+                    source,
                     ScientificMeasurementKind.CircleRoi,
                     point,
                     point);
@@ -993,7 +1033,8 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         if (_pendingMeasurement is null || _pendingAngleStep == 0)
         {
-            _pendingMeasurement = source.AddMeasurement(
+            _pendingMeasurement = AddMeasurementWithCurrentStyle(
+                source,
                 ScientificMeasurementKind.Angle,
                 point,
                 point,
@@ -1041,6 +1082,26 @@ public sealed class MainWindowViewModel : ObservableObject
         owner?.CancelMeasurement(pending);
     }
 
+    private ScientificMeasurementViewModel AddMeasurementWithCurrentStyle(
+        SourceAssetItemViewModel source,
+        ScientificMeasurementKind kind,
+        MeasurementPoint pointA,
+        MeasurementPoint pointB,
+        MeasurementPoint? pointC = null,
+        IReadOnlyList<MeasurementPoint>? pathPoints = null)
+    {
+        ScientificMeasurementVisualStyle style =
+            source.SelectedMeasurement?.VisualStyle ?? _measurementDrawingStyle;
+        _measurementDrawingStyle = style;
+        return source.AddMeasurement(
+            kind,
+            pointA,
+            pointB,
+            pointC,
+            pathPoints: pathPoints,
+            visualStyle: style);
+    }
+
     private void HandlePolylinePoint(
         SourceAssetItemViewModel source,
         MeasurementPoint point,
@@ -1048,7 +1109,8 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         if (_pendingMeasurement is null || _pendingMeasurement.Kind != ScientificMeasurementKind.Polyline)
         {
-            _pendingMeasurement = source.AddMeasurement(
+            _pendingMeasurement = AddMeasurementWithCurrentStyle(
+                source,
                 ScientificMeasurementKind.Polyline,
                 point,
                 point,
@@ -1249,6 +1311,11 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private void OnMeasurementSelectionChanged(object? sender, EventArgs e)
     {
+        if (sender is SourceAssetItemViewModel { SelectedMeasurement: { } selected })
+        {
+            _measurementDrawingStyle = selected.VisualStyle;
+        }
+
         DeleteSelectedMeasurementCommand.NotifyCanExecuteChanged();
     }
 
@@ -1257,6 +1324,10 @@ public sealed class MainWindowViewModel : ObservableObject
         if (sender is SourceAssetItemViewModel source)
         {
             SynchronizeScaleBarsForSource(source);
+            if (ReferenceEquals(source, SelectedSource) && source.SelectedMeasurement is { } selected)
+            {
+                _measurementDrawingStyle = selected.VisualStyle;
+            }
         }
 
         OnPropertyChanged(nameof(MeasurementDockVisibility));
@@ -2538,12 +2609,10 @@ public sealed class MainWindowViewModel : ObservableObject
         await SaveProjectToPathAsync(_projectPath);
     }
 
-    private void NewProject()
+    private async Task NewProjectAsync()
     {
-        if (IsDirty)
+        if (!await ConfirmProjectReplacementAsync("新建工程"))
         {
-            LastError = "当前工程有未保存更改。请先保存，再新建工程。";
-            StatusMessage = "未新建工程 · 需要先保存当前更改";
             return;
         }
 
@@ -2664,20 +2733,38 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private async Task OpenProjectAsync()
     {
-        if (IsDirty)
-        {
-            LastError = "当前工程有未保存更改。请先保存，再打开其他工程。";
-            StatusMessage = "未打开工程 · 需要先保存当前更改";
-            return;
-        }
-
         string? path = _projectFilePicker.PickProjectToOpen();
-        if (path is null)
+        if (path is null || !await ConfirmProjectReplacementAsync("打开其他工程"))
         {
             return;
         }
 
         await OpenProjectFromPathAsync(path);
+    }
+
+    private async Task<bool> ConfirmProjectReplacementAsync(string actionLabel)
+    {
+        if (!IsDirty)
+        {
+            return true;
+        }
+
+        UnsavedChangesDecision decision = _unsavedChangesPrompt.ConfirmProjectReplacement(
+            actionLabel,
+            ProjectDisplayName.TrimEnd(' ', '*'));
+        switch (decision)
+        {
+            case UnsavedChangesDecision.Save:
+                await SaveProjectAsync();
+                return !IsDirty;
+            case UnsavedChangesDecision.Discard:
+                await DeleteCurrentRecoveryBestEffortAsync();
+                LastError = null;
+                return true;
+            default:
+                StatusMessage = $"已取消{actionLabel} · 当前工程保持不变";
+                return false;
+        }
     }
 
     internal async Task OpenProjectFromPathAsync(string path)
@@ -3588,14 +3675,16 @@ public sealed class MainWindowViewModel : ObservableObject
     private FigureTemplateDefinition ResolveProjectTemplate(SciCanvasProjectDocument document)
     {
         string? templateId = document.TemplateSnapshot?.TemplateId;
-        if (string.IsNullOrWhiteSpace(templateId))
-        {
-            return AvailableTemplates[0];
-        }
+        FigureTemplateDefinition baseTemplate = string.IsNullOrWhiteSpace(templateId)
+            ? AvailableTemplates[0]
+            : AvailableTemplates.FirstOrDefault(
+                  template => string.Equals(template.Id, templateId, StringComparison.Ordinal))
+              ?? throw new NotSupportedException($"工程使用模板 {templateId}，当前版本尚未安装该模板。");
 
-        return AvailableTemplates.FirstOrDefault(
-                   template => string.Equals(template.Id, templateId, StringComparison.Ordinal))
-               ?? throw new NotSupportedException($"工程使用模板 {templateId}，当前版本尚未安装该模板。");
+        TemplateCanvasLayout layout = TemplateLayoutEngine.CreateLayout(baseTemplate);
+        return document.Canvas.Width == layout.WidthPixels && document.Canvas.Height == layout.HeightPixels
+            ? baseTemplate
+            : CreateResizedTemplate(baseTemplate, document.Canvas.Width, document.Canvas.Height);
     }
 
     private static ImageAdjustmentParameters ToAdjustment(ProjectImageAdjustmentSnapshot snapshot) => new()
@@ -3706,6 +3795,8 @@ public sealed class MainWindowViewModel : ObservableObject
         PixelRect64? activeCrop = Crop.TryGetCrop(out PixelRect64 crop) ? crop : null;
         return new EditorHistorySnapshot(
             Figure.Template.Id,
+            Figure.CanvasWidth,
+            Figure.CanvasHeight,
             Sources.Select(source => source.Asset.Id).ToArray(),
             SelectedSource?.Asset.Id,
             activeCrop,
@@ -3816,6 +3907,11 @@ public sealed class MainWindowViewModel : ObservableObject
         FigureTemplateDefinition template = AvailableTemplates.FirstOrDefault(
                 item => string.Equals(item.Id, snapshot.TemplateId, StringComparison.Ordinal))
             ?? throw new InvalidDataException($"历史记录引用了未安装的模板 {snapshot.TemplateId}。");
+        TemplateCanvasLayout historyLayout = TemplateLayoutEngine.CreateLayout(template);
+        if (historyLayout.WidthPixels != snapshot.CanvasWidth || historyLayout.HeightPixels != snapshot.CanvasHeight)
+        {
+            template = CreateResizedTemplate(template, snapshot.CanvasWidth, snapshot.CanvasHeight);
+        }
         Dictionary<Guid, SourceAssetItemViewModel> sourceMap = Sources.ToDictionary(
             source => source.Asset.Id);
 
@@ -3977,6 +4073,8 @@ public sealed class MainWindowViewModel : ObservableObject
         EditorHistorySnapshot before,
         EditorHistorySnapshot after) =>
         string.Equals(before.TemplateId, after.TemplateId, StringComparison.Ordinal) &&
+        before.CanvasWidth == after.CanvasWidth &&
+        before.CanvasHeight == after.CanvasHeight &&
         before.SourceIds.SequenceEqual(after.SourceIds) &&
         before.Panels.Select(panel => panel.Id).SequenceEqual(after.Panels.Select(panel => panel.Id)) &&
         before.Annotations.Select(annotation => annotation.Id)
@@ -4088,21 +4186,277 @@ public sealed class MainWindowViewModel : ObservableObject
     private async void OnAutosaveTimerTick(object? sender, EventArgs e) =>
         await FlushAutosaveAsync();
 
+    private void ApplyCustomCanvasSize()
+    {
+        if (CustomCanvasWidth is < 100 or > 20_000 || CustomCanvasHeight is < 100 or > 20_000)
+        {
+            LastError = "自定义画布宽高必须为 100–20,000 px。";
+            StatusMessage = "未应用自定义画布尺寸";
+            return;
+        }
+
+        FigureTemplateDefinition resized = CreateResizedTemplate(
+            _selectedFigureTemplate,
+            CustomCanvasWidth,
+            CustomCanvasHeight);
+        SwitchFigureTemplate(resized, _selectedFigureTemplate);
+    }
+
+    private void SwitchFigureTemplate(
+        FigureTemplateDefinition template,
+        FigureTemplateDefinition? selectionTemplate = null)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+        TemplateCanvasLayout targetLayout = TemplateLayoutEngine.CreateLayout(template);
+        FigureTemplateDefinition selected = selectionTemplate ?? template;
+        if (string.Equals(Figure.Template.Id, template.Id, StringComparison.Ordinal) &&
+            Figure.CanvasWidth == targetLayout.WidthPixels &&
+            Figure.CanvasHeight == targetLayout.HeightPixels)
+        {
+            _selectedFigureTemplate = selected;
+            OnPropertyChanged(nameof(SelectedFigureTemplate));
+            return;
+        }
+
+        FigureCanvasViewModel previous = Figure;
+        if (previous.Panels.Count == 0 && previous.Annotations.Count == 0 && previous.Guides.Count == 0)
+        {
+            ReplaceFigure(template);
+            StatusMessage = $"已切换模板 · {template.Name}";
+            LastError = null;
+            return;
+        }
+
+        double scaleX = targetLayout.WidthPixels / (double)previous.CanvasWidth;
+        double scaleY = targetLayout.HeightPixels / (double)previous.CanvasHeight;
+        var migrated = new FigureCanvasViewModel(template)
+        {
+            BackgroundColor = previous.BackgroundColor,
+            AutoPanelLabelsEnabled = false,
+            ShowPanelLabels = previous.ShowPanelLabels,
+            PanelLabelSequence = previous.PanelLabelSequence,
+            IsSnappingEnabled = previous.IsSnappingEnabled,
+            SnapTolerancePixels = previous.SnapTolerancePixels,
+            ExactSpacingPixels = Math.Max(0, (long)Math.Round(
+                previous.ExactSpacingPixels * Math.Min(scaleX, scaleY))),
+        };
+        migrated.RestoreGlobalStyle(previous.GlobalStyle);
+        migrated.RestoreScientificColors(
+            previous.ScientificColors.Select(entry => entry.Definition));
+
+        Guid[] selectedPanelIds = previous.SelectedPanels.Select(panel => panel.Id).ToArray();
+        Guid? primaryPanelId = previous.SelectedPanel?.Id;
+        FigurePanelViewModel[] panels = previous.Panels.OrderBy(panel => panel.ZIndex).ToArray();
+        bool isDifferentTemplate = !string.Equals(
+            previous.Template.Id, template.Id, StringComparison.Ordinal);
+        int targetSlotIndex = 0;
+        for (int index = 0; index < panels.Length; index++)
+        {
+            FigurePanelViewModel panel = panels[index];
+            TemplateSlotLayout? targetSlot =
+                isDifferentTemplate && !panel.IsInset && targetSlotIndex < targetLayout.Slots.Count
+                    ? targetLayout.Slots[targetSlotIndex++]
+                    : null;
+            PixelRect64 destination = targetSlot?.PixelRect ?? ScaleDestination(
+                    panel.DestinationRect,
+                    scaleX,
+                    scaleY,
+                    migrated.CanvasWidth,
+                    migrated.CanvasHeight);
+            string slotId = targetSlot?.Id
+                ?? $"inset:migrated-{panel.Id:N}";
+            FigurePanelViewModel restored = migrated.RestorePanel(
+                panel.Source,
+                panel.SourceRect,
+                slotId,
+                panel.Id,
+                destination,
+                panel.IsVisible,
+                panel.IsLocked,
+                panel.ZIndex,
+                panel.Adjustments,
+                panel.FrameIndex,
+                panel.IsAspectRatioLocked)
+                ?? throw new InvalidOperationException($"无法迁移面板 {panel.Label} 到新模板。");
+            restored.Label = panel.Label;
+            restored.CropLinkGroupId = panel.CropLinkGroupId;
+            restored.RestoreWorkspaceState(
+                panel.FitMode,
+                panel.RotationDegrees,
+                panel.ReplacementValidity);
+            restored.PhysicalUnitsPerSourcePixel = panel.PhysicalUnitsPerSourcePixel;
+            restored.ScaleBarPhysicalLength = panel.ScaleBarPhysicalLength;
+            restored.ScaleBarUnit = panel.ScaleBarUnit;
+            restored.ScaleBarShowLabel = panel.ScaleBarShowLabel;
+            restored.ShowScaleBar = panel.ShowScaleBar;
+        }
+        migrated.RestorePanelSelection(selectedPanelIds, primaryPanelId);
+
+        Guid? selectedAnnotationId = previous.SelectedAnnotation?.Id;
+        foreach (FigureAnnotationViewModel annotation in previous.Annotations.OrderBy(item => item.ZIndex))
+        {
+            migrated.RestoreAnnotation(
+                annotation.Id,
+                annotation.Kind,
+                Math.Clamp(annotation.X * scaleX, 0, migrated.CanvasWidth),
+                Math.Clamp(annotation.Y * scaleY, 0, migrated.CanvasHeight),
+                Math.Clamp(annotation.EndX * scaleX, 0, migrated.CanvasWidth),
+                Math.Clamp(annotation.EndY * scaleY, 0, migrated.CanvasHeight),
+                annotation.Text,
+                annotation.Color,
+                annotation.FontSizePt,
+                annotation.StrokeWidthPt,
+                annotation.IsBold,
+                annotation.IsVisible,
+                annotation.IsLocked,
+                annotation.ZIndex);
+        }
+        migrated.SelectedAnnotation = selectedAnnotationId is Guid annotationId
+            ? migrated.Annotations.FirstOrDefault(annotation => annotation.Id == annotationId)
+            : null;
+
+        Guid? selectedGuideId = previous.SelectedGuide?.Id;
+        foreach (FigureGuideViewModel guide in previous.Guides)
+        {
+            double scale = guide.Orientation == FigureGuideOrientation.Vertical ? scaleX : scaleY;
+            double maximum = guide.Orientation == FigureGuideOrientation.Vertical
+                ? migrated.CanvasWidth
+                : migrated.CanvasHeight;
+            migrated.RestoreGuide(
+                guide.Id,
+                guide.Orientation,
+                Math.Clamp(guide.Position * scale, 0, maximum),
+                guide.IsLocked);
+        }
+        migrated.SelectedGuide = selectedGuideId is Guid guideId
+            ? migrated.Guides.FirstOrDefault(guide => guide.Id == guideId)
+            : null;
+        migrated.AutoPanelLabelsEnabled = previous.AutoPanelLabelsEnabled;
+
+        AdoptFigure(
+            migrated,
+            selected,
+            markDirty: true,
+            qcStatus: "模板或画布尺寸已更改 · 请运行 Figure QC");
+        StatusMessage = $"已切换到 {template.Name} · 现有内容已按比例迁移";
+        LastError = null;
+    }
+
+    private static PixelRect64 ScaleDestination(
+        PixelRect64 source,
+        double scaleX,
+        double scaleY,
+        int targetWidth,
+        int targetHeight)
+    {
+        long x = Math.Clamp((long)Math.Round(source.X * scaleX), 0, targetWidth - 1L);
+        long y = Math.Clamp((long)Math.Round(source.Y * scaleY), 0, targetHeight - 1L);
+        long width = Math.Clamp(
+            (long)Math.Round(source.Width * scaleX),
+            1,
+            targetWidth - x);
+        long height = Math.Clamp(
+            (long)Math.Round(source.Height * scaleY),
+            1,
+            targetHeight - y);
+        return new PixelRect64(x, y, width, height);
+    }
+
+    private static FigureTemplateDefinition CreateResizedTemplate(
+        FigureTemplateDefinition baseTemplate,
+        int widthPixels,
+        int heightPixels)
+    {
+        ArgumentNullException.ThrowIfNull(baseTemplate);
+        if (widthPixels is < 100 or > 20_000 || heightPixels is < 100 or > 20_000)
+        {
+            throw new InvalidDataException("自定义画布宽高必须为 100–20,000 px。");
+        }
+
+        TemplateCanvasDefinition canvas = baseTemplate.Canvas;
+        double widthUnits;
+        double heightUnits;
+        if (string.Equals(canvas.Mode, "physical", StringComparison.OrdinalIgnoreCase))
+        {
+            widthUnits = canvas.WidthMm ?? throw new InvalidDataException("模板缺少物理宽度。");
+            heightUnits = canvas.HeightMm ?? canvas.MaxHeightMm
+                ?? throw new InvalidDataException("模板缺少物理高度。");
+        }
+        else
+        {
+            widthUnits = canvas.WidthPx ?? throw new InvalidDataException("模板缺少像素宽度。");
+            heightUnits = canvas.HeightPx ?? throw new InvalidDataException("模板缺少像素高度。");
+        }
+
+        double gridScaleX = widthPixels / widthUnits;
+        double gridScaleY = heightPixels / heightUnits;
+        TemplateGridDefinition grid = baseTemplate.Grid;
+        return new FigureTemplateDefinition
+        {
+            Id = baseTemplate.Id,
+            Name = $"{baseTemplate.Name} · 自定义 {widthPixels:N0}×{heightPixels:N0}",
+            Description = $"基于“{baseTemplate.Name}”按比例生成的自定义像素画布。",
+            Category = baseTemplate.Category,
+            PublisherProfileId = baseTemplate.PublisherProfileId,
+            Canvas = new TemplateCanvasDefinition
+            {
+                Mode = "pixels",
+                WidthPx = widthPixels,
+                HeightPx = heightPixels,
+                Dpi = canvas.Dpi,
+                Background = canvas.Background,
+            },
+            Grid = new TemplateGridDefinition
+            {
+                Columns = grid.Columns,
+                Rows = grid.Rows,
+                GutterX = grid.GutterX * gridScaleX,
+                GutterY = grid.GutterY * gridScaleY,
+                Margin = new TemplateMarginDefinition
+                {
+                    Top = grid.Margin.Top * gridScaleY,
+                    Right = grid.Margin.Right * gridScaleX,
+                    Bottom = grid.Margin.Bottom * gridScaleY,
+                    Left = grid.Margin.Left * gridScaleX,
+                },
+            },
+            Slots = baseTemplate.Slots,
+            LabelStyle = baseTemplate.LabelStyle,
+        };
+    }
+
     private void ReplaceFigure(FigureTemplateDefinition template, bool markDirty = true)
     {
         ArgumentNullException.ThrowIfNull(template);
+        FigureTemplateDefinition selected = AvailableTemplates.FirstOrDefault(
+            item => string.Equals(item.Id, template.Id, StringComparison.Ordinal)) ?? template;
+        AdoptFigure(
+            new FigureCanvasViewModel(template),
+            selected,
+            markDirty,
+            "拼版已重建 · 请运行 Figure QC");
+    }
+
+    private void AdoptFigure(
+        FigureCanvasViewModel next,
+        FigureTemplateDefinition selectedTemplate,
+        bool markDirty,
+        string qcStatus)
+    {
         Figure.DocumentChanged -= OnFigureDocumentChanged;
         Figure.EditCompleted -= OnFigureEditCompleted;
-        Figure = new FigureCanvasViewModel(template);
+        Figure = next;
         Figure.DocumentChanged += OnFigureDocumentChanged;
         Figure.EditCompleted += OnFigureEditCompleted;
         RefreshAssetUsageCounts();
         FigureQcIssues.Clear();
         SelectedFigureQcIssue = null;
         _isFigureQcStale = true;
-        FigureQcStatusText = "拼版已重建 · 请运行 Figure QC";
+        FigureQcStatusText = qcStatus;
         OnPropertyChanged(nameof(FigureQcCountText));
-        _selectedFigureTemplate = template;
+        _selectedFigureTemplate = selectedTemplate;
+        CustomCanvasWidth = Figure.CanvasWidth;
+        CustomCanvasHeight = Figure.CanvasHeight;
         OnPropertyChanged(nameof(SelectedFigureTemplate));
         OnPropertyChanged(nameof(IsTemplateSelectionEnabled));
         if (markDirty)

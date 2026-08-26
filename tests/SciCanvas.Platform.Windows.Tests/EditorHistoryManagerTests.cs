@@ -44,6 +44,8 @@ public sealed class EditorHistoryManagerTests
 
     private static EditorHistorySnapshot CreateSnapshot(long cropX) => new(
         "materials.multiscale-morphology.nature-double",
+        2161,
+        1654,
         [],
         null,
         new PixelRect64(cropX, 0, 1, 1),

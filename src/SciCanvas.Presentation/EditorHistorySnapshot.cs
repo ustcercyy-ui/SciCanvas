@@ -8,6 +8,8 @@ namespace SciCanvas.Presentation;
 
 internal sealed record EditorHistorySnapshot(
     string TemplateId,
+    int CanvasWidth,
+    int CanvasHeight,
     IReadOnlyList<Guid> SourceIds,
     Guid? SelectedSourceId,
     PixelRect64? ActiveCrop,

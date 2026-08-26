@@ -1,4 +1,8 @@
 using System.Windows;
+using Application = System.Windows.Application;
+using MessageBox = System.Windows.MessageBox;
+using MessageBoxButton = System.Windows.MessageBoxButton;
+using MessageBoxImage = System.Windows.MessageBoxImage;
 using System.Windows.Threading;
 using SciCanvas.Imaging;
 using SciCanvas.Persistence;
@@ -49,7 +53,8 @@ public partial class App : Application
             new WindowsSourceRevisionAcceptancePrompt(),
             new WindowsTemplateFilePicker(),
             userTemplateCatalog,
-            new WindowsBatchExportFolderPicker());
+            new WindowsBatchExportFolderPicker(),
+            unsavedChangesPrompt: new WindowsUnsavedChangesPrompt());
 
         var window = new MainWindow
         {

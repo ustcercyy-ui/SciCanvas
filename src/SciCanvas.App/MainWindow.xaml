@@ -167,7 +167,7 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="30" />
-            <RowDefinition Height="98" />
+            <RowDefinition x:Name="HeaderContentRow" Height="98" />
             <RowDefinition Height="*" />
             <RowDefinition Height="30" />
         </Grid.RowDefinitions>
@@ -176,7 +176,7 @@
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="30" />
-                    <RowDefinition Height="98" />
+                    <RowDefinition x:Name="HeaderInnerContentRow" Height="98" />
                 </Grid.RowDefinitions>
                 <Menu Grid.Row="0" Margin="8,0" Background="Transparent" Foreground="#D8E0E8" VerticalContentAlignment="Center">
                     <Menu.Resources>
@@ -239,7 +239,19 @@
                         <MenuItem Header="关于与快捷键" Command="{Binding ShowHelpCommand}" />
                     </MenuItem>
                 </Menu>
-                <Grid Grid.Row="1" Margin="14,0">
+                <Button x:Name="HeaderToggleButton"
+                        Grid.Row="0"
+                        Width="52"
+                        Height="24"
+                        Margin="0,3,8,3"
+                        Padding="4,0"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        Panel.ZIndex="20"
+                        Click="HeaderToggleButton_OnClick"
+                        Content="收起"
+                        ToolTip="收起顶部命令区，扩大画布高度" />
+                <Grid x:Name="HeaderCommandArea" Grid.Row="1" Margin="14,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="50" />
                         <RowDefinition Height="48" />
@@ -290,14 +302,14 @@
 
         <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="0.75*" MinWidth="160" MaxWidth="340" />
-                <ColumnDefinition Width="6" />
+                <ColumnDefinition x:Name="LeftSidebarColumn" Width="0.75*" MinWidth="160" MaxWidth="340" />
+                <ColumnDefinition x:Name="LeftSplitterColumn" Width="6" />
                 <ColumnDefinition Width="2*" MinWidth="280" />
-                <ColumnDefinition Width="6" />
-                <ColumnDefinition Width="1.05*" MinWidth="230" MaxWidth="420" />
+                <ColumnDefinition x:Name="RightSplitterColumn" Width="6" />
+                <ColumnDefinition x:Name="RightSidebarColumn" Width="1.05*" MinWidth="230" MaxWidth="420" />
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Background="{StaticResource PanelBrush}">
+            <Border x:Name="LeftSidebarPanel" Grid.Column="0" Background="{StaticResource PanelBrush}">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="106" />
@@ -396,7 +408,19 @@
                 </Grid>
             </Border>
 
-            <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="#263442" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" ShowsPreview="True" ToolTip="拖动调整源图像栏宽度" />
+            <Button x:Name="LeftSidebarToggleButton"
+                    Grid.Column="0"
+                    Width="26"
+                    Height="54"
+                    Padding="0"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Center"
+                    Panel.ZIndex="50"
+                    Click="LeftSidebarToggleButton_OnClick"
+                    Content="‹"
+                    ToolTip="收起资源库，扩大中央画布" />
+
+            <GridSplitter x:Name="LeftSidebarSplitter" Grid.Column="1" Width="6" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="#263442" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" ShowsPreview="True" ToolTip="拖动调整源图像栏宽度" />
 
             <Grid Grid.Column="2" Background="#090D12">
                 <Grid.RowDefinitions>
@@ -999,7 +1023,7 @@
                     </StackPanel>
                 </Grid>
 
-                <Border Grid.Row="2"
+                <Border x:Name="MeasurementDockPanel" Grid.Row="2"
                         Height="230"
                         Background="#11171F"
                         BorderBrush="{StaticResource BorderBrush}"
@@ -1012,12 +1036,23 @@
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="28" />
-                            <RowDefinition Height="*" />
+                            <RowDefinition x:Name="MeasurementDockContentRow" Height="*" />
                         </Grid.RowDefinitions>
                         <TextBlock Text="{Binding SelectedSource.MeasurementCountText}" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="1" Text="{Binding SelectedSource.MeasurementSummaryText}"
                                    Foreground="#AFC5D2" FontSize="10" VerticalAlignment="Center" TextWrapping="Wrap" />
-                        <DataGrid Grid.Row="1"
+                        <Button x:Name="MeasurementDockToggleButton"
+                                Grid.Column="1"
+                                Width="48"
+                                Height="24"
+                                Padding="4,0"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"
+                                Panel.ZIndex="20"
+                                Click="MeasurementDockToggleButton_OnClick"
+                                Content="收起"
+                                ToolTip="收起测量表，扩大图像画布高度" />
+                        <DataGrid x:Name="MeasurementDockDataGrid" Grid.Row="1"
                                   Margin="0,4,10,0"
                                   ItemsSource="{Binding SelectedSource.Measurements}"
                                   SelectedItem="{Binding SelectedSource.SelectedMeasurement}"
@@ -1040,7 +1075,7 @@
                                 <DataGridTextColumn Header="Pixel" Binding="{Binding PixelValueText}" Width="*" />
                             </DataGrid.Columns>
                         </DataGrid>
-                        <StackPanel Grid.Row="1" Grid.Column="1" Margin="10,4,0,0">
+                        <StackPanel x:Name="MeasurementDockActions" Grid.Row="1" Grid.Column="1" Margin="10,4,0,0">
                             <TextBlock Text="{Binding SelectedSource.SelectedMeasurementStatusText}"
                                        Foreground="#7DD9E9" FontSize="10" TextWrapping="Wrap" />
                             <TextBlock Margin="0,7,0,2"
@@ -1079,9 +1114,9 @@
                 </Border>
             </Grid>
 
-            <GridSplitter Grid.Column="3" Width="6" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="#263442" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" ShowsPreview="True" ToolTip="拖动调整检查器宽度" />
+            <GridSplitter x:Name="RightSidebarSplitter" Grid.Column="3" Width="6" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="#263442" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" ShowsPreview="True" ToolTip="拖动调整检查器宽度" />
 
-            <Border Grid.Column="4" Background="{StaticResource PanelBrush}">
+            <Border x:Name="RightSidebarPanel" Grid.Column="4" Background="{StaticResource PanelBrush}">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="42" />
@@ -1231,7 +1266,22 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel>
                                         <TextBlock Text="描边颜色" Foreground="{StaticResource MutedBrush}" FontSize="9" />
-                                        <TextBox Margin="0,4,0,0" Text="{Binding SelectedSource.SelectedMeasurement.StrokeColor, UpdateSourceTrigger=PropertyChanged}" />
+                                        <Grid Margin="0,4,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="6" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Text="{Binding SelectedSource.SelectedMeasurement.StrokeColor, UpdateSourceTrigger=PropertyChanged}" />
+                                            <Button Grid.Column="2"
+                                                    Width="46"
+                                                    Padding="5,4"
+                                                    Background="{Binding SelectedSource.SelectedMeasurement.OverlayStroke}"
+                                                    BorderBrush="#80FFFFFF"
+                                                    Click="MeasurementColorPicker_OnClick"
+                                                    Content="取色"
+                                                    AutomationProperties.Name="选择测量标注颜色" />
+                                        </Grid>
                                     </StackPanel>
                                     <StackPanel Grid.Column="2">
                                         <TextBlock Text="线宽 / px" Foreground="{StaticResource MutedBrush}" FontSize="9" />
@@ -1535,12 +1585,27 @@
                                               SelectedItem="{Binding SelectedFigureTemplate}"
                                               DisplayMemberPath="Name"
                                               IsEnabled="{Binding IsTemplateSelectionEnabled}"
-                                              ToolTip="已有面板时请先清空拼版，再切换模板" />
+                                              ToolTip="切换模板时会按新画布比例迁移现有内容" />
                                     <Button Grid.Column="2" Command="{Binding ImportTemplateCommand}" Content="导入" ToolTip="导入并安装用户模板 JSON" />
                                 </Grid>
                                 <TextBlock Text="{Binding Figure.TemplateName}" Foreground="#8CE5F4" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" />
                                 <TextBlock Margin="0,5,0,0" Text="{Binding Figure.CanvasSizeText}" Foreground="#C0CBD6" FontSize="10" />
                                 <TextBlock Margin="0,5,0,0" Text="{Binding Figure.TemplateDescription}" Foreground="{StaticResource MutedBrush}" FontSize="9" TextWrapping="Wrap" />
+                                <TextBlock Margin="0,10,0,0" Text="自定义画布尺寸 / px" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <Grid Margin="0,4,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="20" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Text="{Binding CustomCanvasWidth, UpdateSourceTrigger=PropertyChanged}" ToolTip="宽度：100–20,000 px" />
+                                    <TextBlock Grid.Column="1" Text="×" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" />
+                                    <TextBox Grid.Column="2" Text="{Binding CustomCanvasHeight, UpdateSourceTrigger=PropertyChanged}" ToolTip="高度：100–20,000 px" />
+                                    <Button Grid.Column="4" Command="{Binding ApplyCustomCanvasSizeCommand}" Content="应用" />
+                                </Grid>
+                                <TextBlock Margin="0,4,0,0" Text="{Binding CustomCanvasSizeValidationMessage}" Foreground="#80DDEA" FontSize="8" TextWrapping="Wrap" />
                             </StackPanel>
                         </Border>
 
@@ -2180,15 +2245,29 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel>
                                         <TextBlock Text="颜色" Foreground="{StaticResource MutedBrush}" FontSize="9" />
-                                        <ComboBox Margin="0,4,0,0"
-                                                  IsEditable="True"
-                                                  Text="{Binding Figure.SelectedAnnotation.Color, UpdateSourceTrigger=PropertyChanged}">
-                                            <ComboBoxItem Content="#FF111111" />
-                                            <ComboBoxItem Content="#FFFFFFFF" />
-                                            <ComboBoxItem Content="#FFE53935" />
-                                            <ComboBoxItem Content="#FF1E88E5" />
-                                            <ComboBoxItem Content="#FFFFB300" />
-                                        </ComboBox>
+                                        <Grid Margin="0,4,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="6" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <ComboBox IsEditable="True"
+                                                      Text="{Binding Figure.SelectedAnnotation.Color, UpdateSourceTrigger=PropertyChanged}">
+                                                <ComboBoxItem Content="#FF111111" />
+                                                <ComboBoxItem Content="#FFFFFFFF" />
+                                                <ComboBoxItem Content="#FFE53935" />
+                                                <ComboBoxItem Content="#FF1E88E5" />
+                                                <ComboBoxItem Content="#FFFFB300" />
+                                            </ComboBox>
+                                            <Button Grid.Column="2"
+                                                    Width="46"
+                                                    Padding="5,4"
+                                                    Background="{Binding Figure.SelectedAnnotation.PreviewBrush}"
+                                                    BorderBrush="#80FFFFFF"
+                                                    Click="AnnotationColorPicker_OnClick"
+                                                    Content="取色"
+                                                    AutomationProperties.Name="选择科研标注颜色" />
+                                        </Grid>
                                     </StackPanel>
                                     <StackPanel Grid.Column="2" Visibility="{Binding Figure.SelectedAnnotation.TextVisibility}">
                                         <TextBlock Text="字号 / PT" Foreground="{StaticResource MutedBrush}" FontSize="9" />
@@ -2587,6 +2666,18 @@
                     </ScrollViewer>
                 </Grid>
             </Border>
+
+            <Button x:Name="RightSidebarToggleButton"
+                    Grid.Column="4"
+                    Width="26"
+                    Height="54"
+                    Padding="0"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Center"
+                    Panel.ZIndex="50"
+                    Click="RightSidebarToggleButton_OnClick"
+                    Content="›"
+                    ToolTip="收起检查器，扩大中央画布" />
         </Grid>
 
         <Border Grid.Row="3" Background="#10161E" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">

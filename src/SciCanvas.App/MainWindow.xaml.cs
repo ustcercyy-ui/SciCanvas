@@ -5,6 +5,14 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Color = System.Windows.Media.Color;
+using KeyEventArgs = System.Windows.Input.KeyEventArgs;
+using MessageBox = System.Windows.MessageBox;
+using MessageBoxButton = System.Windows.MessageBoxButton;
+using MessageBoxImage = System.Windows.MessageBoxImage;
+using MessageBoxResult = System.Windows.MessageBoxResult;
+using MouseEventArgs = System.Windows.Input.MouseEventArgs;
+using Point = System.Windows.Point;
 using SciCanvas.Presentation;
 
 namespace SciCanvas.App;
@@ -45,6 +53,12 @@ public partial class MainWindow : Window
     private double _panStartHorizontalOffset;
     private double _panStartVerticalOffset;
     private bool _allowClose;
+    private bool _isHeaderExpanded = true;
+    private bool _isLeftSidebarExpanded = true;
+    private bool _isRightSidebarExpanded = true;
+    private bool _isMeasurementDockExpanded = true;
+    private GridLength _leftSidebarExpandedWidth = new(0.75, GridUnitType.Star);
+    private GridLength _rightSidebarExpandedWidth = new(1.05, GridUnitType.Star);
 
     public MainWindow()
     {
@@ -58,6 +72,163 @@ public partial class MainWindow : Window
             handle.PreviewMouseMove += CropResizeHandle_OnMouseMove;
         }
     }
+    private void HeaderToggleButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        _isHeaderExpanded = !_isHeaderExpanded;
+        HeaderContentRow.Height = _isHeaderExpanded ? new GridLength(98) : new GridLength(0);
+        HeaderInnerContentRow.Height = _isHeaderExpanded ? new GridLength(98) : new GridLength(0);
+        HeaderCommandArea.Visibility = _isHeaderExpanded ? Visibility.Visible : Visibility.Collapsed;
+        HeaderToggleButton.Content = _isHeaderExpanded ? "收起" : "展开";
+        HeaderToggleButton.ToolTip = _isHeaderExpanded
+            ? "收起顶部命令区，扩大画布高度"
+            : "展开顶部命令区";
+        ScheduleFitVisibleWorkspace();
+    }
+
+    private void LeftSidebarToggleButton_OnClick(object sender, RoutedEventArgs e) =>
+        SetLeftSidebarExpanded(!_isLeftSidebarExpanded);
+
+    private void SetLeftSidebarExpanded(bool expanded)
+    {
+        if (_isLeftSidebarExpanded == expanded)
+        {
+            return;
+        }
+
+        if (!expanded)
+        {
+            _leftSidebarExpandedWidth = LeftSidebarColumn.Width;
+        }
+
+        _isLeftSidebarExpanded = expanded;
+        LeftSidebarPanel.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+        LeftSidebarSplitter.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+        LeftSidebarColumn.MinWidth = expanded ? 160 : 0;
+        LeftSidebarColumn.MaxWidth = expanded ? 340 : 34;
+        LeftSidebarColumn.Width = expanded ? _leftSidebarExpandedWidth : new GridLength(34);
+        LeftSplitterColumn.Width = expanded ? new GridLength(6) : new GridLength(0);
+        LeftSidebarToggleButton.Content = expanded ? "‹" : "›";
+        LeftSidebarToggleButton.ToolTip = expanded
+            ? "收起资源库，扩大中央画布"
+            : "展开资源库";
+        ScheduleFitVisibleWorkspace();
+    }
+
+    private void RightSidebarToggleButton_OnClick(object sender, RoutedEventArgs e) =>
+        SetRightSidebarExpanded(!_isRightSidebarExpanded);
+
+    private void SetRightSidebarExpanded(bool expanded)
+    {
+        if (_isRightSidebarExpanded == expanded)
+        {
+            return;
+        }
+
+        if (!expanded)
+        {
+            _rightSidebarExpandedWidth = RightSidebarColumn.Width;
+        }
+
+        _isRightSidebarExpanded = expanded;
+        RightSidebarPanel.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+        RightSidebarSplitter.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+        RightSidebarColumn.MinWidth = expanded ? 230 : 0;
+        RightSidebarColumn.MaxWidth = expanded ? 420 : 34;
+        RightSidebarColumn.Width = expanded ? _rightSidebarExpandedWidth : new GridLength(34);
+        RightSplitterColumn.Width = expanded ? new GridLength(6) : new GridLength(0);
+        RightSidebarToggleButton.Content = expanded ? "›" : "‹";
+        RightSidebarToggleButton.ToolTip = expanded
+            ? "收起检查器，扩大中央画布"
+            : "展开检查器";
+        ScheduleFitVisibleWorkspace();
+    }
+
+    private void MeasurementDockToggleButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        _isMeasurementDockExpanded = !_isMeasurementDockExpanded;
+        MeasurementDockPanel.Height = _isMeasurementDockExpanded ? 230 : 36;
+        MeasurementDockContentRow.Height = _isMeasurementDockExpanded
+            ? new GridLength(1, GridUnitType.Star)
+            : new GridLength(0);
+        MeasurementDockDataGrid.Visibility = _isMeasurementDockExpanded
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        MeasurementDockActions.Visibility = _isMeasurementDockExpanded
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        MeasurementDockToggleButton.Content = _isMeasurementDockExpanded ? "收起" : "展开";
+        MeasurementDockToggleButton.ToolTip = _isMeasurementDockExpanded
+            ? "收起测量表，扩大图像画布高度"
+            : "展开测量表";
+        ScheduleFitVisibleWorkspace();
+    }
+
+    private void MeasurementColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel
+            {
+                SelectedSource.SelectedMeasurement: { } measurement,
+            } viewModel && TryPickColor(measurement.StrokeColor, out string color))
+        {
+            measurement.StrokeColor = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void AnnotationColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel
+            {
+                Figure.SelectedAnnotation: { } annotation,
+            } viewModel && TryPickColor(annotation.Color, out string color))
+        {
+            annotation.Color = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private static bool TryPickColor(string currentValue, out string selectedValue)
+    {
+        byte alpha = 255;
+        System.Drawing.Color initial = System.Drawing.Color.FromArgb(34, 199, 232);
+        try
+        {
+            if (ColorConverter.ConvertFromString(currentValue) is Color current)
+            {
+                alpha = current.A;
+                initial = System.Drawing.Color.FromArgb(current.R, current.G, current.B);
+            }
+        }
+        catch (FormatException)
+        {
+            // Keep the safe default when the user is midway through typing a HEX value.
+        }
+
+        using var dialog = new System.Windows.Forms.ColorDialog
+        {
+            AllowFullOpen = true,
+            FullOpen = true,
+            AnyColor = true,
+            Color = initial,
+        };
+        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+        {
+            selectedValue = currentValue;
+            return false;
+        }
+
+        selectedValue = $"#{alpha:X2}{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
+        return true;
+    }
+
+    private void ScheduleFitVisibleWorkspace() => Dispatcher.BeginInvoke(
+        DispatcherPriority.Background,
+        new Action(() =>
+        {
+            UpdateLayout();
+            FitVisibleWorkspace();
+        }));
+
 
     private void ImageCanvas_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
@@ -506,6 +677,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        SetRightSidebarExpanded(true);
         viewModel.IsLayersTabActive = false;
         Dispatcher.BeginInvoke(
             DispatcherPriority.Background,
