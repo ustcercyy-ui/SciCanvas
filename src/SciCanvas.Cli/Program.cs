@@ -4,6 +4,7 @@ using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
 using SciCanvas.Core.Sources;
+using SciCanvas.Core.Workspace;
 using SciCanvas.Imaging;
 using SciCanvas.Persistence;
 
@@ -58,7 +59,18 @@ internal static class Program
                 try
                 {
                     FigureExportDocument variant = profile.Apply(baseDocument);
-                    FigurePreflightResult preflight = FigurePreflight.Check(variant, sources, hasUnsavedChanges: false);
+                    PanelLabelScheme labelScheme = PanelLabelGenerator.FromLegacySettings(
+                        project.TemplateSnapshot?.PanelLabelSequence,
+                        project.TemplateSnapshot?.ShowPanelLabels ?? true,
+                        project.TemplateSnapshot?.AutoPanelLabelsEnabled ?? true);
+                    FigurePreflightResult preflight = FigurePreflight.Check(
+                        new FigurePreflightContext(
+                            variant,
+                            profile.Format,
+                            profile,
+                            labelScheme),
+                        sources,
+                        hasUnsavedChanges: false);
                     if (preflight.HasErrors)
                     {
                         throw new InvalidDataException(string.Join(

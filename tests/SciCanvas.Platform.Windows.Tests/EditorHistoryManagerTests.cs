@@ -1,4 +1,5 @@
 using SciCanvas.Core.Geometry;
+using SciCanvas.Core.Science;
 using SciCanvas.Presentation;
 
 namespace SciCanvas.Platform.Windows.Tests;
@@ -42,7 +43,31 @@ public sealed class EditorHistoryManagerTests
         Assert.True(history.IsDirty);
     }
 
-    private static EditorHistorySnapshot CreateSnapshot(long cropX) => new(
+    [Fact]
+    public void Record_AnalysisResultParticipatesInDirtyStateAndUndo()
+    {
+        var history = new EditorHistoryManager(100);
+        history.Reset(CreateSnapshot(0), markSaved: true);
+        var result = new RoiStatisticsResult
+        {
+            SourceAssetId = Guid.NewGuid(),
+            AnalyzerId = "test.roi.v1",
+        };
+
+        history.Record(
+            CreateSnapshot(0, [new AnalysisHistorySnapshot(result.SourceAssetId, result)]),
+            canCoalesce: false);
+
+        Assert.True(history.IsDirty);
+        Assert.Single(history.CurrentSnapshot!.Analyses);
+        EditorHistorySnapshot restored = Assert.IsType<EditorHistorySnapshot>(history.Undo());
+        Assert.Empty(restored.Analyses);
+        Assert.False(history.IsDirty);
+    }
+
+    private static EditorHistorySnapshot CreateSnapshot(
+        long cropX,
+        IReadOnlyList<AnalysisHistorySnapshot>? analyses = null) => new(
         "materials.multiscale-morphology.nature-double",
         2161,
         1654,
@@ -70,5 +95,6 @@ public sealed class EditorHistoryManagerTests
         [],
         [],
         [],
-        []);
+        [],
+        analyses ?? []);
 }

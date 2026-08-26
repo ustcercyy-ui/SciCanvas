@@ -6,6 +6,7 @@ public enum ScientificObjectKind
 {
     ScaleBar,
     Measurement,
+    AnalysisResult,
     Roi,
     Inset,
     Colorbar,
@@ -58,6 +59,13 @@ public sealed record MeasurementObject : ScientificObject
     public string? CalibrationRevision { get; init; }
 
     public (double Value, string Unit)? CachedValue { get; init; }
+}
+
+public sealed record AnalysisResultObject : ScientificObject
+{
+    public override ScientificObjectKind Kind => ScientificObjectKind.AnalysisResult;
+
+    public required ScientificImageAnalysisResult Result { get; init; }
 }
 
 public sealed record RoiObject : ScientificObject

@@ -33,6 +33,8 @@ public sealed class SciCanvasProjectDocument
 
     public IReadOnlyList<ProjectMeasurementSnapshot> Measurements { get; init; } = [];
 
+    public IReadOnlyList<ProjectScientificAnalysisSnapshot> Analyses { get; init; } = [];
+
     public ProjectTemplateSnapshot? TemplateSnapshot { get; init; }
 
     public IReadOnlyList<ProjectAuditEntrySnapshot> AuditTrail { get; init; } = [];
@@ -184,6 +186,10 @@ public sealed class ProjectImageLayerSnapshot
 
     public Guid SourceAssetId { get; init; }
 
+    /// <summary>
+    /// Canonical half-open integer source-pixel crop. For manual crops this
+    /// field takes precedence over NormalizedCrop during save/open and export.
+    /// </summary>
     public ProjectPixelRectSnapshot SourceRect { get; init; } = new();
 
     public int FrameIndex { get; init; }
@@ -197,6 +203,10 @@ public sealed class ProjectImageLayerSnapshot
 
     public IReadOnlyList<ProjectImageAdjustmentSnapshot> Adjustments { get; init; } = [];
 
+    /// <summary>
+    /// Derived V2 representation used by Fit/Fill layout and legacy domain
+    /// consumers. It is not the canonical truth for a manual crop.
+    /// </summary>
     public ProjectNormalizedRectSnapshot? NormalizedCrop { get; init; }
 
     public ProjectFigureRectMmSnapshot? FrameMm { get; init; }
@@ -388,6 +398,118 @@ public sealed class ProjectMeasurementPointSnapshot
     public double X { get; init; }
 
     public double Y { get; init; }
+}
+
+public sealed class ProjectScientificAnalysisSnapshot
+{
+    public Guid Id { get; init; }
+
+    public Guid SourceAssetId { get; init; }
+
+    public long SourceRevision { get; init; } = 1;
+
+    public string Kind { get; init; } = "roiStatistics";
+
+    public int FrameIndex { get; init; }
+
+    public string Channel { get; init; } = "luminance";
+
+    public string AnalyzerId { get; init; } = string.Empty;
+
+    public DateTimeOffset AnalyzedAt { get; init; }
+
+    public ProjectScientificValiditySnapshot Validity { get; init; } = new();
+
+    public int SourceBitDepth { get; init; } = 8;
+
+    public ProjectPixelRectSnapshot? Region { get; init; }
+
+    public long? PixelCount { get; init; }
+
+    public double? Minimum { get; init; }
+
+    public double? Maximum { get; init; }
+
+    public double? Mean { get; init; }
+
+    public double? StandardDeviation { get; init; }
+
+    public double? IntegratedIntensity { get; init; }
+
+    public IReadOnlyList<ProjectIntensityHistogramBinSnapshot> Histogram { get; init; } = [];
+
+    public string? DistanceUnit { get; init; }
+
+    public IReadOnlyList<ProjectIntensityProfileSampleSnapshot> Samples { get; init; } = [];
+
+    public string? AnalysisMode { get; init; }
+
+    public bool? UseAutomaticThreshold { get; init; }
+
+    public double? ThresholdNormalized { get; init; }
+
+    public double? AppliedThresholdNormalized { get; init; }
+
+    public int? MinimumAreaPixels { get; init; }
+
+    public int? MaximumCandidates { get; init; }
+
+    public long? ForegroundPixelCount { get; init; }
+
+    public long? TotalPixelCount { get; init; }
+
+    public IReadOnlyList<ProjectParticleSnapshot> Particles { get; init; } = [];
+}
+
+public sealed class ProjectIntensityHistogramBinSnapshot
+{
+    public double LowerBound { get; init; }
+
+    public double UpperBound { get; init; }
+
+    public long Count { get; init; }
+}
+
+public sealed class ProjectIntensityProfileSampleSnapshot
+{
+    public int Index { get; init; }
+
+    public double PixelX { get; init; }
+
+    public double PixelY { get; init; }
+
+    public double DistancePixels { get; init; }
+
+    public double? PhysicalDistance { get; init; }
+
+    public double RawIntensity { get; init; }
+
+    public double NormalizedIntensity { get; init; }
+}
+
+public sealed class ProjectParticleSnapshot
+{
+    public int Id { get; init; }
+
+    public ProjectPixelRectSnapshot Bounds { get; init; } = new();
+
+    public double CentroidX { get; init; }
+
+    public double CentroidY { get; init; }
+
+    public int AreaPixels { get; init; }
+
+    public int PerimeterPixels { get; init; }
+
+    public double MeanIntensity { get; init; }
+
+    public double RawMeanIntensity { get; init; }
+
+    public double AspectRatio { get; init; }
+
+    public double FeretMaximumPixels { get; init; }
+
+    public double FeretMinimumPixels { get; init; }
 }
 
 public sealed class ProjectTemplateSnapshot

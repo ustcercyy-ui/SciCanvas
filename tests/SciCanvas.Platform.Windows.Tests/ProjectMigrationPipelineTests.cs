@@ -26,7 +26,7 @@ public sealed class ProjectMigrationPipelineTests
 
         SciCanvasProjectDocument migrated = ProjectMigrationPipeline.MigrateToCurrent(legacy);
 
-        Assert.Equal("2.0", migrated.SchemaVersion);
+        Assert.Equal("2.2", migrated.SchemaVersion);
         ProjectFigureSnapshot figure = Assert.Single(migrated.Workspace.Figures);
         Assert.Equal(migrated.Workspace.ActiveFigureId, figure.Id);
         Assert.Equal("Legacy figure", figure.Name);
@@ -37,9 +37,53 @@ public sealed class ProjectMigrationPipelineTests
     [Fact]
     public void MigrateToCurrent_IsIdempotent()
     {
-        var current = new SciCanvasProjectDocument { SchemaVersion = "2.0" };
+        var current = new SciCanvasProjectDocument { SchemaVersion = "2.2" };
 
         Assert.Same(current, ProjectMigrationPipeline.MigrateToCurrent(current));
+    }
+
+    [Fact]
+    public void MigrateToCurrent_UpgradesV20WithDeterministicEmptyAnalyses()
+    {
+        var version20 = new SciCanvasProjectDocument
+        {
+            SchemaVersion = "2.0",
+            ProjectId = Guid.NewGuid(),
+        };
+
+        SciCanvasProjectDocument migrated = ProjectMigrationPipeline.MigrateToCurrent(version20);
+
+        Assert.Equal("2.2", migrated.SchemaVersion);
+        Assert.Empty(migrated.Analyses);
+        Assert.Contains(migrated.AuditTrail, entry =>
+            entry.Command == "MigrateProject" &&
+            Equals(entry.Parameters["from"], "2.0") &&
+            Equals(entry.Parameters["to"], "2.2"));
+        Assert.Same(migrated, ProjectMigrationPipeline.MigrateToCurrent(migrated));
+    }
+
+    [Fact]
+    public void MigrateToCurrent_UpgradesV21AndPreservesExistingAnalyses()
+    {
+        var analysis = new ProjectScientificAnalysisSnapshot
+        {
+            Id = Guid.NewGuid(),
+            SourceAssetId = Guid.NewGuid(),
+            Kind = "roiStatistics",
+        };
+        var version21 = new SciCanvasProjectDocument
+        {
+            SchemaVersion = "2.1",
+            ProjectId = Guid.NewGuid(),
+            Analyses = [analysis],
+        };
+
+        SciCanvasProjectDocument migrated = ProjectMigrationPipeline.MigrateToCurrent(version21);
+
+        Assert.Equal("2.2", migrated.SchemaVersion);
+        Assert.Same(analysis, Assert.Single(migrated.Analyses));
+        Assert.Contains(migrated.AuditTrail, entry =>
+            entry.Command == "MigrateProject" && Equals(entry.Parameters["from"], "2.1"));
     }
 
     [Fact]

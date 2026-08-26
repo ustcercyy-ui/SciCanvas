@@ -76,7 +76,23 @@ public readonly record struct NormalizedPoint
 
 public readonly record struct NormalizedRect
 {
+    private readonly PixelRect64? _canonicalSourcePixels;
+    private readonly long _canonicalSourceWidth;
+    private readonly long _canonicalSourceHeight;
+
     public NormalizedRect(double x, double y, double width, double height)
+        : this(x, y, width, height, null, 0, 0)
+    {
+    }
+
+    private NormalizedRect(
+        double x,
+        double y,
+        double width,
+        double height,
+        PixelRect64? canonicalSourcePixels,
+        long canonicalSourceWidth,
+        long canonicalSourceHeight)
     {
         if (!double.IsFinite(x) || !double.IsFinite(y) ||
             !double.IsFinite(width) || !double.IsFinite(height) ||
@@ -90,6 +106,9 @@ public readonly record struct NormalizedRect
         Y = y;
         Width = width;
         Height = height;
+        _canonicalSourcePixels = canonicalSourcePixels;
+        _canonicalSourceWidth = canonicalSourceWidth;
+        _canonicalSourceHeight = canonicalSourceHeight;
     }
 
     public double X { get; }
@@ -104,12 +123,27 @@ public readonly record struct NormalizedRect
 
     public double Bottom => Y + Height;
 
+    public bool Equals(NormalizedRect other) =>
+        X.Equals(other.X) &&
+        Y.Equals(other.Y) &&
+        Width.Equals(other.Width) &&
+        Height.Equals(other.Height);
+
+    public override int GetHashCode() => HashCode.Combine(X, Y, Width, Height);
+
     public static NormalizedRect Full { get; } = new(0, 0, 1, 1);
 
     public PixelRect64 ToSourcePixels(long sourceWidth, long sourceHeight)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sourceWidth);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sourceHeight);
+
+        if (_canonicalSourcePixels is PixelRect64 canonical &&
+            _canonicalSourceWidth == sourceWidth &&
+            _canonicalSourceHeight == sourceHeight)
+        {
+            return canonical;
+        }
 
         long left = Math.Clamp((long)Math.Floor(X * sourceWidth), 0, sourceWidth - 1);
         long top = Math.Clamp((long)Math.Floor(Y * sourceHeight), 0, sourceHeight - 1);
@@ -134,7 +168,10 @@ public readonly record struct NormalizedRect
             rect.X / (double)sourceWidth,
             rect.Y / (double)sourceHeight,
             rect.Width / (double)sourceWidth,
-            rect.Height / (double)sourceHeight);
+            rect.Height / (double)sourceHeight,
+            rect,
+            sourceWidth,
+            sourceHeight);
     }
 }
 

@@ -124,7 +124,9 @@ public sealed class AssistedRegionCandidateViewModel : ObservableObject
         }
     }
 
-    public string ShapeText => $"AR {Candidate.AspectRatio:0.##} · I {Candidate.MeanIntensity:0.###}";
+    public string ShapeText =>
+        $"AR {Candidate.AspectRatio:0.##} · C {Candidate.Circularity:0.###} · " +
+        $"Fmax {Candidate.FeretMaximumPixels:0.##} px · Iraw {Candidate.RawMeanIntensity:0.###}";
 
     public void MarkCommitted() => IsCommitted = true;
 }

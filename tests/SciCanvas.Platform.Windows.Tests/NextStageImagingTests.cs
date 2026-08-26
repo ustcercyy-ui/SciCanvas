@@ -5,6 +5,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
+using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
 using SciCanvas.Imaging;
 using CoreImageMetadata = SciCanvas.Core.Images.ImageMetadata;
@@ -66,6 +67,22 @@ public sealed class NextStageImagingTests
         Assert.Equal(4, metadata.Ome.SizeT);
         Assert.Equal(["DAPI", "FITC"], metadata.Ome.ChannelNames);
         Assert.Matches("^[0-9A-F]{64}$", metadata.Ome.XmlSha256);
+        Assert.Equal(0.25, metadata.PhysicalSizeX);
+        Assert.Equal(0.25, metadata.PhysicalSizeY);
+        Assert.Equal("µm", metadata.PhysicalUnit);
+
+        SourceAsset source = CreateAsset(path, 2, 2, bitsPerChannel: 8, pixelFormat: "Gray8") with
+        {
+            Metadata = metadata,
+        };
+        BitmapSource preview = BitmapSource.Create(
+            2, 2, 96, 96, PixelFormats.Gray8, null, new byte[4], 2);
+        preview.Freeze();
+        var sourceItem = new SciCanvas.Presentation.SourceAssetItemViewModel(source, preview);
+        Assert.True(sourceItem.Calibration.IsCalibrated);
+        Assert.Equal(CalibrationOrigin.Metadata, sourceItem.Calibration.Origin);
+        Assert.Equal(0.25, sourceItem.Calibration.UnitsPerPixelX);
+        Assert.Equal(0.25, sourceItem.Calibration.UnitsPerPixelY);
     }
 
     private static SourceAsset CreateAsset(

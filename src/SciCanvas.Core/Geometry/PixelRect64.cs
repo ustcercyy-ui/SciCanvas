@@ -1,5 +1,9 @@
 namespace SciCanvas.Core.Geometry;
 
+/// <summary>
+/// Integer source-pixel rectangle with half-open bounds
+/// [X, X + Width) × [Y, Y + Height).
+/// </summary>
 public readonly record struct PixelRect64
 {
     public PixelRect64(long x, long y, long width, long height)
@@ -39,4 +43,3 @@ public readonly record struct PixelRect64
             Height);
     }
 }
-

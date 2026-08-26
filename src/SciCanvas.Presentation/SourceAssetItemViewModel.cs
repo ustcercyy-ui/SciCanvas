@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Media.Imaging;
@@ -25,9 +26,7 @@ public sealed class SourceAssetItemViewModel : ObservableObject
         _framePreviews[0] = _preview;
         Calibration = new CalibrationEditorViewModel(
             asset.Id,
-            asset.Metadata.PhysicalSizeX,
-            asset.Metadata.PhysicalSizeY,
-            asset.Metadata.PhysicalUnit);
+            asset.Metadata);
         Calibration.Changed += OnCalibrationChanged;
         Calibration.EditCompleted += OnScienceEditCompleted;
     }
@@ -37,6 +36,8 @@ public sealed class SourceAssetItemViewModel : ObservableObject
     public event EventHandler? ScienceEditCompleted;
 
     public event EventHandler? MeasurementSelectionChanged;
+
+    public event EventHandler? AnalysisChanged;
 
     public SourceAsset Asset => _asset;
 
@@ -80,6 +81,8 @@ public sealed class SourceAssetItemViewModel : ObservableObject
     public CalibrationEditorViewModel Calibration { get; }
 
     public ObservableCollection<ScientificMeasurementViewModel> Measurements { get; } = [];
+
+    public ObservableCollection<ScientificImageAnalysisResult> AnalysisResults { get; } = [];
 
     public ScientificMeasurementViewModel? SelectedMeasurement
     {
@@ -137,6 +140,8 @@ public sealed class SourceAssetItemViewModel : ObservableObject
         : $"{FormatText} · {DpiText} · {Asset.Metadata.Ome.Summary} · {FileSizeText}";
 
     public string MeasurementCountText => $"测量表 · {Measurements.Count} 项";
+
+    public string AnalysisCountText => $"图像分析 · {AnalysisResults.Count} 项";
 
     public string SelectedMeasurementStatusText => SelectedMeasurement is null
         ? "未选择测量对象"
@@ -311,6 +316,42 @@ public sealed class SourceAssetItemViewModel : ObservableObject
         NotifyMeasurementCollectionChanged();
     }
 
+    public void AddAnalysisResult(
+        ScientificImageAnalysisResult result,
+        bool completeEdit = true)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        if (!result.HasValidProvenance || result.SourceAssetId != Asset.Id)
+        {
+            throw new InvalidDataException("分析结果缺少有效的源素材溯源信息。");
+        }
+
+        if (result.SourceRevision != SourceRevision)
+        {
+            throw new InvalidOperationException(
+                $"分析结果基于 source revision {result.SourceRevision}，当前为 {SourceRevision}。");
+        }
+
+        AnalysisResults.Add(result.Revalidate(Asset.Id, SourceRevision));
+        NotifyAnalysisCollectionChanged();
+        if (completeEdit)
+        {
+            ScienceEditCompleted?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    public void RestoreAnalysisResults(IEnumerable<ScientificImageAnalysisResult> results)
+    {
+        ArgumentNullException.ThrowIfNull(results);
+        AnalysisResults.Clear();
+        foreach (ScientificImageAnalysisResult result in results)
+        {
+            AnalysisResults.Add(result.Revalidate(Asset.Id, SourceRevision));
+        }
+
+        OnPropertyChanged(nameof(AnalysisCountText));
+    }
+
     public string CreateMeasurementCsv()
     {
         var csv = new StringBuilder();
@@ -375,10 +416,11 @@ public sealed class SourceAssetItemViewModel : ObservableObject
         _preview = preview;
         _framePreviews.Clear();
         _framePreviews[0] = preview;
-        Calibration.RefreshMetadataCalibration(
-            asset.Metadata.PhysicalSizeX,
-            asset.Metadata.PhysicalSizeY,
-            asset.Metadata.PhysicalUnit);
+        Calibration.RefreshMetadataCalibration(asset.Metadata);
+        for (int index = 0; index < AnalysisResults.Count; index++)
+        {
+            AnalysisResults[index] = AnalysisResults[index].Revalidate(asset.Id, _sourceRevision);
+        }
         OnPropertyChanged(nameof(Asset));
         OnPropertyChanged(nameof(SourceRevision));
         OnPropertyChanged(nameof(SourceRevisionText));
@@ -395,6 +437,7 @@ public sealed class SourceAssetItemViewModel : ObservableObject
         OnPropertyChanged(nameof(OmeText));
         OnPropertyChanged(nameof(DetailsText));
         OnPropertyChanged(nameof(Sha256Short));
+        OnPropertyChanged(nameof(AnalysisCountText));
     }
 
     internal void RestoreSourceRevision(long sourceRevision)
@@ -448,6 +491,12 @@ public sealed class SourceAssetItemViewModel : ObservableObject
         NotifyMeasurementHistogramChanged();
         OnPropertyChanged(nameof(SelectedMeasurementStatusText));
         ScienceChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void NotifyAnalysisCollectionChanged()
+    {
+        OnPropertyChanged(nameof(AnalysisCountText));
+        AnalysisChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void RenumberMeasurements()

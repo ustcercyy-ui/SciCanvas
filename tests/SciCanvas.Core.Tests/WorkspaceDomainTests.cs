@@ -133,6 +133,103 @@ public sealed class WorkspaceDomainTests
     }
 
     [Fact]
+    public void NormalizedRect_SourcePixelFactoryRoundTripsRandomHalfOpenRectanglesExactly()
+    {
+        var random = new Random(0x5C1CA);
+        (long Width, long Height)[] sourceSizes =
+        [
+            (101, 103),
+            (1009, 1013),
+            (8191, 8209),
+            (1_000_003, 1_000_033),
+        ];
+
+        foreach ((long sourceWidth, long sourceHeight) in sourceSizes)
+        {
+            for (int iteration = 0; iteration < 2_000; iteration++)
+            {
+                long x = random.NextInt64(sourceWidth);
+                long y = random.NextInt64(sourceHeight);
+                long width = random.NextInt64(1, sourceWidth - x + 1);
+                long height = random.NextInt64(1, sourceHeight - y + 1);
+                var expected = new PixelRect64(x, y, width, height);
+
+                PixelRect64 actual = NormalizedRect
+                    .FromSourcePixels(expected, sourceWidth, sourceHeight)
+                    .ToSourcePixels(sourceWidth, sourceHeight);
+
+                Assert.Equal(expected, actual);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(0, 0, 1, 1)]
+    [InlineData(100, 102, 1, 1)]
+    [InlineData(94, 96, 7, 7)]
+    public void NormalizedRect_PreservesPrimeSizedSourceEdges(
+        long x,
+        long y,
+        long width,
+        long height)
+    {
+        var expected = new PixelRect64(x, y, width, height);
+
+        PixelRect64 actual = NormalizedRect
+            .FromSourcePixels(expected, 101, 103)
+            .ToSourcePixels(101, 103);
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void NormalizedRect_PreservesPixelsBeyondDoubleIntegerPrecision()
+    {
+        const long sourceWidth = 9_007_199_254_741_031;
+        const long sourceHeight = 9_007_199_254_741_111;
+        var expected = new PixelRect64(
+            sourceWidth - 97,
+            sourceHeight - 89,
+            97,
+            89);
+
+        PixelRect64 actual = NormalizedRect
+            .FromSourcePixels(expected, sourceWidth, sourceHeight)
+            .ToSourcePixels(sourceWidth, sourceHeight);
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void NormalizedRect_EqualityIgnoresDerivedCanonicalPixelCache()
+    {
+        var expected = new NormalizedRect(0, 0, 1, 1);
+        NormalizedRect derived = NormalizedRect.FromSourcePixels(
+            new PixelRect64(0, 0, 101, 103),
+            101,
+            103);
+
+        Assert.Equal(expected, derived);
+    }
+
+    [Fact]
+    public void FigurePanel_ManualCropKeepsCanonicalHalfOpenPixelRectangle()
+    {
+        Guid sourceId = Guid.NewGuid();
+        var expected = new PixelRect64(59, 6, 15, 48);
+        FigurePanel panel = CreatePanel(
+                sourceId,
+                new FigureRectMm(0, 0, 40, 30))
+            .WithManualCrop(expected, 101, 103);
+
+        Assert.Equal(expected, panel.ManualCropPixels);
+        Assert.Equal(expected, panel.ResolveSourcePixels(101, 103));
+        Assert.Equal(
+            expected,
+            panel.Crop.ToSourcePixels(101, 103));
+    }
+
+    [Fact]
     public void ProjectStyleChange_UpdatesInheritedLabelsButPreservesLocalOverride()
     {
         ProjectStyle initial = ProjectStyle.Default with
@@ -209,6 +306,54 @@ public sealed class WorkspaceDomainTests
         Assert.Contains(issues, issue => issue.RuleId == "calibration.asset");
         Assert.Contains(issues, issue => issue.RuleId == "panel-label.sequence");
         Assert.Contains(issues, issue => issue.RuleId == "resolution.effective-dpi");
+    }
+
+    [Fact]
+    public void PanelLabelScheme_GeneratesBeyondZForBothAlphabeticCases()
+    {
+        Assert.Equal("z", PanelLabelGenerator.Generate(25, PanelLabelScheme.LowerAlpha));
+        Assert.Equal("aa", PanelLabelGenerator.Generate(26, PanelLabelScheme.LowerAlpha));
+        Assert.Equal("Z", PanelLabelGenerator.Generate(25, PanelLabelScheme.UpperAlpha));
+        Assert.Equal("AA", PanelLabelGenerator.Generate(26, PanelLabelScheme.UpperAlpha));
+    }
+
+    [Theory]
+    [InlineData("Numeric", "1", "2")]
+    [InlineData("Custom", "SEM", "EDS")]
+    [InlineData("None", "", "")]
+    public void QcEngine_UsesFigurePanelLabelSchemeInsteadOfHardcodedLowerAlpha(
+        string schemeName,
+        string firstLabel,
+        string secondLabel)
+    {
+        ScientificAsset asset = CreateAsset(calibrated: true);
+        Guid figureId = Guid.NewGuid();
+        FigurePanel first = CreatePanel(asset.Id, new FigureRectMm(0, 0, 40, 40), figureId) with
+        {
+            Label = firstLabel,
+        };
+        FigurePanel second = CreatePanel(asset.Id, new FigureRectMm(50, 0, 40, 40), figureId) with
+        {
+            Label = secondLabel,
+        };
+        var figure = new ScientificFigure(
+            figureId,
+            "Figure 1",
+            100,
+            50,
+            [first, second],
+            [],
+            null,
+            DateTimeOffset.UtcNow)
+        {
+            LabelScheme = Enum.Parse<PanelLabelScheme>(schemeName),
+        };
+        ScientificProject project = CreateProject(asset, figure);
+
+        IReadOnlyList<QcResult> issues = new QcEngine().Evaluate(
+            new QcContext(project, new QcConfiguration()));
+
+        Assert.DoesNotContain(issues, issue => issue.RuleId == "panel-label.sequence");
     }
 
     private static ScientificProject CreateProject(

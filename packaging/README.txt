@@ -1,4 +1,4 @@
-SciCanvas v2.0.1-alpha Windows x64 安装包
+SciCanvas v2.2.0-alpha Windows x64 安装包
 
 运行 Install-SciCanvas.cmd 即可安装到当前用户的：
 %LOCALAPPDATA%\SciCanvas

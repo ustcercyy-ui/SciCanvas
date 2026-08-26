@@ -55,4 +55,9 @@ public sealed class BatchCropQueueItemViewModel : ObservableObject
     }
 
     internal void MarkFailed(string message) => StatusText = $"失败 · {message}";
+
+    internal void MarkAnalyzing() => StatusText = "正在运行颗粒分析…";
+
+    internal void MarkAnalysisCompleted(int particleCount) =>
+        StatusText = $"分析完成 · {particleCount} 个候选";
 }

@@ -81,7 +81,9 @@ public sealed record ScientificMeasurement(
             ScientificMeasurementKind.Length => calibration.ConvertDistance(
                 PointB.X - PointA.X,
                 PointB.Y - PointA.Y),
-            ScientificMeasurementKind.Angle => PixelValue,
+            ScientificMeasurementKind.Angle => CalculateAngleDegrees(
+                calibration.UnitsPerPixelX,
+                calibration.UnitsPerPixelY),
             ScientificMeasurementKind.RectangleRoi =>
                 Math.Abs(PointB.X - PointA.X) * calibration.UnitsPerPixelX *
                 Math.Abs(PointB.Y - PointA.Y) * calibration.UnitsPerPixelY,
@@ -146,17 +148,27 @@ public sealed record ScientificMeasurement(
             PointB.Y - PointA.Y);
     }
 
-    private double CalculateAngleDegrees()
+    private double CalculateAngleDegrees(double scaleX = 1, double scaleY = 1)
     {
         if (PointC is not MeasurementPoint pointC)
         {
             return 0;
         }
 
-        double ax = PointA.X - PointB.X;
-        double ay = PointA.Y - PointB.Y;
-        double cx = pointC.X - PointB.X;
-        double cy = pointC.Y - PointB.Y;
+        double commonScale = Math.Max(Math.Abs(scaleX), Math.Abs(scaleY));
+        if (!double.IsFinite(commonScale) || commonScale <= 0)
+        {
+            return 0;
+        }
+
+        // Dividing both calibration axes by the same value preserves the angle
+        // while avoiding overflow when valid units-per-pixel values are large.
+        double normalizedScaleX = scaleX / commonScale;
+        double normalizedScaleY = scaleY / commonScale;
+        double ax = (PointA.X - PointB.X) * normalizedScaleX;
+        double ay = (PointA.Y - PointB.Y) * normalizedScaleY;
+        double cx = (pointC.X - PointB.X) * normalizedScaleX;
+        double cy = (pointC.Y - PointB.Y) * normalizedScaleY;
         double lengthA = Math.Sqrt(ax * ax + ay * ay);
         double lengthC = Math.Sqrt(cx * cx + cy * cy);
         if (lengthA <= double.Epsilon || lengthC <= double.Epsilon)

@@ -28,9 +28,16 @@ public sealed record ImageMetadata
         PixelFormat = pixelFormat;
         DpiX = dpiX;
         DpiY = dpiY;
-        PhysicalSizeX = physicalSizeX;
-        PhysicalSizeY = physicalSizeY;
-        PhysicalUnit = physicalUnit;
+        PhysicalPixelSizeMetadata calibrationMetadata = ImageMetadataCalibrationMapper.Resolve(
+            physicalSizeX,
+            physicalSizeY,
+            physicalUnit,
+            ome);
+        PhysicalSizeX = calibrationMetadata.UnitsPerPixelX;
+        PhysicalSizeY = calibrationMetadata.UnitsPerPixelY;
+        PhysicalUnit = calibrationMetadata.Unit;
+        MetadataCalibrationState = calibrationMetadata.State;
+        MetadataCalibrationReviewMessage = calibrationMetadata.ReviewMessage;
         IccProfileName = iccProfileName;
         FrameCount = Math.Max(1, frameCount);
         Ome = ome;
@@ -54,10 +61,13 @@ public sealed record ImageMetadata
 
     public string? PhysicalUnit { get; }
 
+    public MetadataCalibrationState MetadataCalibrationState { get; }
+
+    public string? MetadataCalibrationReviewMessage { get; }
+
     public string? IccProfileName { get; }
 
     public int FrameCount { get; }
 
     public OmeImageMetadata? Ome { get; }
 }
-

@@ -1,4 +1,5 @@
 using SciCanvas.Core.Science;
+using SciCanvas.Core.Images;
 
 namespace SciCanvas.Presentation;
 
@@ -16,6 +17,18 @@ public sealed class CalibrationEditorViewModel : ObservableObject
     private double _referencePhysicalLength = 1;
     private bool _hasReferenceLine;
     private bool _isRestoring;
+    private string? _metadataReviewMessage;
+
+    public CalibrationEditorViewModel(Guid sourceAssetId, ImageMetadata metadata)
+        : this(
+            sourceAssetId,
+            metadata?.PhysicalSizeX,
+            metadata?.PhysicalSizeY,
+            metadata?.PhysicalUnit)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        SetFromMetadata(ImageMetadataCalibrationMapper.Map(sourceAssetId, metadata));
+    }
 
     public CalibrationEditorViewModel(
         Guid sourceAssetId,
@@ -98,7 +111,9 @@ public sealed class CalibrationEditorViewModel : ObservableObject
         ? IsAnisotropic
             ? $"已标定 · X/Y 尺度不同 · {UnitsPerPixelX:0.######}/{UnitsPerPixelY:0.######} {Unit}/px"
             : $"已标定 · {UnitsPerPixelX:0.######} {Unit}/px"
-        : "未标定 · 测量将以 px 显示，比例尺不可用";
+        : _metadataReviewMessage is not null
+            ? $"Metadata 需复核 · {_metadataReviewMessage}"
+            : "未标定 · 测量将以 px 显示，比例尺不可用";
 
     public string ValidatorText => Calibration.ValidationMessage;
 
@@ -232,6 +247,7 @@ public sealed class CalibrationEditorViewModel : ObservableObject
             _unitsPerPixelY = calibration.UnitsPerPixelY;
             _unit = string.IsNullOrWhiteSpace(calibration.Unit) ? "µm" : calibration.Unit;
             _origin = calibration.Origin;
+            _metadataReviewMessage = null;
             _referencePhysicalLength = calibration.ReferencePhysicalLength ?? 1;
             _referenceStartX = referenceStartX;
             _referenceStartY = referenceStartY;
@@ -262,6 +278,18 @@ public sealed class CalibrationEditorViewModel : ObservableObject
         NotifyAll();
     }
 
+    public void RefreshMetadataCalibration(ImageMetadata metadata)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        if (Origin is CalibrationOrigin.Manual or CalibrationOrigin.Linked)
+        {
+            return;
+        }
+
+        SetFromMetadata(ImageMetadataCalibrationMapper.Map(_sourceAssetId, metadata));
+        NotifyAll();
+    }
+
     private void ApplyReference()
     {
         if (!CanApplyReference)
@@ -277,6 +305,7 @@ public sealed class CalibrationEditorViewModel : ObservableObject
         _unitsPerPixelX = calibration.UnitsPerPixelX;
         _unitsPerPixelY = calibration.UnitsPerPixelY;
         _origin = CalibrationOrigin.Manual;
+        _metadataReviewMessage = null;
         NotifyAll();
         NotifyCalibrationChanged();
         EditCompleted?.Invoke(this, EventArgs.Empty);
@@ -287,6 +316,7 @@ public sealed class CalibrationEditorViewModel : ObservableObject
         _unitsPerPixelX = 0;
         _unitsPerPixelY = 0;
         _origin = CalibrationOrigin.None;
+        _metadataReviewMessage = null;
         NotifyAll();
         NotifyCalibrationChanged();
         EditCompleted?.Invoke(this, EventArgs.Empty);
@@ -310,6 +340,7 @@ public sealed class CalibrationEditorViewModel : ObservableObject
         if (!_isRestoring && _origin != CalibrationOrigin.Manual)
         {
             _origin = CalibrationOrigin.Manual;
+            _metadataReviewMessage = null;
             OnPropertyChanged(nameof(Origin));
             OnPropertyChanged(nameof(OriginText));
         }
@@ -322,14 +353,34 @@ public sealed class CalibrationEditorViewModel : ObservableObject
         {
             bool validX = x is > 0 && double.IsFinite(x.Value);
             bool validY = y is > 0 && double.IsFinite(y.Value);
-            _unitsPerPixelX = validX ? x!.Value : 0;
-            _unitsPerPixelY = validY ? y!.Value : validX ? x!.Value : 0;
-            _unit = string.IsNullOrWhiteSpace(unit)
-                ? "µm"
-                : ScientificLengthUnits.Normalize(unit);
-            _origin = _unitsPerPixelX > 0 && _unitsPerPixelY > 0
+            bool validUnit = !string.IsNullOrWhiteSpace(unit);
+            _unitsPerPixelX = validX && validY && validUnit ? x!.Value : 0;
+            _unitsPerPixelY = validX && validY && validUnit ? y!.Value : 0;
+            _unit = validUnit ? ScientificLengthUnits.Normalize(unit) : "µm";
+            _origin = _unitsPerPixelX > 0 && _unitsPerPixelY > 0 && validUnit
                 ? CalibrationOrigin.Metadata
                 : CalibrationOrigin.None;
+            _metadataReviewMessage = null;
+        }
+        finally
+        {
+            _isRestoring = false;
+        }
+    }
+
+    private void SetFromMetadata(MetadataCalibrationMapping mapping)
+    {
+        _isRestoring = true;
+        try
+        {
+            SpatialCalibration calibration = mapping.Calibration;
+            _unitsPerPixelX = mapping.IsAvailable ? calibration.UnitsPerPixelX : 0;
+            _unitsPerPixelY = mapping.IsAvailable ? calibration.UnitsPerPixelY : 0;
+            _unit = mapping.IsAvailable ? calibration.Unit : "µm";
+            _origin = mapping.IsAvailable ? CalibrationOrigin.Metadata : CalibrationOrigin.None;
+            _metadataReviewMessage = mapping.State == MetadataCalibrationState.ReviewRequired
+                ? mapping.ReviewMessage
+                : null;
         }
         finally
         {

@@ -153,6 +153,10 @@ internal static class ProjectDocumentMapper
                     };
                 })
                 .ToArray(),
+            Analyses = sources
+                .SelectMany(source => source.AnalysisResults)
+                .Select(ToSnapshot)
+                .ToArray(),
             TemplateSnapshot = new ProjectTemplateSnapshot
             {
                 TemplateId = figure.Template.Id,
@@ -222,6 +226,7 @@ internal static class ProjectDocumentMapper
                             ["annotationCount"] = figure.Annotations.Count,
                             ["calibrationCount"] = sources.Count(source => source.Calibration.IsCalibrated),
                             ["measurementCount"] = sources.Sum(source => source.Measurements.Count),
+                            ["analysisCount"] = sources.Sum(source => source.AnalysisResults.Count),
                             ["templateId"] = figure.Template.Id,
                         },
                     },
@@ -291,6 +296,15 @@ internal static class ProjectDocumentMapper
             : null,
         Name: null,
         PathPoints: snapshot.Points.Select(point => new MeasurementPoint(point.X, point.Y)).ToArray());
+
+    public static ScientificImageAnalysisResult ToAnalysis(ProjectScientificAnalysisSnapshot snapshot) =>
+        snapshot.Kind.ToLowerInvariant() switch
+        {
+            "roistatistics" => ToRoiStatistics(snapshot),
+            "lineprofile" => ToLineProfile(snapshot),
+            "particleanalysis" => ToParticleAnalysis(snapshot),
+            _ => throw new InvalidDataException($"未知图像分析类型：{snapshot.Kind}"),
+        };
 
     private static Guid GetStableExportProfileId(string profileId)
     {
@@ -404,6 +418,220 @@ internal static class ProjectDocumentMapper
             Reasons = panel.ReplacementValidity.Reasons,
         },
     };
+
+    private static ProjectScientificAnalysisSnapshot ToSnapshot(
+        ScientificImageAnalysisResult result) => result switch
+    {
+        RoiStatisticsResult roi => new ProjectScientificAnalysisSnapshot
+        {
+            Id = roi.Id,
+            SourceAssetId = roi.SourceAssetId,
+            SourceRevision = roi.SourceRevision,
+            Kind = "roiStatistics",
+            FrameIndex = roi.FrameIndex,
+            Channel = ToAnalysisChannelKey(roi.Channel),
+            AnalyzerId = roi.AnalyzerId,
+            AnalyzedAt = roi.AnalyzedAt,
+            Validity = ToSnapshot(roi.Validity),
+            SourceBitDepth = roi.SourceBitDepth,
+            Region = ToSnapshot(roi.Region),
+            PixelCount = roi.PixelCount,
+            Minimum = roi.Minimum,
+            Maximum = roi.Maximum,
+            Mean = roi.Mean,
+            StandardDeviation = roi.StandardDeviation,
+            IntegratedIntensity = roi.IntegratedIntensity,
+            Histogram = roi.Histogram.Bins.Select(bin => new ProjectIntensityHistogramBinSnapshot
+            {
+                LowerBound = bin.LowerBound,
+                UpperBound = bin.UpperBound,
+                Count = bin.Count,
+            }).ToArray(),
+        },
+        IntensityProfileResult profile => new ProjectScientificAnalysisSnapshot
+        {
+            Id = profile.Id,
+            SourceAssetId = profile.SourceAssetId,
+            SourceRevision = profile.SourceRevision,
+            Kind = "lineProfile",
+            FrameIndex = profile.FrameIndex,
+            Channel = ToAnalysisChannelKey(profile.Channel),
+            AnalyzerId = profile.AnalyzerId,
+            AnalyzedAt = profile.AnalyzedAt,
+            Validity = ToSnapshot(profile.Validity),
+            SourceBitDepth = profile.SourceBitDepth,
+            DistanceUnit = profile.DistanceUnit,
+            Samples = profile.Samples.Select(sample => new ProjectIntensityProfileSampleSnapshot
+            {
+                Index = sample.Index,
+                PixelX = sample.PixelX,
+                PixelY = sample.PixelY,
+                DistancePixels = sample.DistancePixels,
+                PhysicalDistance = sample.PhysicalDistance,
+                RawIntensity = sample.RawIntensity,
+                NormalizedIntensity = sample.NormalizedIntensity,
+            }).ToArray(),
+        },
+        AssistedRegionAnalysisResult particles => new ProjectScientificAnalysisSnapshot
+        {
+            Id = particles.Id,
+            SourceAssetId = particles.SourceAssetId,
+            SourceRevision = particles.SourceRevision,
+            Kind = "particleAnalysis",
+            FrameIndex = particles.FrameIndex,
+            Channel = ToAnalysisChannelKey(particles.Channel),
+            AnalyzerId = particles.AnalyzerId,
+            AnalyzedAt = particles.AnalyzedAt,
+            Validity = ToSnapshot(particles.Validity),
+            SourceBitDepth = particles.SourceBitDepth,
+            Region = ToSnapshot(particles.Options.RegionOfInterest),
+            AnalysisMode = ToAssistedRegionModeKey(particles.Options.Mode),
+            UseAutomaticThreshold = particles.Options.UseAutomaticThreshold,
+            ThresholdNormalized = particles.Options.ThresholdNormalized,
+            AppliedThresholdNormalized = particles.AppliedThresholdNormalized,
+            MinimumAreaPixels = particles.Options.MinimumAreaPixels,
+            MaximumCandidates = particles.Options.MaximumCandidates,
+            ForegroundPixelCount = particles.ForegroundPixelCount,
+            TotalPixelCount = particles.TotalPixelCount,
+            Particles = particles.Candidates.Select(candidate => new ProjectParticleSnapshot
+            {
+                Id = candidate.Id,
+                Bounds = ToSnapshot(candidate.Bounds),
+                CentroidX = candidate.CentroidX,
+                CentroidY = candidate.CentroidY,
+                AreaPixels = candidate.AreaPixels,
+                PerimeterPixels = candidate.PerimeterPixels,
+                MeanIntensity = candidate.MeanIntensity,
+                RawMeanIntensity = candidate.RawMeanIntensity,
+                AspectRatio = candidate.AspectRatio,
+                FeretMaximumPixels = candidate.FeretMaximumPixels,
+                FeretMinimumPixels = candidate.FeretMinimumPixels,
+            }).ToArray(),
+        },
+        _ => throw new InvalidDataException($"未知图像分析类型：{result.GetType().Name}"),
+    };
+
+    private static ProjectScientificValiditySnapshot ToSnapshot(AnalysisResultValidity validity) => new()
+    {
+        State = validity.State.ToString().ToLowerInvariant(),
+        Reasons = validity.Reasons,
+    };
+
+    private static RoiStatisticsResult ToRoiStatistics(ProjectScientificAnalysisSnapshot snapshot)
+    {
+        ProjectPixelRectSnapshot region = snapshot.Region ??
+            throw new InvalidDataException("ROI 统计分析缺少源像素区域。");
+        IntensityHistogramBin[] bins = snapshot.Histogram
+            .Select(bin => new IntensityHistogramBin(bin.LowerBound, bin.UpperBound, bin.Count))
+            .ToArray();
+        long pixelCount = snapshot.PixelCount ?? bins.Sum(bin => bin.Count);
+        return new RoiStatisticsResult
+        {
+            Id = snapshot.Id,
+            SourceAssetId = snapshot.SourceAssetId,
+            SourceRevision = snapshot.SourceRevision,
+            FrameIndex = snapshot.FrameIndex,
+            Channel = ParseAnalysisChannel(snapshot.Channel),
+            AnalyzerId = snapshot.AnalyzerId,
+            AnalyzedAt = snapshot.AnalyzedAt,
+            Validity = ToAnalysisValidity(snapshot.Validity),
+            SourceBitDepth = snapshot.SourceBitDepth,
+            Region = ToPixelRect(region),
+            PixelCount = pixelCount,
+            Minimum = snapshot.Minimum ?? 0,
+            Maximum = snapshot.Maximum ?? 0,
+            Mean = snapshot.Mean ?? 0,
+            StandardDeviation = snapshot.StandardDeviation ?? 0,
+            IntegratedIntensity = snapshot.IntegratedIntensity ?? 0,
+            Histogram = new IntensityHistogram(
+                bins,
+                pixelCount,
+                snapshot.Minimum ?? 0,
+                snapshot.Maximum ?? 0),
+        };
+    }
+
+    private static IntensityProfileResult ToLineProfile(ProjectScientificAnalysisSnapshot snapshot) =>
+        new(
+            snapshot.Samples.Select(sample => new IntensityProfileSample(
+                sample.Index,
+                sample.PixelX,
+                sample.PixelY,
+                sample.DistancePixels,
+                sample.PhysicalDistance,
+                sample.NormalizedIntensity)
+            {
+                RawIntensity = sample.RawIntensity,
+            }).ToArray(),
+            snapshot.DistanceUnit ?? "px",
+            snapshot.SourceBitDepth)
+        {
+            Id = snapshot.Id,
+            SourceAssetId = snapshot.SourceAssetId,
+            SourceRevision = snapshot.SourceRevision,
+            FrameIndex = snapshot.FrameIndex,
+            Channel = ParseAnalysisChannel(snapshot.Channel),
+            AnalyzerId = snapshot.AnalyzerId,
+            AnalyzedAt = snapshot.AnalyzedAt,
+            Validity = ToAnalysisValidity(snapshot.Validity),
+        };
+
+    private static AssistedRegionAnalysisResult ToParticleAnalysis(
+        ProjectScientificAnalysisSnapshot snapshot)
+    {
+        ProjectPixelRectSnapshot region = snapshot.Region ??
+            throw new InvalidDataException("颗粒分析缺少源像素 ROI。");
+        var options = new AssistedRegionAnalysisOptions(
+            ParseAssistedRegionMode(snapshot.AnalysisMode),
+            ToPixelRect(region),
+            snapshot.UseAutomaticThreshold ?? true,
+            snapshot.ThresholdNormalized ?? 0.5,
+            snapshot.MinimumAreaPixels ?? 16,
+            snapshot.MaximumCandidates ?? 1000);
+        AssistedRegionCandidate[] candidates = snapshot.Particles.Select(particle =>
+            new AssistedRegionCandidate(
+                particle.Id,
+                ToPixelRect(particle.Bounds),
+                particle.CentroidX,
+                particle.CentroidY,
+                particle.AreaPixels,
+                particle.PerimeterPixels,
+                particle.MeanIntensity,
+                particle.AspectRatio)
+            {
+                RawMeanIntensity = particle.RawMeanIntensity,
+                FeretMaximumPixels = particle.FeretMaximumPixels,
+                FeretMinimumPixels = particle.FeretMinimumPixels,
+            }).ToArray();
+        return new AssistedRegionAnalysisResult(
+            options,
+            candidates,
+            snapshot.AppliedThresholdNormalized ?? 0,
+            snapshot.ForegroundPixelCount ?? 0,
+            snapshot.TotalPixelCount ?? region.Width * region.Height)
+        {
+            Id = snapshot.Id,
+            SourceAssetId = snapshot.SourceAssetId,
+            SourceRevision = snapshot.SourceRevision,
+            FrameIndex = snapshot.FrameIndex,
+            Channel = ParseAnalysisChannel(snapshot.Channel),
+            AnalyzerId = snapshot.AnalyzerId,
+            AnalyzedAt = snapshot.AnalyzedAt,
+            Validity = ToAnalysisValidity(snapshot.Validity),
+            SourceBitDepth = snapshot.SourceBitDepth,
+        };
+    }
+
+    private static AnalysisResultValidity ToAnalysisValidity(ProjectScientificValiditySnapshot validity)
+    {
+        string[] reasons = validity.Reasons.ToArray();
+        return validity.State.ToLowerInvariant() switch
+        {
+            "reviewrequired" => AnalysisResultValidity.ReviewRequired(reasons),
+            "invalid" => AnalysisResultValidity.Invalid(reasons),
+            _ => AnalysisResultValidity.Valid,
+        };
+    }
 
     public static PanelFitMode ParsePanelFitMode(string? fitMode) => fitMode?.ToLowerInvariant() switch
     {
@@ -566,5 +794,49 @@ internal static class ProjectDocumentMapper
         "circleroi" => ScientificMeasurementKind.CircleRoi,
         "polyline" => ScientificMeasurementKind.Polyline,
         _ => throw new InvalidDataException($"未知测量类型：{kind}"),
+    };
+
+    private static string ToAnalysisChannelKey(ImageAnalysisChannel channel) => channel switch
+    {
+        ImageAnalysisChannel.Luminance => "luminance",
+        ImageAnalysisChannel.Red => "red",
+        ImageAnalysisChannel.Green => "green",
+        ImageAnalysisChannel.Blue => "blue",
+        ImageAnalysisChannel.Alpha => "alpha",
+        _ => throw new InvalidDataException($"未知图像分析通道：{channel}"),
+    };
+
+    private static ImageAnalysisChannel ParseAnalysisChannel(string? channel) => channel?.ToLowerInvariant() switch
+    {
+        "luminance" => ImageAnalysisChannel.Luminance,
+        "red" => ImageAnalysisChannel.Red,
+        "green" => ImageAnalysisChannel.Green,
+        "blue" => ImageAnalysisChannel.Blue,
+        "alpha" => ImageAnalysisChannel.Alpha,
+        _ => throw new InvalidDataException($"未知图像分析通道：{channel}"),
+    };
+
+    private static string ToAssistedRegionModeKey(AssistedRegionMode mode) => mode switch
+    {
+        AssistedRegionMode.BrightParticles => "brightParticles",
+        AssistedRegionMode.DarkParticles => "darkParticles",
+        AssistedRegionMode.DarkPores => "darkPores",
+        AssistedRegionMode.BrightPhase => "brightPhase",
+        AssistedRegionMode.GrainRegions => "grainRegions",
+        AssistedRegionMode.DarkCracks => "darkCracks",
+        AssistedRegionMode.BrightLamellae => "brightLamellae",
+        _ => throw new InvalidDataException($"未知颗粒分析模式：{mode}"),
+    };
+
+    private static AssistedRegionMode ParseAssistedRegionMode(string? mode) => mode?.ToLowerInvariant() switch
+    {
+        "brightparticles" => AssistedRegionMode.BrightParticles,
+        "darkparticles" => AssistedRegionMode.DarkParticles,
+        "darkpores" => AssistedRegionMode.DarkPores,
+        "brightphase" => AssistedRegionMode.BrightPhase,
+        "grainregions" => AssistedRegionMode.GrainRegions,
+        "darkcracks" => AssistedRegionMode.DarkCracks,
+        "brightlamellae" => AssistedRegionMode.BrightLamellae,
+        _ => throw new InvalidDataException($"未知颗粒分析模式：{mode}"),
     };
 }

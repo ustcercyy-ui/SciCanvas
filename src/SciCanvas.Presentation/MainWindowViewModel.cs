@@ -40,6 +40,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly IUnsavedChangesPrompt _unsavedChangesPrompt;
     private readonly IReadOnlyList<FigureTemplateDefinition> _figureTemplates;
     private readonly IIntensityProfileAnalyzer _intensityProfileAnalyzer;
+    private readonly IRoiStatisticsAnalyzer _roiStatisticsAnalyzer;
     private readonly IAssistedRegionAnalyzer _assistedRegionAnalyzer;
     private readonly EditorHistoryManager _history = new(100);
     private readonly List<ProjectAuditEntrySnapshot> _auditTrail = [];
@@ -76,6 +77,9 @@ public sealed class MainWindowViewModel : ObservableObject
     private IntensityProfileResult? _intensityProfile;
     private PointCollection _intensityProfilePoints = [];
     private string _intensityProfileStatusText = "请选择长度测量后运行强度剖面";
+    private RoiStatisticsResult? _roiStatistics;
+    private ImageAnalysisChannel _analysisChannel = ImageAnalysisChannel.Luminance;
+    private string _roiStatisticsStatusText = "以当前裁剪区域运行原始像素 ROI 统计";
     private AssistedRegionAnalysisResult? _assistedRegionResult;
     private AssistedRegionCandidateViewModel? _selectedAssistedRegion;
     private AssistedRegionMode _assistedRegionMode = AssistedRegionMode.BrightParticles;
@@ -110,7 +114,8 @@ public sealed class MainWindowViewModel : ObservableObject
         IBatchExportFolderPicker? batchExportFolderPicker = null,
         IIntensityProfileAnalyzer? intensityProfileAnalyzer = null,
         IAssistedRegionAnalyzer? assistedRegionAnalyzer = null,
-        IUnsavedChangesPrompt? unsavedChangesPrompt = null)
+        IUnsavedChangesPrompt? unsavedChangesPrompt = null,
+        IRoiStatisticsAnalyzer? roiStatisticsAnalyzer = null)
     {
         _filePicker = filePicker ?? throw new ArgumentNullException(nameof(filePicker));
         _sourceReader = sourceReader ?? throw new ArgumentNullException(nameof(sourceReader));
@@ -130,6 +135,7 @@ public sealed class MainWindowViewModel : ObservableObject
         _sourceRevisionAcceptancePrompt = sourceRevisionAcceptancePrompt ??
             new DeclineSourceRevisionAcceptancePrompt();
         _intensityProfileAnalyzer = intensityProfileAnalyzer ?? new WpfIntensityProfileAnalyzer();
+        _roiStatisticsAnalyzer = roiStatisticsAnalyzer ?? new WpfRoiStatisticsAnalyzer();
         _assistedRegionAnalyzer = assistedRegionAnalyzer ?? new WpfAssistedRegionAnalyzer();
         _unsavedChangesPrompt = unsavedChangesPrompt ?? new CancelUnsavedChangesPrompt();
         ArgumentNullException.ThrowIfNull(figureTemplates);
@@ -171,6 +177,10 @@ public sealed class MainWindowViewModel : ObservableObject
         ExportBatchCropsCommand = new AsyncRelayCommand(
             ExportBatchCropsAsync,
             () => BatchCropQueue.Count > 0 && !IsBusy && _batchExportFolderPicker is not null,
+            HandleUnexpectedCommandError);
+        AnalyzeParticleBatchCommand = new AsyncRelayCommand(
+            AnalyzeParticleBatchAsync,
+            () => BatchCropQueue.Count > 0 && !IsBusy,
             HandleUnexpectedCommandError);
         AddCurrentCropToBatchQueueCommand = new RelayCommand(
             AddCurrentCropToBatchQueue,
@@ -239,6 +249,14 @@ public sealed class MainWindowViewModel : ObservableObject
             AnalyzeIntensityProfileAsync,
             () => SelectedSource?.Measurements.Count > 0 && !IsBusy,
             HandleUnexpectedCommandError);
+        AnalyzeRoiStatisticsCommand = new AsyncRelayCommand(
+            AnalyzeRoiStatisticsAsync,
+            () => SelectedSource is not null && Crop.TryGetCrop(out _) && !IsBusy,
+            HandleUnexpectedCommandError);
+        ExportAnalysisResultsCommand = new AsyncRelayCommand(
+            ExportAnalysisResultsAsync,
+            () => SelectedSource?.AnalysisResults.Count > 0 && !IsBusy,
+            HandleUnexpectedCommandError);
         AnalyzeAssistedRegionsCommand = new AsyncRelayCommand(
             AnalyzeAssistedRegionsAsync,
             () => SelectedSource is not null && Crop.TryGetCrop(out _) && !IsBusy,
@@ -303,6 +321,8 @@ public sealed class MainWindowViewModel : ObservableObject
     public string BatchCropQueueSummary => $"批量队列 · {BatchCropQueue.Count} 项";
 
     public AsyncRelayCommand ExportBatchCropsCommand { get; }
+
+    public AsyncRelayCommand AnalyzeParticleBatchCommand { get; }
 
     public RelayCommand AddCurrentCropToBatchQueueCommand { get; }
 
@@ -413,6 +433,37 @@ public sealed class MainWindowViewModel : ObservableObject
     public Visibility IntensityProfileVisibility => IntensityProfile is null
         ? Visibility.Collapsed
         : Visibility.Visible;
+
+    public IReadOnlyList<ImageAnalysisChannel> AvailableAnalysisChannels { get; } =
+        Enum.GetValues<ImageAnalysisChannel>();
+
+    public ImageAnalysisChannel AnalysisChannel
+    {
+        get => _analysisChannel;
+        set
+        {
+            if (SetProperty(ref _analysisChannel, value))
+            {
+                RoiStatisticsStatusText = "分析通道已变化 · 请重新运行 ROI 统计";
+                if (IntensityProfile is not null)
+                {
+                    IntensityProfileStatusText = "分析通道已变化 · 请重新运行强度剖面";
+                }
+            }
+        }
+    }
+
+    public RoiStatisticsResult? RoiStatistics
+    {
+        get => _roiStatistics;
+        private set => SetProperty(ref _roiStatistics, value);
+    }
+
+    public string RoiStatisticsStatusText
+    {
+        get => _roiStatisticsStatusText;
+        private set => SetProperty(ref _roiStatisticsStatusText, value);
+    }
 
     public AssistedRegionMode AssistedRegionMode
     {
@@ -614,6 +665,8 @@ public sealed class MainWindowViewModel : ObservableObject
     public RelayCommand CopyMeasurementsCommand { get; }
     public AsyncRelayCommand ExportMeasurementsCommand { get; }
     public AsyncRelayCommand AnalyzeIntensityProfileCommand { get; }
+    public AsyncRelayCommand AnalyzeRoiStatisticsCommand { get; }
+    public AsyncRelayCommand ExportAnalysisResultsCommand { get; }
     public AsyncRelayCommand AnalyzeAssistedRegionsCommand { get; }
     public RelayCommand AcceptAllAssistedRegionsCommand { get; }
     public RelayCommand RejectSelectedAssistedRegionCommand { get; }
@@ -679,9 +732,13 @@ public sealed class MainWindowViewModel : ObservableObject
                 CopyMeasurementsCommand.NotifyCanExecuteChanged();
                 ExportMeasurementsCommand.NotifyCanExecuteChanged();
                 AnalyzeIntensityProfileCommand.NotifyCanExecuteChanged();
+                AnalyzeRoiStatisticsCommand.NotifyCanExecuteChanged();
+                ExportAnalysisResultsCommand.NotifyCanExecuteChanged();
                 AnalyzeAssistedRegionsCommand.NotifyCanExecuteChanged();
                 ApplyCalibrationToFigurePanelsCommand.NotifyCanExecuteChanged();
                 ClearIntensityProfile();
+                RoiStatistics = null;
+                RoiStatisticsStatusText = "以当前裁剪区域运行原始像素 ROI 统计";
                 ClearAssistedRegionAnalysis();
                 MarkDirty();
             }
@@ -753,6 +810,7 @@ public sealed class MainWindowViewModel : ObservableObject
             if (SetProperty(ref _isBusy, value))
             {
                 ExportBatchCropsCommand.NotifyCanExecuteChanged();
+                AnalyzeParticleBatchCommand.NotifyCanExecuteChanged();
                 AddCurrentCropToBatchQueueCommand.NotifyCanExecuteChanged();
                 RemoveSelectedBatchCropCommand.NotifyCanExecuteChanged();
                 ClearBatchCropQueueCommand.NotifyCanExecuteChanged();
@@ -775,6 +833,8 @@ public sealed class MainWindowViewModel : ObservableObject
                 CopyMeasurementsCommand.NotifyCanExecuteChanged();
                 ExportMeasurementsCommand.NotifyCanExecuteChanged();
                 AnalyzeIntensityProfileCommand.NotifyCanExecuteChanged();
+                AnalyzeRoiStatisticsCommand.NotifyCanExecuteChanged();
+                ExportAnalysisResultsCommand.NotifyCanExecuteChanged();
                 AnalyzeAssistedRegionsCommand.NotifyCanExecuteChanged();
                 AcceptAllAssistedRegionsCommand.NotifyCanExecuteChanged();
                 RejectSelectedAssistedRegionCommand.NotifyCanExecuteChanged();
@@ -1284,6 +1344,80 @@ public sealed class MainWindowViewModel : ObservableObject
         StatusMessage = $"测量表已导出 · {Path.GetFileName(decision.NormalizedTargetPath)} · 原图未修改";
     }
 
+    private async Task ExportAnalysisResultsAsync()
+    {
+        SourceAssetItemViewModel? source = SelectedSource;
+        if (source?.AnalysisResults.Count is not > 0)
+        {
+            return;
+        }
+
+        string suggestedName = $"{Path.GetFileNameWithoutExtension(source.DisplayName)}_analyses.csv";
+        string? requestedPath = _exportFilePicker.PickNewAnalysisExportPath(suggestedName);
+        if (requestedPath is null)
+        {
+            return;
+        }
+
+        ExportPathDecision decision = await _pathSafetyPolicy.ValidateExportTargetAsync(
+            requestedPath,
+            Sources.Select(item => item.Asset).ToArray());
+        if (!decision.IsAllowed || decision.NormalizedTargetPath is null)
+        {
+            LastError = decision.Message;
+            StatusMessage = "分析表导出已阻止 · 路径不安全";
+            return;
+        }
+
+        if (File.Exists(decision.NormalizedTargetPath))
+        {
+            LastError = "分析表只能导出到全新 CSV 或 XLSX 文件，不覆盖任何已有文件。";
+            StatusMessage = "分析表导出已阻止 · 目标文件已存在";
+            return;
+        }
+
+        string extension = Path.GetExtension(decision.NormalizedTargetPath).ToLowerInvariant();
+        if (extension == ".xlsx")
+        {
+            AnalysisTableXlsxWriter.WriteNew(decision.NormalizedTargetPath, source.AnalysisResults);
+        }
+        else if (extension == ".csv")
+        {
+            await using var output = new FileStream(
+                decision.NormalizedTargetPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                4096,
+                useAsync: true);
+            await using var writer = new StreamWriter(
+                output,
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+            await writer.WriteAsync(ScientificAnalysisTable.CreateCsv(source.AnalysisResults));
+            await writer.FlushAsync();
+        }
+        else
+        {
+            LastError = "分析表格式只支持 .csv 或 .xlsx。";
+            StatusMessage = "分析表导出已阻止 · 格式不支持";
+            return;
+        }
+
+        _auditTrail.Add(new ProjectAuditEntrySnapshot
+        {
+            Timestamp = DateTimeOffset.UtcNow,
+            Command = extension == ".xlsx" ? "ExportAnalysesXlsx" : "ExportAnalysesCsv",
+            Parameters = new Dictionary<string, object?>
+            {
+                ["sourceAssetId"] = source.Asset.Id,
+                ["sourceRevision"] = source.SourceRevision,
+                ["analysisCount"] = source.AnalysisResults.Count,
+            },
+        });
+        LastError = null;
+        StatusMessage = $"分析表已导出 · {Path.GetFileName(decision.NormalizedTargetPath)} · 原始强度值已保留";
+    }
+
     private void ApplyCalibrationToFigurePanels()
     {
         SourceAssetItemViewModel? source = SelectedSource;
@@ -1304,9 +1438,18 @@ public sealed class MainWindowViewModel : ObservableObject
         source.ScienceChanged -= OnSourceScienceChanged;
         source.ScienceEditCompleted -= OnSourceScienceEditCompleted;
         source.MeasurementSelectionChanged -= OnMeasurementSelectionChanged;
+        source.AnalysisChanged -= OnAnalysisChanged;
         source.ScienceChanged += OnSourceScienceChanged;
         source.ScienceEditCompleted += OnSourceScienceEditCompleted;
         source.MeasurementSelectionChanged += OnMeasurementSelectionChanged;
+        source.AnalysisChanged += OnAnalysisChanged;
+    }
+
+    private void OnAnalysisChanged(object? sender, EventArgs e)
+    {
+        OnPropertyChanged(nameof(MeasurementDockVisibility));
+        ExportAnalysisResultsCommand.NotifyCanExecuteChanged();
+        MarkDirty();
     }
 
     private void OnMeasurementSelectionChanged(object? sender, EventArgs e)
@@ -1335,12 +1478,59 @@ public sealed class MainWindowViewModel : ObservableObject
         CopyMeasurementsCommand.NotifyCanExecuteChanged();
         ExportMeasurementsCommand.NotifyCanExecuteChanged();
         AnalyzeIntensityProfileCommand.NotifyCanExecuteChanged();
+        ExportAnalysisResultsCommand.NotifyCanExecuteChanged();
         ApplyCalibrationToFigurePanelsCommand.NotifyCanExecuteChanged();
         if (IntensityProfile is not null)
         {
             IntensityProfileStatusText = "测量或标定已变化 · 请重新运行强度剖面";
         }
         MarkDirty();
+    }
+
+    private async Task AnalyzeRoiStatisticsAsync()
+    {
+        SourceAssetItemViewModel? source = SelectedSource;
+        if (source is null || !Crop.TryGetCrop(out PixelRect64 region))
+        {
+            LastError = "ROI 统计需要有效的当前裁剪区域。";
+            StatusMessage = "ROI 统计未运行 · 无有效区域";
+            return;
+        }
+
+        IsBusy = true;
+        LastError = null;
+        StatusMessage = $"正在从原始 {source.Asset.Metadata.BitsPerChannel}-bit 文件统计 {AnalysisChannel} 通道…";
+        try
+        {
+            RoiStatisticsResult result = await _roiStatisticsAnalyzer.AnalyzeAsync(
+                source.Asset,
+                source.SourceRevision,
+                region,
+                AnalysisChannel);
+            if (!result.IsValid)
+            {
+                throw new InvalidDataException("ROI 统计结果无效。");
+            }
+
+            source.AddAnalysisResult(result);
+            RoiStatistics = result;
+            RoiStatisticsStatusText =
+                $"N {result.PixelCount:N0} · Min {result.Minimum:0.###} · Mean {result.Mean:0.###} · " +
+                $"SD {result.StandardDeviation:0.###} · Max {result.Maximum:0.###} · " +
+                $"Integrated {result.IntegratedIntensity:0.###} · {result.SourceBitDepth}-bit {result.Channel}";
+            StatusMessage = "ROI 统计完成 · 结果已加入工程 · 原图未修改";
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidDataException or
+            NotSupportedException or ArgumentOutOfRangeException)
+        {
+            LastError = exception.Message;
+            StatusMessage = "ROI 统计失败 · 原图未修改";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     private async Task AnalyzeIntensityProfileAsync()
@@ -1364,17 +1554,20 @@ public sealed class MainWindowViewModel : ObservableObject
                 source.Asset,
                 model.PointA,
                 model.PointB,
-                source.Calibration.Calibration);
+                source.Calibration.Calibration,
+                channel: AnalysisChannel,
+                sourceRevision: source.SourceRevision);
             if (!profile.IsValid)
             {
                 throw new InvalidDataException("强度剖面结果无效或采样点不足。");
             }
 
+            source.AddAnalysisResult(profile);
             IntensityProfile = profile;
             IntensityProfilePoints = CreateIntensityProfilePoints(profile);
             IntensityProfileStatusText =
                 $"N {profile.Samples.Count} · Min {profile.Minimum:0.000} · Mean {profile.Mean:0.000} · " +
-                $"Max {profile.Maximum:0.000} · 原始 {profile.SourceBitDepth}-bit 归一化";
+                $"Max {profile.Maximum:0.000} · 原始 {profile.SourceBitDepth}-bit {profile.Channel} · 原始值已保存";
             StatusMessage = $"强度剖面完成 · {profile.Samples.Count} 个采样点 · 原图未修改";
         }
         catch (Exception exception) when (
@@ -1437,12 +1630,15 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             AssistedRegionAnalysisResult result = await _assistedRegionAnalyzer.AnalyzeAsync(
                 source.Asset,
-                options);
+                options,
+                sourceRevision: source.SourceRevision,
+                channel: AnalysisChannel);
             if (!result.IsValid)
             {
                 throw new InvalidDataException("候选区域分析结果无效。请调整阈值或最小面积。");
             }
 
+            source.AddAnalysisResult(result);
             ClearAssistedRegionAnalysis();
             _assistedRegionResult = result;
             foreach (AssistedRegionCandidate candidate in result.Candidates)
@@ -1459,7 +1655,7 @@ public sealed class MainWindowViewModel : ObservableObject
             AssistedRegionStatusText =
                 $"{GetAssistedRegionModeLabel(result.Options.Mode)} · {result.Candidates.Count} 候选 · " +
                 $"面积分数 {result.AreaFraction:P2} · 阈值 {result.AppliedThresholdNormalized:P1} · " +
-                $"{result.AnalyzerId}";
+                $"{result.SourceBitDepth}-bit {result.Channel} · {result.AnalyzerId}";
             _auditTrail.Add(new ProjectAuditEntrySnapshot
             {
                 Timestamp = result.AnalyzedAt,
@@ -1839,6 +2035,7 @@ public sealed class MainWindowViewModel : ObservableObject
         SelectedBatchCrop = item;
         OnPropertyChanged(nameof(BatchCropQueueSummary));
         ExportBatchCropsCommand.NotifyCanExecuteChanged();
+        AnalyzeParticleBatchCommand.NotifyCanExecuteChanged();
         ClearBatchCropQueueCommand.NotifyCanExecuteChanged();
         RemoveSelectedBatchCropCommand.NotifyCanExecuteChanged();
         LastError = null;
@@ -1859,6 +2056,7 @@ public sealed class MainWindowViewModel : ObservableObject
             : BatchCropQueue[Math.Clamp(index, 0, BatchCropQueue.Count - 1)];
         OnPropertyChanged(nameof(BatchCropQueueSummary));
         ExportBatchCropsCommand.NotifyCanExecuteChanged();
+        AnalyzeParticleBatchCommand.NotifyCanExecuteChanged();
         ClearBatchCropQueueCommand.NotifyCanExecuteChanged();
         StatusMessage = $"已从批量队列移除 · {BatchCropQueue.Count} 项";
     }
@@ -1869,6 +2067,7 @@ public sealed class MainWindowViewModel : ObservableObject
         SelectedBatchCrop = null;
         OnPropertyChanged(nameof(BatchCropQueueSummary));
         ExportBatchCropsCommand.NotifyCanExecuteChanged();
+        AnalyzeParticleBatchCommand.NotifyCanExecuteChanged();
         ClearBatchCropQueueCommand.NotifyCanExecuteChanged();
         StatusMessage = "批量裁剪队列已清空";
     }
@@ -1916,6 +2115,119 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             LastError = exception.Message;
             StatusMessage = "模板导入失败 · 当前拼版未改变";
+        }
+    }
+
+    private ParticleAnalysisRecipe CreateParticleAnalysisRecipe() => new(
+        $"{GetAssistedRegionModeLabel(AssistedRegionMode)} · {AnalysisChannel}",
+        AssistedRegionMode,
+        UseAutomaticRegionThreshold,
+        RegionThresholdPercent / 100,
+        MinimumRegionAreaPixels,
+        MaximumCandidates: 1000,
+        AnalysisChannel);
+
+    private async Task AnalyzeParticleBatchAsync()
+    {
+        if (BatchCropQueue.Count == 0)
+        {
+            return;
+        }
+
+        ParticleAnalysisRecipe recipe = CreateParticleAnalysisRecipe();
+        if (!recipe.IsValid)
+        {
+            LastError = "当前颗粒分析配方无效。";
+            StatusMessage = "批量颗粒分析未运行";
+            return;
+        }
+
+        BatchCropQueueItemViewModel[] items = BatchCropQueue.ToArray();
+        List<string> errors = [];
+        int completed = 0;
+        int totalParticles = 0;
+        IsBusy = true;
+        LastError = null;
+        BeginHistoryGesture();
+        StatusMessage = $"正在应用颗粒分析配方 · {items.Length} 项…";
+        try
+        {
+            for (int index = 0; index < items.Length; index++)
+            {
+                BatchCropQueueItemViewModel item = items[index];
+                try
+                {
+                    item.MarkValidating();
+                    SourceVerification verification = await _sourceReader.VerifyAsync(item.Source.Asset);
+                    if (verification.State != SourceLinkState.Verified)
+                    {
+                        throw new InvalidDataException(
+                            verification.Message ?? "源文件自导入后已变化，已跳过该队列项。");
+                    }
+
+                    if (!CropBoundsValidator.Validate(
+                            item.Crop,
+                            item.Source.Asset.Metadata.PixelSize).IsValid)
+                    {
+                        throw new InvalidDataException("分析 ROI 已超出当前源图像边界。");
+                    }
+
+                    item.MarkAnalyzing();
+                    AssistedRegionAnalysisResult result = await _assistedRegionAnalyzer.AnalyzeAsync(
+                        item.Source.Asset,
+                        recipe.CreateOptions(item.Crop),
+                        sourceRevision: item.Source.SourceRevision,
+                        channel: recipe.Channel);
+                    if (!result.IsValid)
+                    {
+                        throw new InvalidDataException("颗粒分析结果无效。");
+                    }
+
+                    item.Source.AddAnalysisResult(result, completeEdit: false);
+                    item.MarkAnalysisCompleted(result.Candidates.Count);
+                    completed++;
+                    totalParticles += result.Candidates.Count;
+                }
+                catch (Exception exception) when (
+                    exception is IOException or UnauthorizedAccessException or InvalidDataException or
+                    NotSupportedException or InvalidOperationException or ArgumentException or OverflowException)
+                {
+                    item.MarkFailed(exception.Message);
+                    errors.Add($"{item.DisplayName}：{exception.Message}");
+                }
+
+                StatusMessage =
+                    $"批量颗粒分析 {index + 1}/{items.Length} · 已完成 {completed} 项 · {totalParticles} 个候选";
+            }
+
+            _auditTrail.Add(new ProjectAuditEntrySnapshot
+            {
+                Timestamp = DateTimeOffset.UtcNow,
+                Command = "AnalyzeParticleBatch",
+                Parameters = new Dictionary<string, object?>
+                {
+                    ["recipeVersion"] = recipe.Version,
+                    ["recipeName"] = recipe.Name,
+                    ["mode"] = recipe.Mode.ToString(),
+                    ["channel"] = recipe.Channel.ToString(),
+                    ["automaticThreshold"] = recipe.UseAutomaticThreshold,
+                    ["thresholdNormalized"] = recipe.ThresholdNormalized,
+                    ["minimumAreaPixels"] = recipe.MinimumAreaPixels,
+                    ["maximumCandidates"] = recipe.MaximumCandidates,
+                    ["queueCount"] = items.Length,
+                    ["completedCount"] = completed,
+                    ["particleCount"] = totalParticles,
+                },
+            });
+            LastError = errors.Count == 0 ? null : string.Join(Environment.NewLine, errors);
+            StatusMessage = errors.Count == 0
+                ? $"批量颗粒分析完成 · {completed}/{items.Length} 项 · {totalParticles} 个候选 · 原图未修改"
+                : $"批量颗粒分析完成 · {completed}/{items.Length} 项成功 · 失败项已保留在队列";
+        }
+        finally
+        {
+            CompleteHistoryGesture();
+            IsBusy = false;
         }
     }
 
@@ -2492,7 +2804,11 @@ public sealed class MainWindowViewModel : ObservableObject
                 {
                     FigureExportDocument variant = profile.Apply(baseDocument);
                     FigurePreflightResult preflight = FigurePreflight.Check(
-                        variant,
+                        new FigurePreflightContext(
+                            variant,
+                            profile.Format,
+                            profile,
+                            Figure.LabelScheme),
                         figureSources,
                         IsDirty,
                         CreateFigurePreflightConfiguration());
@@ -3053,6 +3369,9 @@ public sealed class MainWindowViewModel : ObservableObject
                     calibrationSnapshot?.ReferenceEndY ?? 0,
                     measurements,
                     styles);
+                source.RestoreAnalysisResults(document.Analyses
+                    .Where(item => item.SourceAssetId == source.Asset.Id)
+                    .Select(ProjectDocumentMapper.ToAnalysis));
             }
 
             Figure.Clear();
@@ -3355,6 +3674,11 @@ public sealed class MainWindowViewModel : ObservableObject
         AddCurrentCropToBatchQueueCommand.NotifyCanExecuteChanged();
         ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
         AnalyzeAssistedRegionsCommand.NotifyCanExecuteChanged();
+        AnalyzeRoiStatisticsCommand.NotifyCanExecuteChanged();
+        if (RoiStatistics is not null)
+        {
+            RoiStatisticsStatusText = "ROI 已变化 · 请重新运行统计";
+        }
         MarkAssistedRegionAnalysisStale();
         MarkDirty();
     }
@@ -3607,7 +3931,9 @@ public sealed class MainWindowViewModel : ObservableObject
     private FigurePreflightResult UpdateFigureQc(FigureExportDocument document)
     {
         FigurePreflightResult result = FigurePreflight.Check(
-            document,
+            new FigurePreflightContext(
+                document,
+                LabelScheme: Figure.LabelScheme),
             Sources.Select(item => item.Asset).ToArray(),
             IsDirty,
             CreateFigurePreflightConfiguration());
@@ -3893,6 +4219,9 @@ public sealed class MainWindowViewModel : ObservableObject
                     measurement.FillOpacityPercent,
                     measurement.IsVisible,
                     measurement.IsLocked))
+                .ToArray(),
+            Sources.SelectMany(source => source.AnalysisResults.Select(result =>
+                    new AnalysisHistorySnapshot(source.Asset.Id, result)))
                 .ToArray());
     }
 
@@ -4017,6 +4346,9 @@ public sealed class MainWindowViewModel : ObservableObject
                             IsVisible = item.IsVisible,
                             IsLocked = item.IsLocked,
                         }));
+                source.RestoreAnalysisResults(snapshot.Analyses
+                    .Where(item => item.SourceId == source.Asset.Id)
+                    .Select(item => item.Result));
                 SynchronizeScaleBarsForSource(source);
             }
 
@@ -4082,7 +4414,9 @@ public sealed class MainWindowViewModel : ObservableObject
         before.Guides.Select(guide => guide.Id)
             .SequenceEqual(after.Guides.Select(guide => guide.Id)) &&
         before.Measurements.Select(measurement => measurement.Id)
-            .SequenceEqual(after.Measurements.Select(measurement => measurement.Id));
+            .SequenceEqual(after.Measurements.Select(measurement => measurement.Id)) &&
+        before.Analyses.Select(analysis => analysis.Result.Id)
+            .SequenceEqual(after.Analyses.Select(analysis => analysis.Result.Id));
 
     private void RefreshHistoryState()
     {

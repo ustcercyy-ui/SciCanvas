@@ -1,4 +1,5 @@
 using SciCanvas.Core.Sources;
+using SciCanvas.Core.Workspace;
 
 namespace SciCanvas.Core.Export;
 
@@ -49,6 +50,34 @@ public sealed record FigurePreflightConfiguration
     }
 }
 
+public sealed record FigurePreflightContext(
+    FigureExportDocument Document,
+    string? TargetFormat = null,
+    FigureExportProfile? Profile = null,
+    PanelLabelScheme LabelScheme = PanelLabelScheme.Custom)
+{
+    public int BitDepth => Profile?.BitDepth ?? Document.BitDepth;
+
+    public string? EffectiveTargetFormat
+    {
+        get
+        {
+            string? format = Profile?.Format ?? TargetFormat;
+            return string.IsNullOrWhiteSpace(format)
+                ? null
+                : format.Trim().TrimStart('.').ToLowerInvariant() switch
+                {
+                    "tif" => "tiff",
+                    "jpeg" => "jpg",
+                    var normalized => normalized,
+                };
+        }
+    }
+
+    public bool IsSixteenBitTiff =>
+        BitDepth == 16 && EffectiveTargetFormat == "tiff";
+}
+
 /// <summary>Deterministic, side-effect-free checks run before a figure export.</summary>
 public static class FigurePreflight
 {
@@ -57,18 +86,39 @@ public static class FigurePreflight
         IReadOnlyCollection<SourceAsset> projectSources,
         bool hasUnsavedChanges = false,
         FigurePreflightConfiguration? configuration = null)
+        => Check(
+            new FigurePreflightContext(
+                document,
+                document.BitDepth == 16 ? "tiff" : null),
+            projectSources,
+            hasUnsavedChanges,
+            configuration);
+
+    public static FigurePreflightResult Check(
+        FigurePreflightContext context,
+        IReadOnlyCollection<SourceAsset> projectSources,
+        bool hasUnsavedChanges = false,
+        FigurePreflightConfiguration? configuration = null)
     {
+        ArgumentNullException.ThrowIfNull(context);
+        FigureExportDocument document = context.Document;
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(projectSources);
         configuration = (configuration ?? new FigurePreflightConfiguration()).Validate();
         List<FigurePreflightIssue> issues = [];
 
-        if (document.BackgroundColor.StartsWith("#00", StringComparison.OrdinalIgnoreCase))
+        if (TryGetAlpha(document.BackgroundColor, out byte backgroundAlpha) &&
+            backgroundAlpha < byte.MaxValue)
         {
-            issues.Add(new(
-                FigurePreflightSeverity.Info,
-                "TRANSPARENT_BACKGROUND",
-                "画布背景为透明；投稿系统转码时可能显示为黑色，请核对期刊要求。"));
+            issues.Add(context.IsSixteenBitTiff
+                ? new FigurePreflightIssue(
+                    FigurePreflightSeverity.Error,
+                    "TRANSPARENT_BACKGROUND_UNSUPPORTED",
+                    "16-bit RGB TIFF 不支持透明或半透明画布；请选择 alpha=255 的不透明背景。")
+                : new FigurePreflightIssue(
+                    FigurePreflightSeverity.Info,
+                    "TRANSPARENT_BACKGROUND",
+                    "画布背景含透明度；投稿系统转码时可能显示为黑色，请核对期刊要求。"));
         }
 
         if (document.Panels.Count == 0)
@@ -179,14 +229,38 @@ public static class FigurePreflight
             .Select(panel => panel.Label)
             .Where(label => !string.IsNullOrWhiteSpace(label))
             .ToArray();
-        if (nonEmptyLabels.Length > 0 && nonEmptyLabels.Length < visiblePanels.Length)
+        if (context.LabelScheme != PanelLabelScheme.None &&
+            nonEmptyLabels.Length > 0 && nonEmptyLabels.Length < visiblePanels.Length)
         {
             issues.Add(new(FigurePreflightSeverity.Warning, "MISSING_LABEL", "部分可见面板没有编号，可能造成图注对应不清。"));
         }
 
-        if (nonEmptyLabels.Distinct(StringComparer.OrdinalIgnoreCase).Count() != nonEmptyLabels.Length)
+        if (context.LabelScheme != PanelLabelScheme.None &&
+            nonEmptyLabels.Distinct(StringComparer.OrdinalIgnoreCase).Count() != nonEmptyLabels.Length)
         {
             issues.Add(new(FigurePreflightSeverity.Warning, "DUPLICATE_LABEL", "可见面板存在重复编号。"));
+        }
+
+        if (context.LabelScheme is not (PanelLabelScheme.None or PanelLabelScheme.Custom))
+        {
+            FigurePanelExportItem[] readingOrder = visiblePanels
+                .OrderBy(panel => panel.DestinationRect.Y)
+                .ThenBy(panel => panel.DestinationRect.X)
+                .ThenBy(panel => panel.DestinationRect.Width)
+                .ToArray();
+            for (int index = 0; index < readingOrder.Length; index++)
+            {
+                string expected = PanelLabelGenerator.Generate(index, context.LabelScheme);
+                string observed = PanelLabelGenerator.NormalizeForComparison(readingOrder[index].Label);
+                if (!string.Equals(expected, observed, StringComparison.Ordinal))
+                {
+                    issues.Add(new FigurePreflightIssue(
+                        FigurePreflightSeverity.Warning,
+                        "LABEL_SEQUENCE",
+                        $"面板阅读顺序第 {index + 1} 项应使用编号 {expected}。",
+                        readingOrder[index].Label));
+                }
+            }
         }
 
         for (int firstIndex = 0; firstIndex < visiblePanels.Length; firstIndex++)
@@ -220,5 +294,24 @@ public static class FigurePreflight
     {
         string hex = value?.Trim().TrimStart('#') ?? string.Empty;
         return hex.Length is 6 or 8 && hex.All(Uri.IsHexDigit);
+    }
+
+    private static bool TryGetAlpha(string? color, out byte alpha)
+    {
+        alpha = 0;
+        string hex = color?.Trim().TrimStart('#') ?? string.Empty;
+        if (hex.Length == 6 && hex.All(Uri.IsHexDigit))
+        {
+            alpha = byte.MaxValue;
+            return true;
+        }
+
+        return hex.Length == 8 &&
+               hex.All(Uri.IsHexDigit) &&
+               byte.TryParse(
+                   hex.AsSpan(0, 2),
+                   System.Globalization.NumberStyles.HexNumber,
+                   System.Globalization.CultureInfo.InvariantCulture,
+                   out alpha);
     }
 }

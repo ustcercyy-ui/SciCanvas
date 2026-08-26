@@ -50,9 +50,32 @@ public sealed record AssistedRegionCandidate(
     double MeanIntensity,
     double AspectRatio)
 {
+    private double? _feretMaximumPixels;
+    private double? _feretMinimumPixels;
+
+    public double RawMeanIntensity { get; init; }
+
     public double EquivalentDiameterPixels => Math.Sqrt(4 * AreaPixels / Math.PI);
 
     public double ApproximateWidthPixels => Math.Min(Bounds.Width, Bounds.Height);
+
+    public double FeretMaximumPixels
+    {
+        get => _feretMaximumPixels ?? Math.Sqrt(
+            Bounds.Width * (double)Bounds.Width + Bounds.Height * (double)Bounds.Height);
+        init => _feretMaximumPixels = value;
+    }
+
+    public double FeretMinimumPixels
+    {
+        get => _feretMinimumPixels ?? Math.Min(Bounds.Width, Bounds.Height);
+        init => _feretMinimumPixels = value;
+    }
+
+    public double Circularity => Math.Clamp(
+        4 * Math.PI * AreaPixels / (PerimeterPixels * (double)PerimeterPixels),
+        0,
+        1);
 
     public bool IsValid =>
         Id > 0 &&
@@ -64,8 +87,13 @@ public sealed record AssistedRegionCandidate(
         PerimeterPixels > 0 &&
         double.IsFinite(MeanIntensity) &&
         MeanIntensity is >= 0 and <= 1 &&
+        double.IsFinite(RawMeanIntensity) &&
+        RawMeanIntensity >= 0 &&
         double.IsFinite(AspectRatio) &&
-        AspectRatio >= 1;
+        AspectRatio >= 1 &&
+        double.IsFinite(FeretMaximumPixels) && FeretMaximumPixels > 0 &&
+        double.IsFinite(FeretMinimumPixels) && FeretMinimumPixels > 0 &&
+        FeretMaximumPixels >= FeretMinimumPixels;
 }
 
 public sealed record AssistedRegionAnalysisResult(
@@ -73,15 +101,20 @@ public sealed record AssistedRegionAnalysisResult(
     IReadOnlyList<AssistedRegionCandidate> Candidates,
     double AppliedThresholdNormalized,
     long ForegroundPixelCount,
-    long TotalPixelCount,
-    string AnalyzerId,
-    DateTimeOffset AnalyzedAt)
+    long TotalPixelCount) : ScientificImageAnalysisResult
 {
+    public override ScientificImageAnalysisKind Kind =>
+        ScientificImageAnalysisKind.ParticleAnalysis;
+
+    public int SourceBitDepth { get; init; } = 8;
+
     public double AreaFraction => TotalPixelCount <= 0
         ? 0
         : ForegroundPixelCount / (double)TotalPixelCount;
 
     public bool IsValid =>
+        HasValidProvenance &&
+        SourceBitDepth is 8 or 16 &&
         Options.IsValid &&
         double.IsFinite(AppliedThresholdNormalized) &&
         AppliedThresholdNormalized is >= 0 and <= 1 &&
@@ -89,7 +122,45 @@ public sealed record AssistedRegionAnalysisResult(
         TotalPixelCount > 0 &&
         ForegroundPixelCount <= TotalPixelCount &&
         !string.IsNullOrWhiteSpace(AnalyzerId) &&
-        Candidates.All(candidate => candidate.IsValid);
+        Candidates.All(candidate =>
+            candidate.IsValid &&
+            candidate.RawMeanIntensity <= (SourceBitDepth == 16 ? ushort.MaxValue : byte.MaxValue));
+}
+
+public sealed record ParticleAnalysisRecipe(
+    string Name,
+    AssistedRegionMode Mode,
+    bool UseAutomaticThreshold,
+    double ThresholdNormalized,
+    int MinimumAreaPixels,
+    int MaximumCandidates,
+    ImageAnalysisChannel Channel)
+{
+    public int Version { get; init; } = 1;
+
+    public bool IsValid =>
+        !string.IsNullOrWhiteSpace(Name) &&
+        Version == 1 &&
+        double.IsFinite(ThresholdNormalized) &&
+        ThresholdNormalized is >= 0 and <= 1 &&
+        MinimumAreaPixels is >= 1 and <= 10_000_000 &&
+        MaximumCandidates is >= 1 and <= 100_000;
+
+    public AssistedRegionAnalysisOptions CreateOptions(PixelRect64 region)
+    {
+        if (!IsValid)
+        {
+            throw new InvalidOperationException("颗粒分析配方无效。");
+        }
+
+        return new AssistedRegionAnalysisOptions(
+            Mode,
+            region,
+            UseAutomaticThreshold,
+            ThresholdNormalized,
+            MinimumAreaPixels,
+            MaximumCandidates);
+    }
 }
 
 public interface IAssistedRegionAnalyzer
@@ -98,5 +169,7 @@ public interface IAssistedRegionAnalyzer
         SourceAsset source,
         AssistedRegionAnalysisOptions options,
         int frameIndex = 0,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        long sourceRevision = 1,
+        ImageAnalysisChannel channel = ImageAnalysisChannel.Luminance);
 }

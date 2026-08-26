@@ -4,6 +4,7 @@ using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
 using SciCanvas.Core.Sources;
+using SciCanvas.Core.Workspace;
 using SciCanvas.Presentation;
 using SciCanvas.Templates;
 
@@ -248,6 +249,22 @@ public sealed class FigureCanvasMultiSelectionTests
         panel.IsAspectRatioLocked = false;
         panel.Width = 320;
         Assert.Equal(100, panel.Height);
+    }
+
+    [Fact]
+    public void ManualCrop_RemainsPixelExactAcrossFitModeChangesAndExportSnapshot()
+    {
+        FigureCanvasViewModel figure = CreateFigure();
+        SourceAssetItemViewModel source = CreateSource(101, 103);
+        var expected = new PixelRect64(0, 0, 7, 11);
+        FigurePanelViewModel panel = Assert.IsType<FigurePanelViewModel>(
+            figure.AddPanel(source, expected));
+
+        panel.FitMode = PanelFitMode.Fill;
+        panel.FitMode = PanelFitMode.Manual;
+
+        Assert.Equal(expected, panel.SourceRect);
+        Assert.Equal(expected, Assert.Single(figure.CreateExportDocument().Panels).SourceRect);
     }
 
     [Fact]

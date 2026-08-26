@@ -35,7 +35,7 @@ public sealed class FigurePanelViewModel : ObservableObject
     private Guid? _cropLinkGroupId;
     private readonly int _figureDpi;
     private PanelFitMode _fitMode = PanelFitMode.Manual;
-    private NormalizedRect _manualCrop;
+    private PixelRect64 _manualCropPixels;
     private double _rotationDegrees;
     private ScientificValidity _replacementValidity = ScientificValidity.Valid;
 
@@ -51,10 +51,7 @@ public sealed class FigurePanelViewModel : ObservableObject
         Id = id ?? Guid.NewGuid();
         SourceRect = sourceRect;
         _figureDpi = Math.Max(1, figureDpi);
-        _manualCrop = NormalizedRect.FromSourcePixels(
-            sourceRect,
-            source.Asset.Metadata.PixelSize.Width,
-            source.Asset.Metadata.PixelSize.Height);
+        _manualCropPixels = sourceRect;
         SlotId = slot.Id;
         _label = slot.Label;
         Role = slot.Role;
@@ -104,7 +101,7 @@ public sealed class FigurePanelViewModel : ObservableObject
 
             if (_fitMode == PanelFitMode.Manual)
             {
-                _manualCrop = NormalizedCrop;
+                _manualCropPixels = SourceRect;
             }
 
             _fitMode = value;
@@ -290,10 +287,7 @@ public sealed class FigurePanelViewModel : ObservableObject
         Guid previousAssetId = Source.Asset.Id;
         Source = source;
         SourceRect = sourceRect;
-        _manualCrop = NormalizedRect.FromSourcePixels(
-            sourceRect,
-            source.Asset.Metadata.PixelSize.Width,
-            source.Asset.Metadata.PixelSize.Height);
+        _manualCropPixels = sourceRect;
         _fitMode = PanelFitMode.Manual;
         _frameIndex = Math.Clamp(_frameIndex, 0, FrameCount - 1);
         double physicalUnitsPerPixel = source.Asset.Metadata.PhysicalSizeX ?? 0;
@@ -750,15 +744,12 @@ public sealed class FigurePanelViewModel : ObservableObject
 
     private void ApplyFitModeCrop()
     {
-        NormalizedRect crop = PanelCropCalculator.Resolve(
+        SourceRect = PanelCropCalculator.ResolveSourcePixels(
             FitMode,
             Source.Asset.Metadata.PixelSize.Width,
             Source.Asset.Metadata.PixelSize.Height,
             FrameMm,
-            _manualCrop);
-        SourceRect = crop.ToSourcePixels(
-            Source.Asset.Metadata.PixelSize.Width,
-            Source.Asset.Metadata.PixelSize.Height);
+            _manualCropPixels);
         RefreshPreview();
         OnPropertyChanged(nameof(SourceRect));
         OnPropertyChanged(nameof(NormalizedCrop));

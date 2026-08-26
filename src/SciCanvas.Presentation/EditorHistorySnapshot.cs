@@ -34,7 +34,8 @@ internal sealed record EditorHistorySnapshot(
     IReadOnlyList<AnnotationHistorySnapshot> Annotations,
     IReadOnlyList<GuideHistorySnapshot> Guides,
     IReadOnlyList<CalibrationHistorySnapshot> Calibrations,
-    IReadOnlyList<MeasurementHistorySnapshot> Measurements);
+    IReadOnlyList<MeasurementHistorySnapshot> Measurements,
+    IReadOnlyList<AnalysisHistorySnapshot> Analyses);
 
 internal sealed record PanelHistorySnapshot(
     Guid Id,
@@ -106,3 +107,7 @@ internal sealed record MeasurementHistorySnapshot(
     double FillOpacityPercent,
     bool IsVisible,
     bool IsLocked);
+
+internal sealed record AnalysisHistorySnapshot(
+    Guid SourceId,
+    ScientificImageAnalysisResult Result);

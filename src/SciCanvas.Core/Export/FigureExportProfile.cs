@@ -104,7 +104,8 @@ public sealed record FigureExportProfile
             panels,
             annotations,
             source.BackgroundColor,
-            BitDepth);
+            BitDepth,
+            source.GlobalStyle);
     }
 
     public static IReadOnlyList<FigureExportProfile> BuiltIns { get; } =

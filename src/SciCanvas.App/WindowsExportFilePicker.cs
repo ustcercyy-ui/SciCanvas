@@ -53,4 +53,20 @@ public sealed class WindowsExportFilePicker : IExportFilePicker
 
         return dialog.ShowDialog() == true ? dialog.FileName : null;
     }
+
+    public string? PickNewAnalysisExportPath(string suggestedFileName)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "导出新的科学图像分析表（不覆盖已有文件）",
+            FileName = suggestedFileName,
+            DefaultExt = ".csv",
+            AddExtension = true,
+            CheckPathExists = true,
+            OverwritePrompt = false,
+            Filter = "CSV 分析表|*.csv|Excel 工作簿|*.xlsx",
+        };
+
+        return dialog.ShowDialog() == true ? dialog.FileName : null;
+    }
 }

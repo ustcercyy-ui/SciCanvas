@@ -9,4 +9,7 @@ public interface IExportFilePicker
 
     string? PickNewMeasurementExportPath(string suggestedFileName) =>
         PickNewExportPath(suggestedFileName);
+
+    string? PickNewAnalysisExportPath(string suggestedFileName) =>
+        PickNewMeasurementExportPath(suggestedFileName);
 }

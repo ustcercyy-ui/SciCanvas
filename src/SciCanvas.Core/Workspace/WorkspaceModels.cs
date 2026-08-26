@@ -1,4 +1,5 @@
 using SciCanvas.Core.Images;
+using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
 
@@ -81,12 +82,43 @@ public sealed record FigurePanel(
     string Label,
     int ZIndex)
 {
+    /// <summary>
+    /// Canonical half-open integer source-pixel rectangle for manual mode.
+    /// Null is reserved for legacy normalized-only domain objects.
+    /// </summary>
+    public PixelRect64? ManualCropPixels { get; init; }
+
     public FigurePanel ReplaceAsset(Guid assetId) => this with { AssetId = assetId };
 
     public FigurePanel ResizeFrame(double widthMm, double heightMm) => this with
     {
         Frame = Frame.WithSize(widthMm, heightMm),
     };
+
+    public FigurePanel WithManualCrop(
+        PixelRect64 sourcePixels,
+        long sourceWidthPixels,
+        long sourceHeightPixels) => this with
+    {
+        Crop = NormalizedRect.FromSourcePixels(
+            sourcePixels,
+            sourceWidthPixels,
+            sourceHeightPixels),
+        FitMode = PanelFitMode.Manual,
+        ManualCropPixels = sourcePixels,
+    };
+
+    public PixelRect64 ResolveSourcePixels(long sourceWidthPixels, long sourceHeightPixels)
+    {
+        PixelRect64 manual = ManualCropPixels ??
+            Crop.ToSourcePixels(sourceWidthPixels, sourceHeightPixels);
+        return PanelCropCalculator.ResolveSourcePixels(
+            FitMode,
+            sourceWidthPixels,
+            sourceHeightPixels,
+            Frame,
+            manual);
+    }
 }
 
 public sealed record ScientificFigure(
@@ -99,13 +131,16 @@ public sealed record ScientificFigure(
     StyleOverride? StyleOverride,
     DateTimeOffset UpdatedAt)
 {
+    public PanelLabelScheme LabelScheme { get; init; } = PanelLabelScheme.LowerAlpha;
+
     public void EnsureValid()
     {
         if (Id == Guid.Empty || string.IsNullOrWhiteSpace(Name) ||
             !double.IsFinite(WidthMm) || WidthMm <= 0 ||
             !double.IsFinite(HeightMm) || HeightMm <= 0 ||
             Panels.Any(panel => panel.FigureId != Id) ||
-            Panels.Select(panel => panel.Id).Distinct().Count() != Panels.Count)
+            Panels.Select(panel => panel.Id).Distinct().Count() != Panels.Count ||
+            !Enum.IsDefined(LabelScheme))
         {
             throw new InvalidOperationException("Figure 结构无效。" );
         }
@@ -147,7 +182,8 @@ public sealed record FigureTemplate(
             now);
     }
 
-    private static string CreatePanelLabel(int index) => $"({(char)('a' + index)})";
+    private static string CreatePanelLabel(int index) =>
+        PanelLabelGenerator.Generate(index, PanelLabelScheme.LowerAlpha);
 }
 
 public sealed record ScientificProject(

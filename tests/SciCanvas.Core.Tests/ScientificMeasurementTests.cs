@@ -42,6 +42,30 @@ public sealed class ScientificMeasurementTests
     }
 
     [Fact]
+    public void Angle_UsesPhysicalVectorsForAnisotropicCalibration()
+    {
+        Guid sourceId = Guid.NewGuid();
+        var measurement = new ScientificMeasurement(
+            Guid.NewGuid(),
+            sourceId,
+            ScientificMeasurementKind.Angle,
+            new MeasurementPoint(1, 1),
+            new MeasurementPoint(0, 0),
+            new MeasurementPoint(1, -1));
+        var anisotropic = new SpatialCalibration(
+            sourceId,
+            UnitsPerPixelX: 2,
+            UnitsPerPixelY: 1,
+            Unit: "nm",
+            Origin: CalibrationOrigin.Manual);
+        var isotropic = anisotropic with { UnitsPerPixelX = 3, UnitsPerPixelY = 3 };
+
+        Assert.Equal(90, measurement.PixelValue, 12);
+        Assert.Equal(53.13010235415598, measurement.PhysicalValue(anisotropic)!.Value, 12);
+        Assert.Equal(measurement.PixelValue, measurement.PhysicalValue(isotropic)!.Value, 12);
+    }
+
+    [Fact]
     public void RectangleRoi_ReportsPhysicalAreaAndDimensions()
     {
         Guid sourceId = Guid.NewGuid();

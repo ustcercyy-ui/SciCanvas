@@ -3,11 +3,13 @@ namespace SciCanvas.Persistence;
 /// <summary>
 /// Explicit, idempotent migration boundary for project files. V2 adds workspace,
 /// normalized crop, millimeter frames, source revisions and scientific validity;
-/// all new fields have deterministic defaults for legacy documents.
+/// V2.1 adds source-revision-bound scientific image analysis results; V2.2 adds
+/// persisted threshold/particle analysis and reproducible automation parameters. All new
+/// fields have deterministic defaults for legacy documents.
 /// </summary>
 public static class ProjectMigrationPipeline
 {
-    public const string CurrentVersion = "2.0";
+    public const string CurrentVersion = "2.2";
 
     public static IReadOnlySet<string> SupportedVersions { get; } =
         new HashSet<string>(StringComparer.Ordinal)
@@ -16,6 +18,8 @@ public static class ProjectMigrationPipeline
             "0.9",
             "1.1",
             "1.2",
+            "2.0",
+            "2.1",
             CurrentVersion,
         };
 
@@ -68,6 +72,7 @@ public static class ProjectMigrationPipeline
             ExportProfiles = document.ExportProfiles,
             Calibrations = document.Calibrations,
             Measurements = document.Measurements,
+            Analyses = document.Analyses,
             TemplateSnapshot = document.TemplateSnapshot,
             AuditTrail = document.AuditTrail
                 .Concat(

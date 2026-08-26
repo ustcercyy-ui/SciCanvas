@@ -80,6 +80,38 @@ public sealed class WpfAssistedRegionAnalyzerTests
         Assert.Equal(new PixelRect64(2, 2, 8, 1), crack.Bounds);
     }
 
+    [Fact]
+    public async Task AnalyzeAsync_UsesConvexCalipersForRotatedFeretWidth()
+    {
+        using var workspace = new TestWorkspace();
+        (_, SourceAsset source) = await CreateSourceAsync(
+            workspace,
+            "diagonal-particle.png",
+            5,
+            5,
+            pixels =>
+            {
+                pixels[1 * 5 + 1] = 255;
+                pixels[2 * 5 + 2] = 255;
+                pixels[3 * 5 + 3] = 255;
+            });
+        var options = new AssistedRegionAnalysisOptions(
+            AssistedRegionMode.BrightParticles,
+            new PixelRect64(0, 0, 5, 5),
+            UseAutomaticThreshold: false,
+            ThresholdNormalized: 0.5,
+            MinimumAreaPixels: 3);
+
+        AssistedRegionAnalysisResult result = await new WpfAssistedRegionAnalyzer().AnalyzeAsync(
+            source,
+            options);
+
+        AssistedRegionCandidate particle = Assert.Single(result.Candidates);
+        Assert.Equal(Math.Sqrt(18), particle.FeretMaximumPixels, 12);
+        Assert.Equal(Math.Sqrt(2), particle.FeretMinimumPixels, 12);
+        Assert.True(particle.FeretMinimumPixels < particle.Bounds.Width);
+    }
+
     private static async Task<(string Path, SourceAsset Source)> CreateSourceAsync(
         TestWorkspace workspace,
         string fileName,

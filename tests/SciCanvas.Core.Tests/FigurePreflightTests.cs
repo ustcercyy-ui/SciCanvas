@@ -2,6 +2,7 @@ using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
 using SciCanvas.Core.Sources;
+using SciCanvas.Core.Workspace;
 
 namespace SciCanvas.Core.Tests;
 
@@ -109,6 +110,81 @@ public sealed class FigurePreflightTests
         Assert.Contains(result.Issues, issue => issue.Code == "TRANSPARENT_BACKGROUND");
         Assert.Contains(result.Issues, issue => issue.Code == "INVALID_SCALE_BAR");
         Assert.Contains(result.Issues, issue => issue.Code == "PANEL_OVERLAP");
+    }
+
+    [Theory]
+    [InlineData("#00FFFFFF", true)]
+    [InlineData("#80FFFFFF", true)]
+    [InlineData("#FFFFFFFF", false)]
+    public void Check_SixteenBitTiffBlocksEveryNonOpaqueBackground(
+        string background,
+        bool expectedError)
+    {
+        SourceAsset source = CreateSource(SourceLinkState.Verified);
+        var document = new FigureExportDocument(
+            100,
+            100,
+            300,
+            [new FigurePanelExportItem(
+                source,
+                new PixelRect64(0, 0, 100, 100),
+                new PixelRect64(0, 0, 100, 100),
+                "a",
+                true)],
+            backgroundColor: background,
+            bitDepth: 16);
+
+        var profile = new FigureExportProfile(
+            "main-tiff",
+            "Main TIFF",
+            "tiff",
+            300,
+            bitDepth: 16);
+        FigurePreflightResult result = FigurePreflight.Check(
+            new FigurePreflightContext(document, profile.Format, profile),
+            [source]);
+
+        Assert.Equal(
+            expectedError,
+            result.Issues.Any(issue =>
+                issue.Code == "TRANSPARENT_BACKGROUND_UNSUPPORTED" &&
+                issue.Severity == FigurePreflightSeverity.Error));
+    }
+
+    [Theory]
+    [InlineData(PanelLabelScheme.Numeric, "1", "2")]
+    [InlineData(PanelLabelScheme.None, "", "")]
+    public void Check_UsesConfiguredPanelLabelSchemeForExportConsistency(
+        PanelLabelScheme scheme,
+        string firstLabel,
+        string secondLabel)
+    {
+        SourceAsset source = CreateSource(SourceLinkState.Verified);
+        var document = new FigureExportDocument(
+            200,
+            100,
+            300,
+            [
+                new FigurePanelExportItem(
+                    source,
+                    new PixelRect64(0, 0, 100, 100),
+                    new PixelRect64(0, 0, 100, 100),
+                    firstLabel,
+                    true),
+                new FigurePanelExportItem(
+                    source,
+                    new PixelRect64(0, 0, 100, 100),
+                    new PixelRect64(100, 0, 100, 100),
+                    secondLabel,
+                    true),
+            ]);
+
+        FigurePreflightResult result = FigurePreflight.Check(
+            new FigurePreflightContext(document, LabelScheme: scheme),
+            [source]);
+
+        Assert.DoesNotContain(result.Issues, issue =>
+            issue.Code is "MISSING_LABEL" or "DUPLICATE_LABEL" or "LABEL_SEQUENCE");
     }
 
     [Fact]

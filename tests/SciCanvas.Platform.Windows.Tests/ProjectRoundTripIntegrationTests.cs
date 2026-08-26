@@ -3,6 +3,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
+using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
 using SciCanvas.Imaging;
 using SciCanvas.Persistence;
@@ -32,6 +33,25 @@ public sealed class ProjectRoundTripIntegrationTests
         Assert.True(original.Crop.RestoreForSource(
             asset.Metadata.PixelSize,
             new PixelRect64(3, 4, 12, 8)));
+        sourceItem.AddAnalysisResult(new RoiStatisticsResult
+        {
+            SourceAssetId = asset.Id,
+            SourceRevision = sourceItem.SourceRevision,
+            AnalyzerId = "test.roi.v1",
+            SourceBitDepth = 8,
+            Region = new PixelRect64(3, 4, 12, 8),
+            PixelCount = 96,
+            Minimum = 0,
+            Maximum = 255,
+            Mean = 128,
+            StandardDeviation = 1,
+            IntegratedIntensity = 12288,
+            Histogram = new IntensityHistogram(
+                [new IntensityHistogramBin(0, 255, 96)],
+                96,
+                0,
+                255),
+        });
         original.SelectedFigureTemplate = original.AvailableTemplates.Single(
             template => template.Id == "materials.synthesis-structure-performance.nature-double");
         FigurePanelViewModel panel = Assert.IsType<FigurePanelViewModel>(
@@ -105,10 +125,15 @@ public sealed class ProjectRoundTripIntegrationTests
             restored.Figure.Template.Id);
         Assert.Single(restored.Sources);
         Assert.Equal(asset.Id, restored.Sources[0].Asset.Id);
+        RoiStatisticsResult restoredAnalysis = Assert.IsType<RoiStatisticsResult>(
+            Assert.Single(restored.Sources[0].AnalysisResults));
+        Assert.Equal(new PixelRect64(3, 4, 12, 8), restoredAnalysis.Region);
+        Assert.Equal(12288, restoredAnalysis.IntegratedIntensity);
         Assert.True(restored.Crop.TryGetCrop(out PixelRect64 restoredCrop));
         Assert.Equal(new PixelRect64(3, 4, 12, 8), restoredCrop);
         FigurePanelViewModel restoredPanel = Assert.Single(restored.Figure.Panels);
         Assert.Equal(panel.Id, restoredPanel.Id);
+        Assert.Equal(new PixelRect64(3, 4, 12, 8), restoredPanel.SourceRect);
         Assert.Equal(111, restoredPanel.X);
         Assert.Equal(222, restoredPanel.Y);
         Assert.True(restoredPanel.IsLocked);
@@ -297,6 +322,7 @@ public sealed class ProjectRoundTripIntegrationTests
         Assert.Single(editor.Figure.Annotations);
         Assert.True(editor.IsDirty);
         Assert.Equal(panel.Id, editor.Figure.Panels[0].Id);
+        Assert.Equal(new PixelRect64(5, 4, 12, 8), editor.Figure.Panels[0].SourceRect);
         Assert.Equal(annotation.Id, editor.Figure.Annotations[0].Id);
         Assert.Equal(sourceHash, SHA256.HashData(await File.ReadAllBytesAsync(sourcePath)));
     }

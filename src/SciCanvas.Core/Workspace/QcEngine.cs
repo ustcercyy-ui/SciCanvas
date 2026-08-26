@@ -465,6 +465,11 @@ internal sealed class PanelLabelRule()
     {
         foreach (ScientificFigure figure in context.Project.Figures.Values)
         {
+            if (figure.LabelScheme == PanelLabelScheme.None)
+            {
+                continue;
+            }
+
             FigurePanel[] ordered = figure.Panels
                 .OrderBy(panel => panel.Frame.Y)
                 .ThenBy(panel => panel.Frame.X)
@@ -498,17 +503,24 @@ internal sealed class PanelLabelRule()
                     canAutoFix: true);
             }
 
-            HashSet<string> actual = labels.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (figure.LabelScheme is PanelLabelScheme.Custom)
+            {
+                continue;
+            }
+
             for (int index = 0; index < ordered.Length; index++)
             {
-                string expected = ((char)('a' + index)).ToString();
-                if (!actual.Contains(expected))
+                string expected = PanelLabelGenerator.Generate(index, figure.LabelScheme);
+                string observed = PanelLabelGenerator.NormalizeForComparison(ordered[index].Label);
+                if (!string.Equals(observed, expected, StringComparison.Ordinal))
                 {
                     yield return Issue(
                         QcSeverity.Warning,
-                        $"gap:{figure.Id:N}:{expected}",
-                        $"Missing panel label ({expected}).",
+                        $"sequence:{figure.Id:N}:{index}",
+                        $"Panel label sequence expects ({expected}) at position {index + 1}.",
                         figure.Id,
+                        ordered[index].Id,
+                        ordered[index].AssetId,
                         canAutoFix: true);
                 }
             }
@@ -516,7 +528,7 @@ internal sealed class PanelLabelRule()
     }
 
     private static string NormalizeLabel(string? label) =>
-        (label ?? string.Empty).Trim().Trim('(', ')').ToLowerInvariant();
+        PanelLabelGenerator.NormalizeForComparison(label);
 }
 
 internal sealed class SourceTrackingRule()

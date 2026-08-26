@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Media;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
+using SciCanvas.Core.Workspace;
 using SciCanvas.Templates;
 
 namespace SciCanvas.Presentation;
@@ -328,6 +329,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
                 }
 
                 OnPropertyChanged(nameof(PanelLabelSettingsText));
+                OnPropertyChanged(nameof(LabelScheme));
                 DocumentChanged?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -341,6 +343,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
             if (SetProperty(ref _showPanelLabels, value))
             {
                 OnPropertyChanged(nameof(PanelLabelSettingsText));
+                OnPropertyChanged(nameof(LabelScheme));
                 DocumentChanged?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -360,6 +363,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
                 }
 
                 OnPropertyChanged(nameof(PanelLabelSettingsText));
+                OnPropertyChanged(nameof(LabelScheme));
                 DocumentChanged?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -370,6 +374,11 @@ public sealed class FigureCanvasViewModel : ObservableObject
         : AutoPanelLabelsEnabled
             ? "新增、删除或切换编号序列时自动更新；可按画布位置重新编号。"
             : "自动编号已关闭，可直接编辑选中面板的编号。";
+
+    public PanelLabelScheme LabelScheme => PanelLabelGenerator.FromLegacySettings(
+        PanelLabelSequence,
+        ShowPanelLabels,
+        AutoPanelLabelsEnabled);
 
     public string GlobalFontFamily
     {
@@ -1999,7 +2008,9 @@ public sealed class FigureCanvasViewModel : ObservableObject
             .ToArray();
         for (int index = 0; index < readingOrder.Length; index++)
         {
-            readingOrder[index].Label = CreatePanelLabel(index, PanelLabelSequence);
+            readingOrder[index].Label = PanelLabelGenerator.Generate(
+                index,
+                PanelLabelGenerator.FromLegacySettings(PanelLabelSequence));
         }
 
         OnPropertyChanged(nameof(PanelLabelSettingsText));
@@ -2007,28 +2018,6 @@ public sealed class FigureCanvasViewModel : ObservableObject
         {
             EditCompleted?.Invoke(this, EventArgs.Empty);
         }
-    }
-
-    private static string CreatePanelLabel(int index, string sequence)
-    {
-        if (sequence == "numeric")
-        {
-            return (index + 1).ToString(CultureInfo.InvariantCulture);
-        }
-
-        int value = index;
-        Span<char> buffer = stackalloc char[16];
-        int position = buffer.Length;
-        do
-        {
-            int digit = value % 26;
-            buffer[--position] = (char)('a' + digit);
-            value = value / 26 - 1;
-        }
-        while (value >= 0);
-
-        string label = new(buffer[position..]);
-        return sequence == "uppercase" ? label.ToUpperInvariant() : label;
     }
 
     private static string NormalizeLabelSequence(string? value) => value?.Trim().ToLowerInvariant() switch

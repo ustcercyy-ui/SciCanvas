@@ -1335,6 +1335,24 @@
                                 </Grid>
                                 <TextBlock Margin="0,7,0,0" Text="选中后拖动图形可移动；拖动黄色端点手柄可改大小。" Foreground="{StaticResource MutedBrush}" FontSize="8" TextWrapping="Wrap" />
                                 <Button Margin="0,8,0,0" Command="{Binding DeleteSelectedMeasurementCommand}" Content="删除当前测量" />
+                                <TextBlock Margin="0,12,0,0"
+                                           Text="科学图像分析 · 原始像素"
+                                           Foreground="#AFC5D2"
+                                           FontSize="9"
+                                           FontWeight="SemiBold" />
+                                <ComboBox Margin="0,6,0,0"
+                                          ItemsSource="{Binding AvailableAnalysisChannels}"
+                                          SelectedItem="{Binding AnalysisChannel}"
+                                          ToolTip="灰度/亮度或明确的 RGB/A 原始通道" />
+                                <Button Margin="0,6,0,0"
+                                        Command="{Binding AnalyzeRoiStatisticsCommand}"
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        Content="统计当前裁剪 ROI" />
+                                <TextBlock Margin="0,6,0,0"
+                                           Text="{Binding RoiStatisticsStatusText}"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           FontSize="8"
+                                           TextWrapping="Wrap" />
                                 <Button Margin="0,6,0,0"
                                         Command="{Binding AnalyzeIntensityProfileCommand}"
                                         Style="{StaticResource AccentButtonStyle}"
@@ -1362,6 +1380,13 @@
                                         </Canvas>
                                     </Viewbox>
                                 </Border>
+                                <Button Margin="0,8,0,0"
+                                        Command="{Binding ExportAnalysisResultsCommand}"
+                                        Content="导出分析结果 CSV / Excel" />
+                                <TextBlock Margin="0,5,0,0"
+                                           Text="{Binding SelectedSource.AnalysisCountText}"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           FontSize="8" />
                             </StackPanel>
                         </Border>
 
@@ -1423,6 +1448,7 @@
                                             <DataGridCheckBoxColumn Header="采用" Binding="{Binding IsAccepted, Mode=TwoWay}" Width="42" />
                                             <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="34" IsReadOnly="True" />
                                             <DataGridTextColumn Header="等效尺寸" Binding="{Binding SizeText}" Width="*" IsReadOnly="True" />
+                                            <DataGridTextColumn Header="形貌 / 强度" Binding="{Binding ShapeText}" Width="2*" IsReadOnly="True" />
                                             <DataGridTextColumn Header="状态" Binding="{Binding DecisionText}" Width="78" IsReadOnly="True" />
                                         </DataGrid.Columns>
                                     </DataGrid>
@@ -1564,7 +1590,11 @@
                             <Button Grid.Column="0" Command="{Binding ClearBatchCropQueueCommand}" Content="清空队列" />
                             <Button Grid.Column="2" Command="{Binding ExportBatchCropsCommand}" Style="{StaticResource AccentButtonStyle}" Content="导出批量裁剪" />
                         </Grid>
-                        <TextBlock Margin="0,7,0,0" Text="逐项复核源文件并输出全新 TIFF；失败项会保留在队列中。" Foreground="{StaticResource MutedBrush}" FontSize="9" TextWrapping="Wrap" />
+                        <Button Margin="0,6,0,0"
+                                Command="{Binding AnalyzeParticleBatchCommand}"
+                                Style="{StaticResource AccentButtonStyle}"
+                                Content="应用当前配方批量颗粒分析" />
+                        <TextBlock Margin="0,7,0,0" Text="批量分析复用上方区域分析的模式、阈值、最小面积与通道；结果绑定各源 revision 并写入工程。批量导出仍只创建全新 TIFF。" Foreground="{StaticResource MutedBrush}" FontSize="9" TextWrapping="Wrap" />
                     </StackPanel>
 
                     <StackPanel Margin="16,16,16,24" Visibility="{Binding FigureWorkspaceVisibility}">

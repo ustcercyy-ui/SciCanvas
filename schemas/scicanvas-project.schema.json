@@ -89,6 +89,12 @@
         "$ref": "#/$defs/measurement"
       }
     },
+    "analyses": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/scientificAnalysis"
+      }
+    },
     "templateSnapshot": {
       "anyOf": [
         { "$ref": "#/$defs/templateSnapshot" },
@@ -335,6 +341,43 @@
         "height": { "type": "integer", "minimum": 1 }
       }
     },
+    "normalizedRect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      }
+    },
+    "figureRectMm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0 },
+        "y": { "type": "number", "minimum": 0 },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "scientificValidity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "reasons"],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["valid", "warning", "invalid", "reviewrequired"]
+        },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
     "transform": {
       "type": "object",
       "additionalProperties": false,
@@ -378,9 +421,28 @@
         "frameIndex": { "type": "integer", "minimum": 0 },
         "lockAspectRatio": { "type": "boolean", "default": true },
         "cropLinkGroupId": { "type": ["string", "null"], "format": "uuid" },
-        "sourceRect": { "$ref": "#/$defs/pixelRect" },
+        "sourceRect": {
+          "description": "Canonical half-open integer source-pixel crop; authoritative for manual mode.",
+          "$ref": "#/$defs/pixelRect"
+        },
         "transform": { "$ref": "#/$defs/transform" },
-        "adjustments": { "type": "array", "items": { "$ref": "#/$defs/imageAdjustment" } }
+        "adjustments": { "type": "array", "items": { "$ref": "#/$defs/imageAdjustment" } },
+        "normalizedCrop": {
+          "description": "Derived normalized crop for V2 layout and backward-compatible readers; sourceRect wins in manual mode.",
+          "anyOf": [
+            { "$ref": "#/$defs/normalizedRect" },
+            { "type": "null" }
+          ]
+        },
+        "frameMm": {
+          "anyOf": [
+            { "$ref": "#/$defs/figureRectMm" },
+            { "type": "null" }
+          ]
+        },
+        "fitMode": { "type": "string", "enum": ["fit", "fill", "manual"] },
+        "rotationDegrees": { "type": "number" },
+        "scientificValidity": { "$ref": "#/$defs/scientificValidity" }
       }
     },
     "imageAdjustment": {
@@ -550,6 +612,109 @@
             }
           }
         }
+      }
+    },
+    "scientificAnalysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "sourceAssetId", "sourceRevision", "kind", "frameIndex",
+        "channel", "analyzerId", "analyzedAt", "validity", "sourceBitDepth"
+      ],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "sourceAssetId": { "type": "string", "format": "uuid" },
+        "sourceRevision": { "type": "integer", "minimum": 1 },
+        "kind": { "type": "string", "enum": ["roiStatistics", "lineProfile", "particleAnalysis"] },
+        "frameIndex": { "type": "integer", "minimum": 0 },
+        "channel": { "type": "string", "enum": ["luminance", "red", "green", "blue", "alpha"] },
+        "analyzerId": { "type": "string", "minLength": 1 },
+        "analyzedAt": { "type": "string", "format": "date-time" },
+        "validity": { "$ref": "#/$defs/scientificValidity" },
+        "sourceBitDepth": { "type": "integer", "enum": [8, 16] },
+        "region": {
+          "anyOf": [
+            { "$ref": "#/$defs/pixelRect" },
+            { "type": "null" }
+          ]
+        },
+        "pixelCount": { "type": ["integer", "null"], "minimum": 1 },
+        "minimum": { "type": ["number", "null"] },
+        "maximum": { "type": ["number", "null"] },
+        "mean": { "type": ["number", "null"] },
+        "standardDeviation": { "type": ["number", "null"], "minimum": 0 },
+        "integratedIntensity": { "type": ["number", "null"] },
+        "histogram": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/intensityHistogramBin" }
+        },
+        "distanceUnit": { "type": ["string", "null"] },
+        "samples": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/intensityProfileSample" }
+        },
+        "analysisMode": {
+          "type": ["string", "null"],
+          "enum": [null, "brightParticles", "darkParticles", "darkPores", "brightPhase", "grainRegions", "darkCracks", "brightLamellae"]
+        },
+        "useAutomaticThreshold": { "type": ["boolean", "null"] },
+        "thresholdNormalized": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "appliedThresholdNormalized": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "minimumAreaPixels": { "type": ["integer", "null"], "minimum": 1, "maximum": 10000000 },
+        "maximumCandidates": { "type": ["integer", "null"], "minimum": 1, "maximum": 100000 },
+        "foregroundPixelCount": { "type": ["integer", "null"], "minimum": 0 },
+        "totalPixelCount": { "type": ["integer", "null"], "minimum": 1 },
+        "particles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/particle" }
+        }
+      }
+    },
+    "intensityHistogramBin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lowerBound", "upperBound", "count"],
+      "properties": {
+        "lowerBound": { "type": "number" },
+        "upperBound": { "type": "number" },
+        "count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "intensityProfileSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index", "pixelX", "pixelY", "distancePixels", "rawIntensity", "normalizedIntensity"
+      ],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "pixelX": { "type": "number" },
+        "pixelY": { "type": "number" },
+        "distancePixels": { "type": "number", "minimum": 0 },
+        "physicalDistance": { "type": ["number", "null"], "minimum": 0 },
+        "rawIntensity": { "type": "number" },
+        "normalizedIntensity": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "particle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "bounds", "centroidX", "centroidY", "areaPixels", "perimeterPixels",
+        "meanIntensity", "rawMeanIntensity", "aspectRatio", "feretMaximumPixels", "feretMinimumPixels"
+      ],
+      "properties": {
+        "id": { "type": "integer", "minimum": 1 },
+        "bounds": { "$ref": "#/$defs/pixelRect" },
+        "centroidX": { "type": "number" },
+        "centroidY": { "type": "number" },
+        "areaPixels": { "type": "integer", "minimum": 1 },
+        "perimeterPixels": { "type": "integer", "minimum": 1 },
+        "meanIntensity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "rawMeanIntensity": { "type": "number", "minimum": 0 },
+        "aspectRatio": { "type": "number", "minimum": 1 },
+        "feretMaximumPixels": { "type": "number", "exclusiveMinimum": 0 },
+        "feretMinimumPixels": { "type": "number", "exclusiveMinimum": 0 }
       }
     },
     "auditEntry": {

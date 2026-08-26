@@ -1,3 +1,4 @@
+using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Science;
 
 namespace SciCanvas.Core.Workspace;
@@ -79,6 +80,43 @@ public static class CoordinateTransforms
 
 public static class PanelCropCalculator
 {
+    /// <summary>
+    /// Resolves a panel crop while keeping a manual crop as an exact half-open
+    /// source-pixel rectangle [x, x + width) × [y, y + height).
+    /// </summary>
+    public static PixelRect64 ResolveSourcePixels(
+        PanelFitMode fitMode,
+        long sourceWidthPixels,
+        long sourceHeightPixels,
+        FigureRectMm frame,
+        PixelRect64 manualCrop)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sourceWidthPixels);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sourceHeightPixels);
+        if (manualCrop.Right > sourceWidthPixels || manualCrop.Bottom > sourceHeightPixels)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(manualCrop),
+                "手动裁剪区域必须完全位于源图半开像素边界内。");
+        }
+
+        if (fitMode == PanelFitMode.Manual)
+        {
+            return manualCrop;
+        }
+
+        return Resolve(
+                fitMode,
+                sourceWidthPixels,
+                sourceHeightPixels,
+                frame,
+                NormalizedRect.FromSourcePixels(
+                    manualCrop,
+                    sourceWidthPixels,
+                    sourceHeightPixels))
+            .ToSourcePixels(sourceWidthPixels, sourceHeightPixels);
+    }
+
     public static NormalizedRect Resolve(
         PanelFitMode fitMode,
         long sourceWidthPixels,

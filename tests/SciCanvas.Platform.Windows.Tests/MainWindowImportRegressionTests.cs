@@ -808,6 +808,39 @@ public sealed class MainWindowImportRegressionTests
     }
 
     [Fact]
+    public void ParticleBatch_AppliesCurrentRecipeAndPersistsResultsPerSourceRevision()
+    {
+        MainWindowViewModel viewModel = CreateViewModel(new FixedAssistedRegionAnalyzer());
+        SourceAssetItemViewModel first = CreateMeasurementSourceItem();
+        SourceAssetItemViewModel second = CreateMeasurementSourceItem();
+        viewModel.Sources.Add(first);
+        viewModel.Sources.Add(second);
+        viewModel.AnalysisChannel = ImageAnalysisChannel.Red;
+
+        viewModel.SelectedSource = first;
+        viewModel.AddCurrentCropToBatchQueueCommand.Execute(null);
+        viewModel.SelectedSource = second;
+        viewModel.AddCurrentCropToBatchQueueCommand.Execute(null);
+
+        viewModel.AnalyzeParticleBatchCommand.Execute(null);
+
+        Assert.True(SpinWait.SpinUntil(() => !viewModel.IsBusy, TimeSpan.FromSeconds(2)));
+        Assert.Equal(2, viewModel.BatchCropQueue.Count);
+        Assert.All(viewModel.BatchCropQueue, item =>
+            Assert.Contains("分析完成", item.StatusText, StringComparison.Ordinal));
+        Assert.All([first, second], source =>
+        {
+            AssistedRegionAnalysisResult result = Assert.IsType<AssistedRegionAnalysisResult>(
+                Assert.Single(source.AnalysisResults));
+            Assert.Equal(source.Asset.Id, result.SourceAssetId);
+            Assert.Equal(source.SourceRevision, result.SourceRevision);
+            Assert.Equal(ImageAnalysisChannel.Red, result.Channel);
+            Assert.Equal(2, result.Candidates.Count);
+        });
+        Assert.Contains("4 个候选", viewModel.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExplainableLayout_SelectsCapacityTemplateAndPlacesSources()
     {
         MainWindowViewModel viewModel = CreateViewModel();
@@ -926,18 +959,33 @@ public sealed class MainWindowImportRegressionTests
             SourceAsset source,
             AssistedRegionAnalysisOptions options,
             int frameIndex = 0,
-            CancellationToken cancellationToken = default) => Task.FromResult(
+            CancellationToken cancellationToken = default,
+            long sourceRevision = 1,
+            ImageAnalysisChannel channel = ImageAnalysisChannel.Luminance) => Task.FromResult(
             new AssistedRegionAnalysisResult(
                 options,
                 [
-                    new AssistedRegionCandidate(1, new PixelRect64(100, 100, 40, 40), 120, 120, 800, 120, 0.8, 1),
-                    new AssistedRegionCandidate(2, new PixelRect64(300, 200, 30, 30), 315, 215, 500, 100, 0.7, 1),
+                    new AssistedRegionCandidate(1, new PixelRect64(100, 100, 40, 40), 120, 120, 800, 120, 0.8, 1)
+                    {
+                        RawMeanIntensity = 52428,
+                    },
+                    new AssistedRegionCandidate(2, new PixelRect64(300, 200, 30, 30), 315, 215, 500, 100, 0.7, 1)
+                    {
+                        RawMeanIntensity = 45874.5,
+                    },
                 ],
                 0.5,
                 1300,
-                options.RegionOfInterest.Width * options.RegionOfInterest.Height,
-                "test.assisted-regions.v1",
-                DateTimeOffset.UtcNow));
+                options.RegionOfInterest.Width * options.RegionOfInterest.Height)
+            {
+                SourceAssetId = source.Id,
+                SourceRevision = sourceRevision,
+                FrameIndex = frameIndex,
+                Channel = channel,
+                AnalyzerId = "test.assisted-regions.v2",
+                AnalyzedAt = DateTimeOffset.UtcNow,
+                SourceBitDepth = source.Metadata.BitsPerChannel > 8 ? 16 : 8,
+            });
     }
 
     private sealed class EmptyExportFilePicker : IExportFilePicker

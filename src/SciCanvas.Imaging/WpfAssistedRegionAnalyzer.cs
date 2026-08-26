@@ -1,6 +1,4 @@
 using System.IO;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
 
@@ -8,19 +6,27 @@ namespace SciCanvas.Imaging;
 
 public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
 {
-    public const string AnalyzerVersion = "scicanvas.connected-components.v1";
+    public const string AnalyzerVersion = "scicanvas.connected-components.v2";
 
     public Task<AssistedRegionAnalysisResult> AnalyzeAsync(
         SourceAsset source,
         AssistedRegionAnalysisOptions options,
         int frameIndex = 0,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        long sourceRevision = 1,
+        ImageAnalysisChannel channel = ImageAnalysisChannel.Luminance)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(options);
         if (!options.IsValid)
         {
             throw new ArgumentException("区域分析参数无效。", nameof(options));
+        }
+
+
+        if (sourceRevision < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sourceRevision));
         }
 
         if (options.RegionOfInterest.Right > source.Metadata.PixelSize.Width ||
@@ -30,7 +36,13 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
         }
 
         return Task.Run(
-            () => AnalyzeCore(source, options, frameIndex, cancellationToken),
+            () => AnalyzeCore(
+                source,
+                options,
+                frameIndex,
+                sourceRevision,
+                channel,
+                cancellationToken),
             cancellationToken);
     }
 
@@ -38,27 +50,29 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
         SourceAsset source,
         AssistedRegionAnalysisOptions options,
         int frameIndex,
+        long sourceRevision,
+        ImageAnalysisChannel channel,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        BitmapSource cropped = WpfFigureExporter.LoadExactCrop(
-            source.OriginalPath,
+        ScientificPixelBuffer pixelBuffer = WpfScientificPixelReader.ReadRegion(
+            source,
             options.RegionOfInterest,
-            frameIndex);
-        BitmapSource gray = cropped.Format == PixelFormats.Gray8
-            ? cropped
-            : new FormatConvertedBitmap(cropped, PixelFormats.Gray8, null, 0);
-        gray.Freeze();
-        int width = gray.PixelWidth;
-        int height = gray.PixelHeight;
-        byte[] pixels = new byte[checked(width * height)];
-        gray.CopyPixels(pixels, width, 0);
-        byte threshold = options.UseAutomaticThreshold
-            ? CalculateOtsuThreshold(pixels)
-            : (byte)Math.Clamp((int)Math.Round(options.ThresholdNormalized * byte.MaxValue), 0, 255);
-        bool[] foreground = new bool[pixels.Length];
+            frameIndex,
+            channel,
+            cancellationToken);
+        int width = pixelBuffer.Width;
+        int height = pixelBuffer.Height;
+        IReadOnlyList<double> pixels = pixelBuffer.Values;
+        double threshold = options.UseAutomaticThreshold
+            ? CalculateOtsuThreshold(
+                pixels,
+                pixelBuffer.MaximumValue,
+                pixelBuffer.SourceBitDepth == 16 ? 4096 : 256)
+            : options.ThresholdNormalized * pixelBuffer.MaximumValue;
+        bool[] foreground = new bool[pixels.Count];
         long foregroundCount = 0;
-        for (int index = 0; index < pixels.Length; index++)
+        for (int index = 0; index < pixels.Count; index++)
         {
             bool isForeground = options.DetectDarkRegions
                 ? pixels[index] <= threshold
@@ -70,7 +84,7 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
             }
         }
 
-        bool[] visited = new bool[pixels.Length];
+        bool[] visited = new bool[pixels.Count];
         var candidates = new List<AssistedRegionCandidate>();
         var queue = new Queue<int>();
         for (int seed = 0; seed < foreground.Length; seed++)
@@ -85,9 +99,10 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
             queue.Enqueue(seed);
             int area = 0;
             int perimeter = 0;
-            long intensitySum = 0;
+            double intensitySum = 0;
             long sumX = 0;
             long sumY = 0;
+            var boundaryPoints = new List<ComponentPoint>();
             int minX = width;
             int minY = height;
             int maxX = 0;
@@ -105,7 +120,12 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
                 minY = Math.Min(minY, y);
                 maxX = Math.Max(maxX, x);
                 maxY = Math.Max(maxY, y);
-                perimeter += BoundaryEdges(foreground, width, height, x, y);
+                int boundaryEdges = BoundaryEdges(foreground, width, height, x, y);
+                perimeter += boundaryEdges;
+                if (boundaryEdges > 0)
+                {
+                    AddPixelCorners(boundaryPoints, x, y);
+                }
 
                 for (int offsetY = -1; offsetY <= 1; offsetY++)
                 {
@@ -147,6 +167,9 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
                 continue;
             }
 
+            ComponentPoint[] hull = CreateConvexHull(boundaryPoints);
+            (double feretMaximum, double feretMinimum) = CalculateFeretDiameters(hull);
+
             candidates.Add(new AssistedRegionCandidate(
                 candidates.Count + 1,
                 new(
@@ -158,8 +181,13 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
                 options.RegionOfInterest.Y + sumY / (double)area,
                 area,
                 perimeter,
-                intensitySum / (double)area / byte.MaxValue,
-                aspectRatio));
+                intensitySum / area / pixelBuffer.MaximumValue,
+                aspectRatio)
+            {
+                RawMeanIntensity = intensitySum / area,
+                FeretMaximumPixels = feretMaximum,
+                FeretMinimumPixels = feretMinimum,
+            });
         }
 
         AssistedRegionCandidate[] ordered = candidates
@@ -170,11 +198,19 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
         return new AssistedRegionAnalysisResult(
             options,
             ordered,
-            threshold / (double)byte.MaxValue,
+            threshold / pixelBuffer.MaximumValue,
             foregroundCount,
-            pixels.LongLength,
-            AnalyzerVersion,
-            DateTimeOffset.UtcNow);
+            pixels.Count)
+        {
+            Id = Guid.NewGuid(),
+            SourceAssetId = source.Id,
+            SourceRevision = sourceRevision,
+            FrameIndex = frameIndex,
+            Channel = channel,
+            AnalyzerId = AnalyzerVersion,
+            AnalyzedAt = DateTimeOffset.UtcNow,
+            SourceBitDepth = pixelBuffer.SourceBitDepth,
+        };
     }
 
     private static int BoundaryEdges(bool[] foreground, int width, int height, int x, int y)
@@ -187,15 +223,137 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
         return edges;
     }
 
-    private static byte CalculateOtsuThreshold(byte[] pixels)
+    private static void AddPixelCorners(ICollection<ComponentPoint> points, int x, int y)
     {
-        long[] histogram = new long[256];
-        foreach (byte pixel in pixels)
+        points.Add(new ComponentPoint(x, y));
+        points.Add(new ComponentPoint(x + 1, y));
+        points.Add(new ComponentPoint(x + 1, y + 1));
+        points.Add(new ComponentPoint(x, y + 1));
+    }
+
+    private static ComponentPoint[] CreateConvexHull(IEnumerable<ComponentPoint> points)
+    {
+        ComponentPoint[] ordered = points
+            .Distinct()
+            .OrderBy(point => point.X)
+            .ThenBy(point => point.Y)
+            .ToArray();
+        if (ordered.Length <= 2)
         {
-            histogram[pixel]++;
+            return ordered;
         }
 
-        long total = pixels.LongLength;
+        var hull = new List<ComponentPoint>(ordered.Length * 2);
+        foreach (ComponentPoint point in ordered)
+        {
+            while (hull.Count >= 2 &&
+                   Cross(hull[^2], hull[^1], point) <= 0)
+            {
+                hull.RemoveAt(hull.Count - 1);
+            }
+
+            hull.Add(point);
+        }
+
+        int lowerCount = hull.Count;
+        for (int index = ordered.Length - 2; index >= 0; index--)
+        {
+            ComponentPoint point = ordered[index];
+            while (hull.Count > lowerCount &&
+                   Cross(hull[^2], hull[^1], point) <= 0)
+            {
+                hull.RemoveAt(hull.Count - 1);
+            }
+
+            hull.Add(point);
+        }
+
+        hull.RemoveAt(hull.Count - 1);
+        return hull.ToArray();
+    }
+
+    private static (double Maximum, double Minimum) CalculateFeretDiameters(
+        IReadOnlyList<ComponentPoint> hull)
+    {
+        if (hull.Count == 0)
+        {
+            return (1, 1);
+        }
+
+        if (hull.Count == 1)
+        {
+            return (1, 1);
+        }
+
+        if (hull.Count == 2)
+        {
+            double distance = Distance(hull[0], hull[1]);
+            return (distance, distance);
+        }
+
+        int antipodal = 1;
+        double maximum = 0;
+        double minimum = double.PositiveInfinity;
+        for (int index = 0; index < hull.Count; index++)
+        {
+            int nextIndex = (index + 1) % hull.Count;
+            ComponentPoint edgeStart = hull[index];
+            ComponentPoint edgeEnd = hull[nextIndex];
+            while (TriangleAreaTwice(
+                       edgeStart,
+                       edgeEnd,
+                       hull[(antipodal + 1) % hull.Count]) >
+                   TriangleAreaTwice(edgeStart, edgeEnd, hull[antipodal]) + 1e-12)
+            {
+                antipodal = (antipodal + 1) % hull.Count;
+            }
+
+            maximum = Math.Max(maximum, Distance(edgeStart, hull[antipodal]));
+            maximum = Math.Max(maximum, Distance(edgeEnd, hull[antipodal]));
+            double edgeLength = Distance(edgeStart, edgeEnd);
+            if (edgeLength > 0)
+            {
+                minimum = Math.Min(
+                    minimum,
+                    TriangleAreaTwice(edgeStart, edgeEnd, hull[antipodal]) / edgeLength);
+            }
+        }
+
+        return (maximum, minimum);
+    }
+
+    private static double Cross(ComponentPoint first, ComponentPoint second, ComponentPoint third) =>
+        (second.X - first.X) * (third.Y - first.Y) -
+        (second.Y - first.Y) * (third.X - first.X);
+
+    private static double TriangleAreaTwice(
+        ComponentPoint first,
+        ComponentPoint second,
+        ComponentPoint third) => Math.Abs(Cross(first, second, third));
+
+    private static double Distance(ComponentPoint first, ComponentPoint second)
+    {
+        double deltaX = first.X - second.X;
+        double deltaY = first.Y - second.Y;
+        return Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
+    }
+
+    private static double CalculateOtsuThreshold(
+        IReadOnlyList<double> pixels,
+        double maximumValue,
+        int binCount)
+    {
+        long[] histogram = new long[binCount];
+        foreach (double pixel in pixels)
+        {
+            int bin = Math.Clamp(
+                (int)Math.Floor(pixel / maximumValue * (binCount - 1)),
+                0,
+                binCount - 1);
+            histogram[bin]++;
+        }
+
+        long total = pixels.Count;
         double sum = 0;
         for (int level = 0; level < histogram.Length; level++)
         {
@@ -232,6 +390,8 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
             }
         }
 
-        return (byte)threshold;
+        return threshold / (double)(binCount - 1) * maximumValue;
     }
+
+    private readonly record struct ComponentPoint(double X, double Y);
 }

@@ -119,6 +119,19 @@ CLI 退出码：`0` 成功、`2` 参数错误、`3` 工程或源图验证失败�
 
 完整阶段、验收条件和边界见 [升级路线](docs/UPGRADE_ROADMAP.md)。
 
+## v2.2 科学图像分析 II 与自动化
+
+`v2.2.0-alpha` 汇总尚未发布的 v2.0.2 正确性加固、v2.1 原始像素统计分析，并交付 v2.2 的首个端到端自动化切片：阈值颗粒分析与可复用批处理配方。
+
+- ROI 统计、强度剖面、直方图与颗粒分析都绑定 Source Asset、source revision、frame、channel、bit depth、算法版本和分析时间；替换源图后不会把旧结果误认为当前结果。
+- 原始像素读取支持 8-bit / 16-bit 与 Luminance、Red、Green、Blue、Alpha 通道；16-bit 阈值与均值不经 8-bit 量化。
+- 亮颗粒、暗颗粒等阈值模式可使用确定性 Otsu 或手动阈值，输出连通域数量、面积分数、面积、周长、等效直径、圆度、长宽比、原始强度与真实 Feret 最大/最小径。
+- 当前阈值、最小面积、候选上限与通道可形成批处理配方，并应用于裁剪队列中的多个来源；每个结果仍分别绑定各自来源 revision，整个批次作为单个历史手势并写入审计轨迹。
+- 分析结果可随 `2.2` 工程保存、严格校验和迁移，并统一导出为 CSV / XLSX；旧 `2.1` 工程会显式迁移且保留既有分析。
+- Figure 全局样式、OME 标定、各向异性角度、像素精确裁剪、格式感知导出预检和 Panel 标签序列等正确性问题同步修复。
+
+源图仍保持只读；辅助分析只生成可审计结果，不进行生成式填充、克隆、擦除或对象移除。
+
 ## v2.0 Scientific Figure Workspace
 
 `v2.0.1-alpha` 在保留 .NET 10 / WPF / MVVM、只读源文件和从原始像素重建导出的基础上，继续完善 Scientific Figure Workspace V2。
@@ -161,13 +174,13 @@ dotnet publish .\src\SciCanvas.Cli\SciCanvas.Cli.csproj --configuration Release 
 
 生成后可双击 `.\artifacts\SciCanvas-win-x64\SciCanvas.App.exe`，或在终端运行同目录的 `SciCanvas.Cli.exe`。该目录版仍需要系统安装 .NET 10 Desktop Runtime。
 
-当前已生成可直接交付的 `v2.0.1-alpha` 自包含 Windows x64 包：
+当前可直接交付的版本为 `v2.2.0-alpha` 自包含 Windows x64 包：
 
-- [SciCanvas-v2.0.1-alpha-Setup.exe](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.0.1-alpha/SciCanvas-v2.0.1-alpha-Setup.exe)：双击安装到当前用户目录，不需要管理员权限，同时安装 GUI 与 CLI。
-- [SciCanvas-v2.0.1-alpha-Portable.zip](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.0.1-alpha/SciCanvas-v2.0.1-alpha-Portable.zip)：解压后运行 `SciCanvas.App.exe` 或 `SciCanvas.Cli.exe`，不需要安装 .NET。
-- [SciCanvas-v2.0.1-alpha-SHA256.txt](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.0.1-alpha/SciCanvas-v2.0.1-alpha-SHA256.txt)：安装包与便携包的 SHA-256 校验值。
+- [SciCanvas-v2.2.0-alpha-Setup.exe](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.2.0-alpha/SciCanvas-v2.2.0-alpha-Setup.exe)：双击安装到当前用户目录，不需要管理员权限，同时安装 GUI 与 CLI。
+- [SciCanvas-v2.2.0-alpha-Portable.zip](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.2.0-alpha/SciCanvas-v2.2.0-alpha-Portable.zip)：解压后运行 `SciCanvas.App.exe` 或 `SciCanvas.Cli.exe`，不需要安装 .NET。
+- [SciCanvas-v2.2.0-alpha-SHA256.txt](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.2.0-alpha/SciCanvas-v2.2.0-alpha-SHA256.txt)：安装包与便携包的 SHA-256 校验值。
 
-完整更新内容、安装步骤和验证记录见 [v2.0.1-alpha Release](https://github.com/ustcercyy-ui/SciCanvas/releases/tag/v2.0.1-alpha)。
+完整更新内容、安装步骤和验证记录见 [v2.2.0-alpha Release](https://github.com/ustcercyy-ui/SciCanvas/releases/tag/v2.2.0-alpha)。
 
 构建与测试：
 
@@ -193,6 +206,7 @@ dotnet test .\SciCanvas.sln --configuration Debug
 - [v1.2.2 裁剪修复与安装说明](docs/RELEASE_1.2.2.md)
 - [v2.0 发布说明与安装验证](docs/RELEASE_2.0.0.md)
 - [v2.0.1 交互改进与安装验证](docs/RELEASE_2.0.1.md)
+- [v2.2 科学分析与自动化发布说明](docs/RELEASE_2.2.0.md)
 - [Scientific Figure Workspace V2 实现说明](docs/SCIENTIFIC_FIGURE_WORKSPACE_V2.md)
 - [Scientific Figure Workspace V2 架构审计](docs/V2_ARCHITECTURE_AUDIT.md)
 - [模板系统](docs/TEMPLATE_SYSTEM.md)

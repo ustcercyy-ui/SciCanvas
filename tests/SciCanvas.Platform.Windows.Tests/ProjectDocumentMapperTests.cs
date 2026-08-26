@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using SciCanvas.Core.Geometry;
@@ -13,6 +14,50 @@ namespace SciCanvas.Platform.Windows.Tests;
 
 public sealed class ProjectDocumentMapperTests
 {
+    [Fact]
+    public void PixelRectSourceTruth_SurvivesRandomizedJsonAndMapperRoundTrip()
+    {
+        var random = new Random(0x5C1CA);
+        (long Width, long Height)[] sourceSizes =
+        [
+            (101, 103),
+            (1009, 1013),
+            (1_000_003, 1_000_033),
+            (9_007_199_254_741_031, 9_007_199_254_741_111),
+        ];
+        List<PixelRect64> expected = [];
+        List<ProjectPixelRectSnapshot> snapshots = [];
+        foreach ((long sourceWidth, long sourceHeight) in sourceSizes)
+        {
+            for (int iteration = 0; iteration < 500; iteration++)
+            {
+                long x = random.NextInt64(sourceWidth);
+                long y = random.NextInt64(sourceHeight);
+                long width = random.NextInt64(1, sourceWidth - x + 1);
+                long height = random.NextInt64(1, sourceHeight - y + 1);
+                var rect = new PixelRect64(x, y, width, height);
+                expected.Add(rect);
+                snapshots.Add(new ProjectPixelRectSnapshot
+                {
+                    X = rect.X,
+                    Y = rect.Y,
+                    Width = rect.Width,
+                    Height = rect.Height,
+                });
+            }
+        }
+
+        byte[] json = JsonSerializer.SerializeToUtf8Bytes(snapshots);
+        ProjectPixelRectSnapshot[] restored =
+            JsonSerializer.Deserialize<ProjectPixelRectSnapshot[]>(json)!;
+
+        Assert.Equal(expected.Count, restored.Length);
+        for (int index = 0; index < restored.Length; index++)
+        {
+            Assert.Equal(expected[index], ProjectDocumentMapper.ToPixelRect(restored[index]));
+        }
+    }
+
     [Fact]
     public void CreateAndRestore_PreservesCropPanelAndEditorState()
     {
@@ -65,6 +110,7 @@ public sealed class ProjectDocumentMapperTests
         ProjectImageLayerSnapshot layer = Assert.Single(document.Layers);
         Assert.Equal(panel.Id, layer.Id);
         Assert.Equal(10, layer.SourceRect.X);
+        Assert.Equal(panel.SourceRect, ProjectDocumentMapper.ToPixelRect(layer.SourceRect));
         Assert.Equal(123, layer.Transform.X);
         Assert.False(layer.Visible);
         Assert.True(layer.Locked);
@@ -168,7 +214,7 @@ public sealed class ProjectDocumentMapperTests
             lockCropSizeAcrossSources: true,
             cropOverlayVisible: true);
 
-        Assert.Equal("2.0", document.SchemaVersion);
+        Assert.Equal("2.2", document.SchemaVersion);
         ProjectCalibrationSnapshot savedCalibration = Assert.Single(document.Calibrations);
         Assert.Equal(source.Asset.Id, savedCalibration.SourceAssetId);
         Assert.Equal(0.02, savedCalibration.UnitsPerPixelX);
@@ -205,6 +251,114 @@ public sealed class ProjectDocumentMapperTests
         ScientificMeasurement restoredPolyline = ProjectDocumentMapper.ToMeasurement(savedPolyline);
         Assert.Equal(polylinePoints, restoredPolyline.EffectivePathPoints);
         Assert.Equal(polyline.NumericValue, restoredPolyline.PhysicalValue(restoredCalibration));
+    }
+
+    [Fact]
+    public void Create_RoundTripsRevisionBoundRoiProfileAndParticleAnalyses()
+    {
+        SourceAssetItemViewModel source = CreateSourceItem();
+        var roi = new RoiStatisticsResult
+        {
+            Id = Guid.NewGuid(),
+            SourceAssetId = source.Asset.Id,
+            SourceRevision = source.SourceRevision,
+            FrameIndex = 0,
+            Channel = ImageAnalysisChannel.Red,
+            AnalyzerId = "test.roi.v1",
+            AnalyzedAt = DateTimeOffset.Parse("2026-08-26T08:00:00Z"),
+            SourceBitDepth = 16,
+            Region = new PixelRect64(2, 3, 2, 2),
+            PixelCount = 4,
+            Minimum = 7,
+            Maximum = 65535,
+            Mean = 20000,
+            StandardDeviation = 100,
+            IntegratedIntensity = 80000,
+            Histogram = new IntensityHistogram(
+                [new IntensityHistogramBin(0, 65535, 4)],
+                4,
+                7,
+                65535),
+        };
+        var profile = new IntensityProfileResult(
+            [
+                new IntensityProfileSample(0, 1, 2, 0, 0, 7 / 65535d) { RawIntensity = 7 },
+                new IntensityProfileSample(1, 4, 6, 5, 1.25, 1) { RawIntensity = 65535 },
+            ],
+            "µm",
+            16)
+        {
+            Id = Guid.NewGuid(),
+            SourceAssetId = source.Asset.Id,
+            SourceRevision = source.SourceRevision,
+            Channel = ImageAnalysisChannel.Green,
+            AnalyzerId = "test.profile.v1",
+            AnalyzedAt = DateTimeOffset.Parse("2026-08-26T08:01:00Z"),
+        };
+        var particles = new AssistedRegionAnalysisResult(
+            new AssistedRegionAnalysisOptions(
+                AssistedRegionMode.BrightParticles,
+                new PixelRect64(10, 10, 10, 10),
+                UseAutomaticThreshold: false,
+                ThresholdNormalized: 0.6,
+                MinimumAreaPixels: 2,
+                MaximumCandidates: 50),
+            [
+                new AssistedRegionCandidate(
+                    1,
+                    new PixelRect64(12, 13, 2, 2),
+                    12.5,
+                    13.5,
+                    4,
+                    8,
+                    200 / 255d,
+                    1)
+                {
+                    RawMeanIntensity = 200,
+                },
+            ],
+            0.6,
+            4,
+            100)
+        {
+            Id = Guid.NewGuid(),
+            SourceAssetId = source.Asset.Id,
+            SourceRevision = source.SourceRevision,
+            Channel = ImageAnalysisChannel.Blue,
+            AnalyzerId = "test.particle.v2",
+            AnalyzedAt = DateTimeOffset.Parse("2026-08-26T08:02:00Z"),
+            SourceBitDepth = 8,
+        };
+        source.AddAnalysisResult(roi);
+        source.AddAnalysisResult(profile);
+        source.AddAnalysisResult(particles);
+        var crop = new CropEditorViewModel();
+        Assert.True(crop.RestoreForSource(source.Asset.Metadata.PixelSize, new PixelRect64(0, 0, 80, 60)));
+        var figure = new FigureCanvasViewModel(new BuiltInTemplateCatalog().LoadAll()[0]);
+
+        SciCanvasProjectDocument document = ProjectDocumentMapper.Create(
+            Guid.NewGuid(), DateTimeOffset.UtcNow, "分析工程", [source], source, crop, figure,
+            WorkspaceMode.Crop, lockCropSizeAcrossSources: true, cropOverlayVisible: true);
+
+        Assert.Equal(3, document.Analyses.Count);
+        RoiStatisticsResult restoredRoi = Assert.IsType<RoiStatisticsResult>(
+            ProjectDocumentMapper.ToAnalysis(Assert.Single(document.Analyses, item => item.Kind == "roiStatistics")));
+        Assert.Equal(65535, restoredRoi.Maximum);
+        Assert.Equal(new PixelRect64(2, 3, 2, 2), restoredRoi.Region);
+        IntensityProfileResult restoredProfile = Assert.IsType<IntensityProfileResult>(
+            ProjectDocumentMapper.ToAnalysis(Assert.Single(document.Analyses, item => item.Kind == "lineProfile")));
+        Assert.Equal(65535, restoredProfile.Samples[1].RawIntensity);
+        Assert.Equal(1.25, restoredProfile.Samples[1].PhysicalDistance);
+        Assert.Equal(ImageAnalysisChannel.Green, restoredProfile.Channel);
+        AssistedRegionAnalysisResult restoredParticles = Assert.IsType<AssistedRegionAnalysisResult>(
+            ProjectDocumentMapper.ToAnalysis(Assert.Single(
+                document.Analyses,
+                item => item.Kind == "particleAnalysis")));
+        AssistedRegionCandidate restoredParticle = Assert.Single(restoredParticles.Candidates);
+        Assert.Equal(200, restoredParticle.RawMeanIntensity);
+        Assert.Equal(0.6, restoredParticles.AppliedThresholdNormalized);
+        Assert.Equal(AssistedRegionMode.BrightParticles, restoredParticles.Options.Mode);
+        Assert.Equal(ImageAnalysisChannel.Blue, restoredParticles.Channel);
     }
 
     [Fact]

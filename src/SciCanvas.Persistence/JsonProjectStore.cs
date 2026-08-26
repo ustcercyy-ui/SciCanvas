@@ -247,6 +247,131 @@ public sealed class JsonProjectStore : IProjectStore
             throw new InvalidDataException("工程包含重复的科学测量 ID。");
         }
 
+        Dictionary<Guid, ProjectSourceSnapshot> sourcesById = document.Sources.ToDictionary(source => source.Id);
+        foreach (ProjectScientificAnalysisSnapshot analysis in document.Analyses)
+        {
+            if (analysis.Id == Guid.Empty ||
+                !sourcesById.TryGetValue(analysis.SourceAssetId, out ProjectSourceSnapshot? analysisSource) ||
+                analysis.SourceRevision < 1 || analysis.SourceRevision > analysisSource.SourceRevision ||
+                analysis.FrameIndex < 0 || analysis.FrameIndex >= Math.Max(1, analysisSource.Metadata.FrameCount) ||
+                analysis.SourceBitDepth is not (8 or 16) ||
+                string.IsNullOrWhiteSpace(analysis.AnalyzerId) ||
+                analysis.AnalyzedAt == default ||
+                analysis.Channel is not ("luminance" or "red" or "green" or "blue" or "alpha") ||
+                analysis.Validity.State is not ("valid" or "reviewrequired" or "invalid"))
+            {
+                throw new InvalidDataException("工程包含无效或无法溯源的科学图像分析记录。");
+            }
+
+            if (analysis.Kind == "roiStatistics")
+            {
+                ProjectPixelRectSnapshot? region = analysis.Region;
+                bool statisticsValid =
+                    analysis.PixelCount is long pixelCount && pixelCount > 0 &&
+                    analysis.Minimum is double minimum && double.IsFinite(minimum) &&
+                    analysis.Maximum is double maximum && double.IsFinite(maximum) && maximum >= minimum &&
+                    analysis.Mean is double mean && double.IsFinite(mean) && mean >= minimum && mean <= maximum &&
+                    analysis.StandardDeviation is double standardDeviation &&
+                    double.IsFinite(standardDeviation) && standardDeviation >= 0 &&
+                    analysis.IntegratedIntensity is double integratedIntensity &&
+                    double.IsFinite(integratedIntensity);
+                bool regionValid = region is not null &&
+                    region.X >= 0 && region.Y >= 0 && region.Width > 0 && region.Height > 0 &&
+                    region.X + region.Width <= analysisSource.Metadata.Width &&
+                    region.Y + region.Height <= analysisSource.Metadata.Height &&
+                    analysis.PixelCount == region.Width * region.Height;
+                bool histogramValid = analysis.Histogram.Count > 0 &&
+                    analysis.Histogram.All(bin =>
+                        double.IsFinite(bin.LowerBound) && double.IsFinite(bin.UpperBound) &&
+                        bin.UpperBound >= bin.LowerBound && bin.Count >= 0) &&
+                    analysis.Histogram.Sum(bin => bin.Count) == analysis.PixelCount;
+                if (!statisticsValid || !regionValid || !histogramValid || analysis.Samples.Count != 0)
+                {
+                    throw new InvalidDataException("工程包含无效的 ROI 强度统计记录。");
+                }
+            }
+            else if (analysis.Kind == "lineProfile")
+            {
+                bool samplesValid = analysis.Samples.Count >= 2 &&
+                    analysis.Samples.All(sample =>
+                        sample.Index >= 0 &&
+                        double.IsFinite(sample.PixelX) && double.IsFinite(sample.PixelY) &&
+                        double.IsFinite(sample.DistancePixels) && sample.DistancePixels >= 0 &&
+                        (!sample.PhysicalDistance.HasValue ||
+                         double.IsFinite(sample.PhysicalDistance.Value) && sample.PhysicalDistance.Value >= 0) &&
+                        double.IsFinite(sample.RawIntensity) &&
+                        double.IsFinite(sample.NormalizedIntensity) &&
+                        sample.NormalizedIntensity is >= 0 and <= 1);
+                if (!samplesValid || string.IsNullOrWhiteSpace(analysis.DistanceUnit) ||
+                    analysis.Region is not null || analysis.Histogram.Count != 0)
+                {
+                    throw new InvalidDataException("工程包含无效的线强度剖面记录。");
+                }
+            }
+            else if (analysis.Kind == "particleAnalysis")
+            {
+                ProjectPixelRectSnapshot? region = analysis.Region;
+                bool regionValid = region is not null &&
+                    region.X >= 0 && region.Y >= 0 && region.Width > 0 && region.Height > 0 &&
+                    region.X + region.Width <= analysisSource.Metadata.Width &&
+                    region.Y + region.Height <= analysisSource.Metadata.Height;
+                bool optionsValid = analysis.AnalysisMode is
+                        "brightParticles" or "darkParticles" or "darkPores" or "brightPhase" or
+                        "grainRegions" or "darkCracks" or "brightLamellae" &&
+                    analysis.UseAutomaticThreshold.HasValue &&
+                    analysis.ThresholdNormalized is double requestedThreshold &&
+                    double.IsFinite(requestedThreshold) && requestedThreshold is >= 0 and <= 1 &&
+                    analysis.AppliedThresholdNormalized is double appliedThreshold &&
+                    double.IsFinite(appliedThreshold) && appliedThreshold is >= 0 and <= 1 &&
+                    analysis.MinimumAreaPixels is >= 1 and <= 10_000_000 &&
+                    analysis.MaximumCandidates is >= 1 and <= 100_000 &&
+                    analysis.ForegroundPixelCount is >= 0 &&
+                    analysis.TotalPixelCount is > 0 &&
+                    analysis.ForegroundPixelCount <= analysis.TotalPixelCount &&
+                    region is not null && analysis.TotalPixelCount == region.Width * region.Height;
+                double maximumRaw = analysis.SourceBitDepth == 16 ? ushort.MaxValue : byte.MaxValue;
+                bool particlesValid = region is not null &&
+                    analysis.MaximumCandidates is int maximumCandidates &&
+                    analysis.Particles.Count <= maximumCandidates &&
+                    analysis.Particles.Select(particle => particle.Id).Distinct().Count() ==
+                    analysis.Particles.Count &&
+                    analysis.Particles.All(particle =>
+                        particle.Id > 0 &&
+                        particle.Bounds.X >= region.X && particle.Bounds.Y >= region.Y &&
+                        particle.Bounds.Width > 0 && particle.Bounds.Height > 0 &&
+                        particle.Bounds.X + particle.Bounds.Width <= region.X + region.Width &&
+                        particle.Bounds.Y + particle.Bounds.Height <= region.Y + region.Height &&
+                        double.IsFinite(particle.CentroidX) && double.IsFinite(particle.CentroidY) &&
+                        particle.CentroidX >= particle.Bounds.X &&
+                        particle.CentroidX < particle.Bounds.X + particle.Bounds.Width &&
+                        particle.CentroidY >= particle.Bounds.Y &&
+                        particle.CentroidY < particle.Bounds.Y + particle.Bounds.Height &&
+                        particle.AreaPixels > 0 && particle.PerimeterPixels > 0 &&
+                        double.IsFinite(particle.MeanIntensity) &&
+                        particle.MeanIntensity is >= 0 and <= 1 &&
+                        double.IsFinite(particle.RawMeanIntensity) &&
+                        particle.RawMeanIntensity is >= 0 && particle.RawMeanIntensity <= maximumRaw &&
+                        double.IsFinite(particle.AspectRatio) && particle.AspectRatio >= 1 &&
+                        double.IsFinite(particle.FeretMaximumPixels) && particle.FeretMaximumPixels > 0 &&
+                        double.IsFinite(particle.FeretMinimumPixels) && particle.FeretMinimumPixels > 0 &&
+                        particle.FeretMaximumPixels >= particle.FeretMinimumPixels);
+                if (!regionValid || !optionsValid || !particlesValid ||
+                    analysis.Histogram.Count != 0 || analysis.Samples.Count != 0)
+                {
+                    throw new InvalidDataException("工程包含无效的阈值或颗粒形貌分析记录。");
+                }
+            }
+            else
+            {
+                throw new InvalidDataException($"工程包含未知图像分析类型：{analysis.Kind}");
+            }
+        }
+
+        if (document.Analyses.Select(item => item.Id).Distinct().Count() != document.Analyses.Count)
+        {
+            throw new InvalidDataException("工程包含重复的科学图像分析 ID。");
+        }
+
         foreach (ProjectGuideSnapshot guide in document.Guides)
         {
             bool vertical = string.Equals(guide.Orientation, "vertical", StringComparison.OrdinalIgnoreCase);
