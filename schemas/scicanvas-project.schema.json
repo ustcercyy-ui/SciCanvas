@@ -14,7 +14,8 @@
     "layers",
     "cropPresets",
     "guides",
-    "exportProfiles"
+    "exportProfiles",
+    "workspace"
   ],
   "properties": {
     "$schema": {
@@ -106,6 +107,9 @@
       "items": {
         "$ref": "#/$defs/auditEntry"
       }
+    },
+    "workspace": {
+      "$ref": "#/$defs/workspace"
     }
   },
   "$defs": {
@@ -123,6 +127,42 @@
         "backgroundColor": {
           "type": ["string", "null"],
           "pattern": "^#[0-9A-Fa-f]{8}$"
+        }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "activeFigureId", "minimumEffectiveDpi", "alignmentToleranceMm",
+        "spacingToleranceMm", "verifySourceHashes", "figures"
+      ],
+      "properties": {
+        "activeFigureId": { "type": "string", "format": "uuid" },
+        "minimumEffectiveDpi": { "type": "integer", "minimum": 1, "maximum": 2400 },
+        "alignmentToleranceMm": { "type": "number", "minimum": 0 },
+        "spacingToleranceMm": { "type": "number", "minimum": 0 },
+        "verifySourceHashes": { "type": "boolean" },
+        "figures": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workspaceFigure" }
+        }
+      }
+    },
+    "workspaceFigure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "widthMm", "heightMm", "dpi", "templateId", "layerIds"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "widthMm": { "type": "number", "exclusiveMinimum": 0 },
+        "heightMm": { "type": "number", "exclusiveMinimum": 0 },
+        "dpi": { "type": "integer", "minimum": 1, "maximum": 2400 },
+        "templateId": { "type": "string" },
+        "layerIds": {
+          "type": "array",
+          "items": { "type": "string", "format": "uuid" }
         }
       }
     },
@@ -180,7 +220,10 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "fontFamily", "fontSizePt", "strokeWidthPt", "textColor", "shapeColor", "scaleBarColor"
+        "fontFamily", "fontSizePt", "strokeWidthPt", "textColor", "shapeColor", "scaleBarColor",
+        "panelLabelFontFamily", "panelLabelFontSizePt", "panelLabelTextColor", "panelLabelIsBold",
+        "scaleBarLabelColor", "scaleBarFontFamily", "scaleBarFontSizePt", "scaleBarLabelIsBold",
+        "scaleBarThicknessPt"
       ],
       "properties": {
         "fontFamily": { "type": "string", "minLength": 1, "maxLength": 128 },
@@ -188,7 +231,16 @@
         "strokeWidthPt": { "type": "number", "minimum": 0.25, "maximum": 10 },
         "textColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
         "shapeColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
-        "scaleBarColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" }
+        "scaleBarColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "panelLabelFontFamily": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "panelLabelFontSizePt": { "type": "number", "minimum": 4, "maximum": 72 },
+        "panelLabelTextColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "panelLabelIsBold": { "type": "boolean" },
+        "scaleBarLabelColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "scaleBarFontFamily": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "scaleBarFontSizePt": { "type": "number", "minimum": 4, "maximum": 72 },
+        "scaleBarLabelIsBold": { "type": "boolean" },
+        "scaleBarThicknessPt": { "type": "number", "minimum": 0.25, "maximum": 10 }
       }
     },
     "scientificColor": {
@@ -220,6 +272,7 @@
       "additionalProperties": false,
       "required": [
         "id", "kind", "x", "y", "endX", "endY", "text", "color",
+        "strokeColor", "fillColor", "fillOpacityPercent", "textColor", "fontFamily",
         "fontSizePt", "strokeWidthPt", "isBold", "visible", "locked", "zIndex"
       ],
       "properties": {
@@ -230,9 +283,14 @@
         "endX": { "type": "number" },
         "endY": { "type": "number" },
         "text": { "type": "string" },
-        "color": { "type": "string" },
-        "fontSizePt": { "type": "number" },
-        "strokeWidthPt": { "type": "number" },
+        "color": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "strokeColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "fillColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "fillOpacityPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "textColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "fontFamily": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "fontSizePt": { "type": "number", "minimum": 4, "maximum": 72 },
+        "strokeWidthPt": { "type": "number", "minimum": 0.25, "maximum": 10 },
         "isBold": { "type": "boolean" },
         "visible": { "type": "boolean" },
         "locked": { "type": "boolean" },
@@ -442,7 +500,59 @@
         },
         "fitMode": { "type": "string", "enum": ["fit", "fill", "manual"] },
         "rotationDegrees": { "type": "number" },
-        "scientificValidity": { "$ref": "#/$defs/scientificValidity" }
+        "scientificValidity": { "$ref": "#/$defs/scientificValidity" },
+        "styleOverride": {
+          "anyOf": [
+            { "$ref": "#/$defs/panelStyleOverride" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "panelStyleOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["panelLabel", "scaleBarText", "scaleBar"],
+      "properties": {
+        "panelLabel": {
+          "anyOf": [
+            { "$ref": "#/$defs/textStyle" },
+            { "type": "null" }
+          ]
+        },
+        "scaleBarText": {
+          "anyOf": [
+            { "$ref": "#/$defs/textStyle" },
+            { "type": "null" }
+          ]
+        },
+        "scaleBar": {
+          "anyOf": [
+            { "$ref": "#/$defs/scaleBarStyle" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "textStyle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fontFamily", "fontSizePt", "isBold", "color"],
+      "properties": {
+        "fontFamily": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "fontSizePt": { "type": "number", "minimum": 4, "maximum": 72 },
+        "isBold": { "type": "boolean" },
+        "color": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" }
+      }
+    },
+    "scaleBarStyle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["defaultPosition", "barThicknessPt", "color"],
+      "properties": {
+        "defaultPosition": { "type": "string", "enum": ["bottomLeft", "bottomRight", "topLeft", "topRight", "custom"] },
+        "barThicknessPt": { "type": "number", "minimum": 0.25, "maximum": 10 },
+        "color": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" }
       }
     },
     "imageAdjustment": {
@@ -578,12 +688,16 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "id", "sourceAssetId", "kind", "x1", "y1", "x2", "y2",
-        "strokeColor", "strokeWidthPixels"
+        "id", "sourceAssetId", "sourceRevision", "kind", "x1", "y1", "x2", "y2",
+        "strokeColor", "strokeWidthPixels", "lineStyle", "fillColor",
+        "markerStrokeColor", "markerFillColor", "markerSizePixels",
+        "showMarkers", "showLabel", "labelColor", "labelFontFamily",
+        "labelFontSizePt", "labelIsBold", "fillOpacityPercent", "isVisible", "isLocked"
       ],
       "properties": {
         "id": { "type": "string", "format": "uuid" },
         "sourceAssetId": { "type": "string", "format": "uuid" },
+        "sourceRevision": { "type": "integer", "minimum": 1 },
         "kind": { "type": "string", "enum": ["length", "angle", "rectangleRoi", "circleRoi", "polyline"] },
         "x1": { "type": "number" },
         "y1": { "type": "number" },
@@ -591,13 +705,20 @@
         "y2": { "type": "number" },
         "x3": { "type": ["number", "null"] },
         "y3": { "type": ["number", "null"] },
-        "strokeColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{8}$" },
+        "strokeColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
         "strokeWidthPixels": { "type": "number", "minimum": 1, "maximum": 12 },
         "lineStyle": { "type": "string", "enum": ["solid", "dash", "dot", "dash-dot"], "default": "solid" },
+        "fillColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "markerStrokeColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "markerFillColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
         "markerSizePixels": { "type": "number", "minimum": 8, "maximum": 48, "default": 18 },
         "showMarkers": { "type": "boolean", "default": true },
         "showLabel": { "type": "boolean", "default": true },
-        "fillOpacityPercent": { "type": "number", "minimum": 0, "maximum": 60, "default": 8 },
+        "labelColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "labelFontFamily": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "labelFontSizePt": { "type": "number", "minimum": 4, "maximum": 72 },
+        "labelIsBold": { "type": "boolean" },
+        "fillOpacityPercent": { "type": "number", "minimum": 0, "maximum": 100, "default": 8 },
         "isVisible": { "type": "boolean", "default": true },
         "isLocked": { "type": "boolean", "default": false },
         "points": {

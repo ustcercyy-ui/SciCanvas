@@ -6,6 +6,7 @@ using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
 using SciCanvas.Core.Sources;
+using SciCanvas.Core.Workspace;
 using SciCanvas.Imaging;
 using CoreImageMetadata = SciCanvas.Core.Images.ImageMetadata;
 
@@ -320,6 +321,149 @@ public sealed class WpfFigureExporterTests
         Assert.Contains("font-family=\"Segoe UI\"", svg, StringComparison.Ordinal);
         Assert.Contains("#223344", svg, StringComparison.Ordinal);
         Assert.Contains("data-source=\"source.png\"", svg, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExportAsync_SvgUsesResolvedLocalTypographyAndIndependentShapeFill()
+    {
+        using var workspace = new TestWorkspace();
+        string sourcePath = Path.Combine(workspace.Root, "source.png");
+        string targetPath = Path.Combine(workspace.Root, "styled.svg");
+        CreateSolidPng(sourcePath, 20, 20, Colors.Black);
+        FigureExportDocument document = new(
+            240,
+            160,
+            300,
+            [
+                new FigurePanelExportItem(
+                    CreateAsset(sourcePath, 20, 20),
+                    new PixelRect64(0, 0, 20, 20),
+                    new PixelRect64(0, 0, 160, 160),
+                    "a",
+                    true,
+                    new FigureScaleBarExportSpec(1, 5, "µm", ShowLabel: true)),
+            ],
+            [
+                new FigureAnnotationExportItem(
+                    "text", 165, 20, 0, 0, "local", "#FF000000", "#FF000000", 0,
+                    "#FF663399", "Consolas", 12, 1, true, true, 0),
+                new FigureAnnotationExportItem(
+                    "rectangle", 165, 60, 230, 140, string.Empty, "#FFFF0000", "#FF00FFFF", 24,
+                    "#FF000000", "Arial", 7, 2, false, true, 1),
+            ],
+            globalStyle: new FigureGlobalStyle(
+                "GlobalFont", 7, 1.25, "#FF111111", "#FFE53935", "#FFFFFFFF",
+                PanelLabelFontFamily: "Segoe UI",
+                PanelLabelFontSizePt: 9,
+                PanelLabelTextColor: "#FF112233",
+                PanelLabelIsBold: false,
+                ScaleBarLabelColor: "#FFFFFF00",
+                ScaleBarFontFamily: "Arial",
+                ScaleBarFontSizePt: 8,
+                ScaleBarLabelIsBold: false,
+                ScaleBarThicknessPt: 2));
+
+        await new WpfFigureExporter().ExportAsync(document, targetPath);
+
+        string svg = await File.ReadAllTextAsync(targetPath);
+        Assert.Contains("font-family=\"Consolas\"", svg, StringComparison.Ordinal);
+        Assert.Contains("fill=\"#663399\"", svg, StringComparison.Ordinal);
+        Assert.Contains("stroke=\"#FF0000\"", svg, StringComparison.Ordinal);
+        Assert.Contains("fill=\"#00FFFF\" fill-opacity=\"0.24\"", svg, StringComparison.Ordinal);
+        Assert.Contains("font-family=\"Segoe UI\"", svg, StringComparison.Ordinal);
+        Assert.Contains("fill=\"#112233\"", svg, StringComparison.Ordinal);
+        Assert.Contains("font-family=\"Arial\"", svg, StringComparison.Ordinal);
+        Assert.Contains("fill=\"#FFFF00\"", svg, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExportAsync_SvgResolvesPanelLocalLabelAndScaleBarStyles()
+    {
+        using var workspace = new TestWorkspace();
+        string sourcePath = Path.Combine(workspace.Root, "panel-style.png");
+        string targetPath = Path.Combine(workspace.Root, "panel-style.svg");
+        CreateSolidPng(sourcePath, 20, 20, Colors.Black);
+        StyleOverride local = new(
+            PanelLabel: new TextStyle("Courier New", 11, false, "#FF123456"),
+            ScaleBarText: new TextStyle("Times New Roman", 10, true, "#FFABCDEF"),
+            ScaleBar: new ScaleBarStyle(ScaleBarAnchor.BottomRight, 3, "#FF00FF00"));
+        FigureExportDocument document = new(
+            200,
+            160,
+            300,
+            [
+                new FigurePanelExportItem(
+                    CreateAsset(sourcePath, 20, 20),
+                    new PixelRect64(0, 0, 20, 20),
+                    new PixelRect64(0, 0, 160, 160),
+                    "a",
+                    true,
+                    new FigureScaleBarExportSpec(1, 5, "µm", ShowLabel: true),
+                    StyleOverride: local),
+            ],
+            globalStyle: new FigureGlobalStyle(
+                "Arial", 7, 1.25, "#FF111111", "#FFE53935", "#FFFFFFFF"));
+
+        await new WpfFigureExporter().ExportAsync(document, targetPath);
+
+        string svg = await File.ReadAllTextAsync(targetPath);
+        Assert.Contains("font-family=\"Courier New\"", svg, StringComparison.Ordinal);
+        Assert.Contains("fill=\"#123456\"", svg, StringComparison.Ordinal);
+        Assert.Contains("font-family=\"Times New Roman\"", svg, StringComparison.Ordinal);
+        Assert.Contains("fill=\"#ABCDEF\"", svg, StringComparison.Ordinal);
+        Assert.Contains("stroke=\"#00FF00\" stroke-width=\"12.5\"", svg, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExportAsync_PngCompositesIndependentRectangleFillOpacity()
+    {
+        using var workspace = new TestWorkspace();
+        string targetPath = Path.Combine(workspace.Root, "filled.png");
+        FigureExportDocument document = new(
+            100,
+            100,
+            300,
+            [],
+            [
+                new FigureAnnotationExportItem(
+                    "rectangle", 10, 10, 90, 90, string.Empty, "#FFFF0000", "#FF00FFFF", 25,
+                    "#FF000000", "Arial", 7, 1, false, true, 0),
+            ]);
+
+        await new WpfFigureExporter().ExportAsync(document, targetPath);
+
+        BitmapSource frame = new FormatConvertedBitmap(
+            LoadFirstFrame(targetPath),
+            PixelFormats.Bgra32,
+            destinationPalette: null,
+            alphaThreshold: 0);
+        byte[] pixel = new byte[4];
+        frame.CopyPixels(new System.Windows.Int32Rect(50, 50, 1, 1), pixel, 4, 0);
+        Assert.InRange(pixel[0], 250, 255);
+        Assert.InRange(pixel[1], 250, 255);
+        Assert.InRange(pixel[2], 185, 195);
+    }
+
+    [Fact]
+    public async Task ExportAsync_PdfFallsBackForMissingLocalFontWithoutCrashing()
+    {
+        using var workspace = new TestWorkspace();
+        string targetPath = Path.Combine(workspace.Root, "missing-font.pdf");
+        FigureExportDocument document = new(
+            160,
+            80,
+            300,
+            [],
+            [
+                new FigureAnnotationExportItem(
+                    "text", 10, 10, 0, 0, "fallback", "#FF000000", "#FF000000", 0,
+                    "#FF123456", "MissingFont123", 11, 1, false, true, 0),
+            ]);
+
+        await new WpfFigureExporter().ExportAsync(document, targetPath);
+
+        Assert.True(File.Exists(targetPath));
+        Assert.Equal("%PDF-1.7", Encoding.ASCII.GetString(await File.ReadAllBytesAsync(targetPath), 0, 8));
     }
 
     [Fact]

@@ -9,6 +9,47 @@ namespace SciCanvas.Core.Tests;
 public sealed class FigurePreflightTests
 {
     [Fact]
+    public void Check_ReportsPanelLocalMissingFontAndMixedTypography()
+    {
+        SourceAsset source = CreateSource(SourceLinkState.Verified);
+        StyleOverride local = new(
+            PanelLabel: new TextStyle("Missing Panel Font", 9, true, "#FF112233"),
+            ScaleBarText: new TextStyle("Missing Scale Font", 8, false, "#FFFFFFFF"));
+        var document = new FigureExportDocument(
+            300,
+            120,
+            300,
+            [
+                new FigurePanelExportItem(
+                    source,
+                    new PixelRect64(0, 0, 50, 50),
+                    new PixelRect64(0, 0, 100, 100),
+                    "a",
+                    true),
+                new FigurePanelExportItem(
+                    source,
+                    new PixelRect64(50, 0, 50, 50),
+                    new PixelRect64(150, 0, 100, 100),
+                    "b",
+                    true,
+                    StyleOverride: local),
+            ],
+            globalStyle: new FigureGlobalStyle(
+                "Arial", 7, 1.25, "#FF111111", "#FFE53935", "#FFFFFFFF"));
+
+        FigurePreflightResult result = FigurePreflight.Check(
+            new FigurePreflightContext(
+                document,
+                FontCatalog: new FixedFontCatalog(["Arial"])),
+            [source]);
+
+        Assert.Contains(result.Issues, issue =>
+            issue.Code == "FONT_MISSING" && issue.Message.Contains("Missing Panel Font", StringComparison.Ordinal));
+        Assert.Contains(result.Issues, issue => issue.Code == "MIXED_PANEL_LABEL_FONT");
+        Assert.Contains(result.Issues, issue => issue.Code == "MIXED_SCALE_BAR_FONT");
+    }
+
+    [Fact]
     public void Check_FlagsOutOfBoundsAndUnverifiedSource()
     {
         SourceAsset source = CreateSource(SourceLinkState.Modified);

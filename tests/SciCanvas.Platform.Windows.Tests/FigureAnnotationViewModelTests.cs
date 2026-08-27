@@ -116,4 +116,60 @@ public sealed class FigureAnnotationViewModelTests
         Assert.False(annotation.IsValid);
         Assert.Contains("至少为 5 px", annotation.ValidationMessage, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void RectangleStyle_ExportsStrokeFillAndTransparentOpacityIndependently()
+    {
+        var annotation = new FigureAnnotationViewModel(
+            FigureAnnotationKind.Rectangle,
+            500,
+            400,
+            300,
+            0)
+        {
+            X = 20,
+            Y = 30,
+            EndX = 220,
+            EndY = 180,
+            StrokeColor = "#FFFF0000",
+            FillColor = "#0000FF",
+            FillOpacityPercent = 0,
+        };
+
+        var exported = annotation.CreateExportItem();
+
+        Assert.Equal("#FFFF0000", exported.StrokeColor);
+        Assert.Equal("#0000FF", exported.FillColor);
+        Assert.Equal(0, exported.FillOpacityPercent);
+        Assert.Equal(0, ((SolidColorBrush)annotation.FillBrush).Color.A);
+    }
+
+    [Fact]
+    public void TextStyle_ExportsLocalFontColorSizeAndBold()
+    {
+        var annotation = new FigureAnnotationViewModel(
+            FigureAnnotationKind.Text,
+            500,
+            400,
+            300,
+            0)
+        {
+            Text = "α'' martensite",
+            X = 40,
+            Y = 60,
+            TextColor = "#AA663399",
+            FontFamily = "Times New Roman",
+            FontSizePt = 12,
+            IsBold = true,
+        };
+
+        var exported = annotation.CreateExportItem();
+
+        Assert.Equal("Times New Roman", exported.FontFamily);
+        Assert.Equal("#AA663399", exported.TextColor);
+        Assert.Equal(12, exported.FontSizePt);
+        Assert.True(exported.IsBold);
+        annotation.FontSizePt = 3;
+        Assert.False(annotation.IsValid);
+    }
 }

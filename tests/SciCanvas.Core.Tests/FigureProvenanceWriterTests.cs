@@ -1,6 +1,7 @@
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
+using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
 
 namespace SciCanvas.Core.Tests;
@@ -27,15 +28,36 @@ public sealed class FigureProvenanceWriterTests
                 300,
                 [new FigurePanelExportItem(source, new PixelRect64(0, 0, 50, 50), new PixelRect64(0, 0, 100, 100), "a", true)]);
             FigurePreflightResult preflight = FigurePreflight.Check(export, [source]);
-            FigureProvenanceDocument document = FigureProvenanceWriter.Create(export, "figure.tif", "0.9.0", [source], preflight);
+            var analysis = new RoiStatisticsResult
+            {
+                SourceAssetId = source.Id,
+                SourceRevision = 3,
+                AnalyzerId = "scicanvas.roi.v2",
+                SourceBitDepth = 16,
+                Region = new PixelRect64(0, 0, 50, 50),
+                Histogram = new IntensityHistogram([], 0, 0, 0),
+            };
+            FigureProvenanceDocument document = FigureProvenanceWriter.Create(
+                export,
+                "figure.tif",
+                "0.9.0",
+                [source],
+                preflight,
+                sourceRevisions: new Dictionary<Guid, long> { [source.Id] = 3 },
+                analyses: [analysis]);
             string jsonPath = Path.Combine(root, "figure.provenance.json");
             string htmlPath = Path.Combine(root, "figure.export-report.html");
 
             FigureProvenanceWriter.WriteJson(document, jsonPath);
             FigureProvenanceWriter.WriteHtml(document, htmlPath);
 
-            Assert.Contains("source.tif", File.ReadAllText(jsonPath));
-            Assert.Contains("Gray16", File.ReadAllText(jsonPath));
+            string json = File.ReadAllText(jsonPath);
+            Assert.Contains("source.tif", json);
+            Assert.Contains("Gray16", json);
+            Assert.Contains("\"sourceRevision\": 3", json, StringComparison.Ordinal);
+            Assert.Contains("scicanvas.roi.v2", json, StringComparison.Ordinal);
+            Assert.Contains("\"algorithmVersion\": \"2\"", json, StringComparison.Ordinal);
+            Assert.Contains("histogramBinCount", json, StringComparison.Ordinal);
             Assert.Contains("投稿导出报告", File.ReadAllText(htmlPath));
             Assert.Throws<IOException>(() => FigureProvenanceWriter.WriteJson(document, jsonPath));
         }

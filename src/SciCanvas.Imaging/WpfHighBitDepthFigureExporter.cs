@@ -220,9 +220,10 @@ internal static class WpfHighBitDepthFigureExporter
                     (int)panel.SourceRect.Width,
                     (int)panel.SourceRect.Height,
                     panel.DestinationRect);
-                WpfFigureExporter.DrawInsetBorder(drawing, panel, imageRect, document.Dpi, document.GlobalStyle);
-                WpfFigureExporter.DrawScaleBar(drawing, panel, imageRect, document.Dpi, document.GlobalStyle);
-                WpfFigureExporter.DrawPanelLabel(drawing, panel.Label, panel.DestinationRect, document.Dpi, document.GlobalStyle);
+                FigureGlobalStyle panelStyle = document.GlobalStyle.ResolvePanelOverride(panel.StyleOverride);
+                WpfFigureExporter.DrawInsetBorder(drawing, panel, imageRect, document.Dpi, panelStyle);
+                WpfFigureExporter.DrawScaleBar(drawing, panel, imageRect, document.Dpi, panelStyle);
+                WpfFigureExporter.DrawPanelLabel(drawing, panel.Label, panel.DestinationRect, document.Dpi, panelStyle);
             }
 
             foreach (FigureAnnotationExportItem annotation in

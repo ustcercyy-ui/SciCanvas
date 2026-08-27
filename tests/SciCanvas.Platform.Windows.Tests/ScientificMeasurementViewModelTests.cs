@@ -98,6 +98,66 @@ public sealed class ScientificMeasurementViewModelTests
         Assert.Equal(new MeasurementPoint(8, 9), measurement.PathPoints[^1]);
     }
 
+    [Fact]
+    public void VisualStyle_RoundTripsIndependentColorsAndLabelTypography()
+    {
+        ScientificMeasurementViewModel measurement = Create(
+            ScientificMeasurementKind.RectangleRoi,
+            new MeasurementPoint(10, 20),
+            new MeasurementPoint(40, 60));
+        var style = new ScientificMeasurementVisualStyle
+        {
+            StrokeColor = "#FFAA0000",
+            FillColor = "#0000FF",
+            FillOpacityPercent = 20,
+            MarkerStrokeColor = "#FF000000",
+            MarkerFillColor = "#FFFFFFFF",
+            LabelColor = "#FF00AA00",
+            LabelFontFamily = "Consolas",
+            LabelFontSizePt = 11,
+            LabelIsBold = true,
+        };
+
+        measurement.RestoreVisualStyle(style);
+
+        Assert.True(measurement.IsStyleValid);
+        Assert.Equal("#FFAA0000", measurement.StrokeColor);
+        Assert.Equal("#0000FF", measurement.FillColor);
+        Assert.Equal("#FF00AA00", measurement.LabelColor);
+        Assert.Equal("Consolas", measurement.LabelFontFamily);
+        Assert.Equal(11, measurement.LabelFontSizePt);
+        Assert.True(measurement.LabelIsBold);
+        Assert.Equal(style with
+        {
+            StrokeWidthPixels = ScientificMeasurementVisualStyle.Default.StrokeWidthPixels,
+            LineStyle = ScientificMeasurementVisualStyle.Default.LineStyle,
+            MarkerSizePixels = ScientificMeasurementVisualStyle.Default.MarkerSizePixels,
+            ShowMarkers = ScientificMeasurementVisualStyle.Default.ShowMarkers,
+            ShowLabel = ScientificMeasurementVisualStyle.Default.ShowLabel,
+            IsVisible = ScientificMeasurementVisualStyle.Default.IsVisible,
+            IsLocked = ScientificMeasurementVisualStyle.Default.IsLocked,
+        }, measurement.VisualStyle);
+    }
+
+    [Fact]
+    public void StyleValidation_AcceptsRgbAndArgbButRejectsInvalidColorAndFontSize()
+    {
+        ScientificMeasurementViewModel measurement = Create(
+            ScientificMeasurementKind.Length,
+            new MeasurementPoint(1, 2),
+            new MeasurementPoint(20, 20));
+
+        measurement.StrokeColor = "#123456";
+        measurement.LabelColor = "#AA123456";
+        Assert.True(measurement.IsStyleValid);
+
+        measurement.FillColor = "blue";
+        Assert.False(measurement.IsStyleValid);
+        measurement.FillColor = "#FF0000FF";
+        measurement.LabelFontSizePt = 73;
+        Assert.False(measurement.IsStyleValid);
+    }
+
     private static ScientificMeasurementViewModel Create(
         ScientificMeasurementKind kind,
         MeasurementPoint pointA,

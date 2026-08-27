@@ -54,6 +54,7 @@ public partial class App : Application
             new WindowsTemplateFilePicker(),
             userTemplateCatalog,
             new WindowsBatchExportFolderPicker(),
+            submissionPackageFolderPicker: new WindowsSubmissionPackageFolderPicker(),
             unsavedChangesPrompt: new WindowsUnsavedChangesPrompt());
 
         var window = new MainWindow

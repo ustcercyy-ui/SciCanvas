@@ -1,5 +1,6 @@
 using System.Windows.Media.Imaging;
 using System.Windows;
+using System.Windows.Media;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Cropping;
@@ -38,6 +39,8 @@ public sealed class FigurePanelViewModel : ObservableObject
     private PixelRect64 _manualCropPixels;
     private double _rotationDegrees;
     private ScientificValidity _replacementValidity = ScientificValidity.Valid;
+    private FigureGlobalStyle _inheritedGlobalStyle = FigureGlobalStyle.Default;
+    private StyleOverride? _styleOverride;
 
     public FigurePanelViewModel(
         SourceAssetItemViewModel source,
@@ -77,6 +80,35 @@ public sealed class FigurePanelViewModel : ObservableObject
     }
 
     public SourceAssetItemViewModel Source { get; private set; }
+
+    public StyleOverride? StyleOverride => _styleOverride;
+
+    public FigureGlobalStyle EffectiveStyle => _inheritedGlobalStyle.ResolvePanelOverride(_styleOverride);
+
+    public string EffectivePanelLabelFontFamily => EffectiveStyle.EffectivePanelLabelFontFamily;
+
+    public double EffectivePanelLabelFontSizePixels =>
+        Math.Max(12, EffectiveStyle.EffectivePanelLabelFontSizePt / 72.0 * _figureDpi);
+
+    public Brush EffectivePanelLabelTextBrush => CreateStyleBrush(EffectiveStyle.EffectivePanelLabelTextColor);
+
+    public FontWeight EffectivePanelLabelFontWeight =>
+        EffectiveStyle.PanelLabelIsBold ? FontWeights.Bold : FontWeights.Normal;
+
+    public string EffectiveScaleBarFontFamily => EffectiveStyle.EffectiveScaleBarFontFamily;
+
+    public double EffectiveScaleBarFontSizePixels =>
+        Math.Max(12, EffectiveStyle.EffectiveScaleBarFontSizePt / 72.0 * _figureDpi);
+
+    public Brush EffectiveScaleBarLabelBrush => CreateStyleBrush(EffectiveStyle.EffectiveScaleBarLabelColor);
+
+    public FontWeight EffectiveScaleBarLabelFontWeight =>
+        EffectiveStyle.ScaleBarLabelIsBold ? FontWeights.Bold : FontWeights.Normal;
+
+    public double EffectiveScaleBarThicknessPixels =>
+        Math.Max(1, EffectiveStyle.EffectiveScaleBarThicknessPt / 72.0 * _figureDpi);
+
+    public Brush EffectiveScaleBarBrush => CreateStyleBrush(EffectiveStyle.ScaleBarColor);
 
     public Guid Id { get; }
 
@@ -732,6 +764,32 @@ public sealed class FigurePanelViewModel : ObservableObject
         }
     }
 
+    public void RestoreStyleOverride(StyleOverride? styleOverride)
+    {
+        styleOverride?.EnsureValid();
+        StyleOverride? normalized = styleOverride?.IsEmpty == true ? null : styleOverride;
+        if (Equals(_styleOverride, normalized))
+        {
+            return;
+        }
+
+        _styleOverride = normalized;
+        OnPropertyChanged(nameof(StyleOverride));
+        NotifyEffectiveStyleChanged();
+    }
+
+    internal void UpdateInheritedGlobalStyle(FigureGlobalStyle style)
+    {
+        ArgumentNullException.ThrowIfNull(style);
+        if (_inheritedGlobalStyle == style)
+        {
+            return;
+        }
+
+        _inheritedGlobalStyle = style;
+        NotifyEffectiveStyleChanged();
+    }
+
     internal void RefreshPreview()
     {
         _preview = CreateCropPreview(Source, SourceRect, _adjustments, _frameIndex);
@@ -918,6 +976,29 @@ public sealed class FigurePanelViewModel : ObservableObject
         OnPropertyChanged(nameof(HasRenderableScaleBar));
         OnPropertyChanged(nameof(ScaleBarLabel));
         OnPropertyChanged(nameof(ScaleBarStatusText));
+    }
+
+    private void NotifyEffectiveStyleChanged()
+    {
+        OnPropertyChanged(nameof(EffectiveStyle));
+        OnPropertyChanged(nameof(EffectivePanelLabelFontFamily));
+        OnPropertyChanged(nameof(EffectivePanelLabelFontSizePixels));
+        OnPropertyChanged(nameof(EffectivePanelLabelTextBrush));
+        OnPropertyChanged(nameof(EffectivePanelLabelFontWeight));
+        OnPropertyChanged(nameof(EffectiveScaleBarFontFamily));
+        OnPropertyChanged(nameof(EffectiveScaleBarFontSizePixels));
+        OnPropertyChanged(nameof(EffectiveScaleBarLabelBrush));
+        OnPropertyChanged(nameof(EffectiveScaleBarLabelFontWeight));
+        OnPropertyChanged(nameof(EffectiveScaleBarThicknessPixels));
+        OnPropertyChanged(nameof(EffectiveScaleBarBrush));
+    }
+
+    private static Brush CreateStyleBrush(string color)
+    {
+        Color parsed = (Color)(ColorConverter.ConvertFromString(color) ?? Colors.Black);
+        var brush = new SolidColorBrush(parsed);
+        brush.Freeze();
+        return brush;
     }
 
     private static double ChooseReadablePhysicalLength(double target)

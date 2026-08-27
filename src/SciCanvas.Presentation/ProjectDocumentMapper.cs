@@ -127,6 +127,7 @@ internal static class ProjectDocumentMapper
                     {
                         Id = model.Id,
                         SourceAssetId = model.SourceAssetId,
+                        SourceRevision = model.SourceRevision,
                         Kind = ToMeasurementKindKey(model.Kind),
                         X1 = model.PointA.X,
                         Y1 = model.PointA.Y,
@@ -137,9 +138,16 @@ internal static class ProjectDocumentMapper
                         StrokeColor = measurement.StrokeColor,
                         StrokeWidthPixels = measurement.StrokeWidthPixels,
                         LineStyle = measurement.LineStyle,
+                        FillColor = measurement.FillColor,
+                        MarkerStrokeColor = measurement.MarkerStrokeColor,
+                        MarkerFillColor = measurement.MarkerFillColor,
                         MarkerSizePixels = measurement.MarkerSizePixels,
                         ShowMarkers = measurement.ShowMarkers,
                         ShowLabel = measurement.ShowLabel,
+                        LabelColor = measurement.LabelColor,
+                        LabelFontFamily = measurement.LabelFontFamily,
+                        LabelFontSizePt = measurement.LabelFontSizePt,
+                        LabelIsBold = measurement.LabelIsBold,
                         FillOpacityPercent = measurement.FillOpacityPercent,
                         IsVisible = measurement.IsVisible,
                         IsLocked = measurement.IsLocked,
@@ -185,6 +193,11 @@ internal static class ProjectDocumentMapper
                         EndY = annotation.EndY,
                         Text = annotation.Text,
                         Color = annotation.Color,
+                        StrokeColor = annotation.StrokeColor,
+                        FillColor = annotation.FillColor,
+                        FillOpacityPercent = annotation.FillOpacityPercent,
+                        TextColor = annotation.TextColor,
+                        FontFamily = annotation.FontFamily,
                         FontSizePt = annotation.FontSizePt,
                         StrokeWidthPt = annotation.StrokeWidthPt,
                         IsBold = annotation.IsBold,
@@ -201,6 +214,15 @@ internal static class ProjectDocumentMapper
                     TextColor = figure.GlobalTextColor,
                     ShapeColor = figure.GlobalShapeColor,
                     ScaleBarColor = figure.GlobalScaleBarColor,
+                    PanelLabelFontFamily = figure.PanelLabelFontFamily,
+                    PanelLabelFontSizePt = figure.PanelLabelFontSizePt,
+                    PanelLabelTextColor = figure.PanelLabelTextColor,
+                    PanelLabelIsBold = figure.PanelLabelIsBold,
+                    ScaleBarLabelColor = figure.ScaleBarLabelColor,
+                    ScaleBarFontFamily = figure.ScaleBarFontFamily,
+                    ScaleBarFontSizePt = figure.ScaleBarFontSizePt,
+                    ScaleBarLabelIsBold = figure.ScaleBarLabelIsBold,
+                    ScaleBarThicknessPt = figure.ScaleBarThicknessPt,
                 },
                 ScientificColors = figure.ScientificColors
                     .Select(entry => new ProjectScientificColorSnapshot
@@ -295,7 +317,8 @@ internal static class ProjectDocumentMapper
             ? new MeasurementPoint(snapshot.X3.Value, snapshot.Y3.Value)
             : null,
         Name: null,
-        PathPoints: snapshot.Points.Select(point => new MeasurementPoint(point.X, point.Y)).ToArray());
+        PathPoints: snapshot.Points.Select(point => new MeasurementPoint(point.X, point.Y)).ToArray(),
+        SourceRevision: snapshot.SourceRevision);
 
     public static ScientificImageAnalysisResult ToAnalysis(ProjectScientificAnalysisSnapshot snapshot) =>
         snapshot.Kind.ToLowerInvariant() switch
@@ -417,7 +440,73 @@ internal static class ProjectDocumentMapper
             State = panel.ReplacementValidity.State.ToString().ToLowerInvariant(),
             Reasons = panel.ReplacementValidity.Reasons,
         },
+        StyleOverride = ToSnapshot(panel.StyleOverride),
     };
+
+    private static ProjectPanelStyleOverrideSnapshot? ToSnapshot(StyleOverride? style) =>
+        style is null || style.IsEmpty
+            ? null
+            : new ProjectPanelStyleOverrideSnapshot
+            {
+                PanelLabel = ToSnapshot(style.PanelLabel),
+                ScaleBarText = ToSnapshot(style.ScaleBarText),
+                ScaleBar = style.ScaleBar is null
+                    ? null
+                    : new ProjectScaleBarStyleSnapshot
+                    {
+                        DefaultPosition = style.ScaleBar.DefaultPosition switch
+                        {
+                            ScaleBarAnchor.BottomLeft => "bottomLeft",
+                            ScaleBarAnchor.TopLeft => "topLeft",
+                            ScaleBarAnchor.TopRight => "topRight",
+                            ScaleBarAnchor.Custom => "custom",
+                            _ => "bottomRight",
+                        },
+                        BarThicknessPt = style.ScaleBar.BarThicknessPt,
+                        Color = style.ScaleBar.Color,
+                    },
+            };
+
+    private static ProjectTextStyleSnapshot? ToSnapshot(TextStyle? style) => style is null
+        ? null
+        : new ProjectTextStyleSnapshot
+        {
+            FontFamily = style.FontFamily,
+            FontSizePt = style.FontSizePt,
+            IsBold = style.IsBold,
+            Color = style.Color,
+        };
+
+    internal static StyleOverride? ToStyleOverride(ProjectPanelStyleOverrideSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        var result = new StyleOverride(
+            PanelLabel: ToTextStyle(snapshot.PanelLabel),
+            ScaleBarText: ToTextStyle(snapshot.ScaleBarText),
+            ScaleBar: snapshot.ScaleBar is null
+                ? null
+                : new ScaleBarStyle(
+                    snapshot.ScaleBar.DefaultPosition.ToLowerInvariant() switch
+                    {
+                        "bottomleft" => ScaleBarAnchor.BottomLeft,
+                        "topleft" => ScaleBarAnchor.TopLeft,
+                        "topright" => ScaleBarAnchor.TopRight,
+                        "custom" => ScaleBarAnchor.Custom,
+                        _ => ScaleBarAnchor.BottomRight,
+                    },
+                    snapshot.ScaleBar.BarThicknessPt,
+                    snapshot.ScaleBar.Color));
+        result.EnsureValid();
+        return result.IsEmpty ? null : result;
+    }
+
+    private static TextStyle? ToTextStyle(ProjectTextStyleSnapshot? snapshot) => snapshot is null
+        ? null
+        : new TextStyle(snapshot.FontFamily, snapshot.FontSizePt, snapshot.IsBold, snapshot.Color);
 
     private static ProjectScientificAnalysisSnapshot ToSnapshot(
         ScientificImageAnalysisResult result) => result switch

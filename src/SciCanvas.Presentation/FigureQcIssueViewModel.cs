@@ -20,6 +20,10 @@ public sealed class FigureQcIssueViewModel
 
     public string? PanelLabel => Issue.PanelLabel;
 
+    public Guid? SourceId => Issue.SourceId;
+
+    public Guid? ObjectId => Issue.ObjectId;
+
     public string SeverityText => Severity switch
     {
         FigurePreflightSeverity.Error => "错误",
@@ -34,11 +38,15 @@ public sealed class FigureQcIssueViewModel
         _ => CreateBrush("#FF80DDEA"),
     };
 
-    public string TargetText => string.IsNullOrWhiteSpace(PanelLabel)
-        ? "全局"
-        : $"面板 {PanelLabel}";
+    public string TargetText => !string.IsNullOrWhiteSpace(PanelLabel)
+        ? $"面板 {PanelLabel}"
+        : ObjectId.HasValue
+            ? "科学对象"
+            : SourceId.HasValue
+                ? "源素材"
+                : "全局";
 
-    public bool CanNavigate => !string.IsNullOrWhiteSpace(PanelLabel);
+    public bool CanNavigate => !string.IsNullOrWhiteSpace(PanelLabel) || SourceId.HasValue || ObjectId.HasValue;
 
     public string SuggestedAction => Code switch
     {
@@ -60,6 +68,9 @@ public sealed class FigureQcIssueViewModel
         "INTEGRITY_INCONSISTENT_ADJUSTMENT" => "对可比较面板使用同一组全局处理参数，或说明差异原因。",
         "INTEGRITY_NARROW_CROP" => "保留带上下文的原图或补充图，并在图注说明裁剪范围。",
         "INTEGRITY_NON_GENERATIVE_PIPELINE" => "信息项：继续保留源文件、工程记录与导出溯源报告。",
+        "STALE_ANALYSIS_REVISION" => "重新运行该源图的分析，并核对算法参数与结果。",
+        "STALE_MEASUREMENT_REVISION" => "定位测量并对照新源图重新复核或重做。",
+        "MIXED_MEASUREMENT_LABEL_FONT" or "MIXED_ANNOTATION_FONT" => "确认字体差异具有排版意图；否则复制并应用统一样式。",
         "QC_ENGINE_ERROR" => "修正检查器提示的编辑状态后重新运行 QC。",
         _ => "核对该项并重新运行 Figure QC。",
     };

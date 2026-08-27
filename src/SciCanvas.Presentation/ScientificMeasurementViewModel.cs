@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
 using SciCanvas.Core.Science;
+using SciCanvas.Core.Workspace;
+using SciCanvas.Imaging;
 
 namespace SciCanvas.Presentation;
 
@@ -15,9 +17,16 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
     private string _strokeColor = "#FF22C7E8";
     private double _strokeWidthPixels = 3;
     private string _lineStyle = "solid";
+    private string _fillColor = "#FF22C7E8";
+    private string _markerStrokeColor = "#FF22C7E8";
+    private string _markerFillColor = "#FF11171F";
     private double _markerSizePixels = 18;
     private bool _showMarkers = true;
     private bool _showLabel = true;
+    private string _labelColor = "#FF22C7E8";
+    private string _labelFontFamily = "Arial";
+    private double _labelFontSizePt = 16.5;
+    private bool _labelIsBold = true;
     private double _fillOpacityPercent = 8;
     private bool _isVisible = true;
     private bool _isLocked;
@@ -34,12 +43,14 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
         MeasurementPoint? pointC,
         SpatialCalibration? calibration,
         int number,
-        IReadOnlyList<MeasurementPoint>? pathPoints = null)
+        IReadOnlyList<MeasurementPoint>? pathPoints = null,
+        long sourceRevision = 1)
     {
         Id = id == Guid.Empty ? Guid.NewGuid() : id;
         SourceAssetId = sourceAssetId;
         SourceName = sourceName;
         Kind = kind;
+        SourceRevision = Math.Max(1, sourceRevision);
         _pointA = pointA;
         _pointB = pointB;
         _pointC = pointC;
@@ -55,6 +66,8 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
     public Guid Id { get; }
 
     public Guid SourceAssetId { get; }
+
+    public long SourceRevision { get; }
 
     public string SourceName { get; }
 
@@ -78,6 +91,11 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
     public bool IsRectangle => Kind == ScientificMeasurementKind.RectangleRoi;
     public bool IsCircle => Kind == ScientificMeasurementKind.CircleRoi;
     public bool IsPolyline => Kind == ScientificMeasurementKind.Polyline;
+
+    public Visibility FillStyleVisibility => Kind is ScientificMeasurementKind.RectangleRoi or
+        ScientificMeasurementKind.CircleRoi
+        ? Visibility.Visible
+        : Visibility.Collapsed;
 
     public Visibility LengthVisibility => IsVisible && IsLength ? Visibility.Visible : Visibility.Collapsed;
     public Visibility AngleVisibility => IsVisible && IsAngle ? Visibility.Visible : Visibility.Collapsed;
@@ -201,7 +219,56 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
             if (SetProperty(ref _strokeColor, normalized))
             {
                 OnPropertyChanged(nameof(OverlayStroke));
+                OnPropertyChanged(nameof(IsStyleValid));
+                OnPropertyChanged(nameof(StyleValidationMessage));
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public string FillColor
+    {
+        get => _fillColor;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (SetProperty(ref _fillColor, normalized))
+            {
                 OnPropertyChanged(nameof(OverlayFill));
+                OnPropertyChanged(nameof(IsStyleValid));
+                OnPropertyChanged(nameof(StyleValidationMessage));
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public string MarkerStrokeColor
+    {
+        get => _markerStrokeColor;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (SetProperty(ref _markerStrokeColor, normalized))
+            {
+                OnPropertyChanged(nameof(MarkerStrokeBrush));
+                OnPropertyChanged(nameof(IsStyleValid));
+                OnPropertyChanged(nameof(StyleValidationMessage));
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public string MarkerFillColor
+    {
+        get => _markerFillColor;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (SetProperty(ref _markerFillColor, normalized))
+            {
+                OnPropertyChanged(nameof(MarkerFillBrush));
+                OnPropertyChanged(nameof(IsStyleValid));
+                OnPropertyChanged(nameof(StyleValidationMessage));
                 Changed?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -292,12 +359,87 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
         }
     }
 
+    public string LabelColor
+    {
+        get => _labelColor;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (SetProperty(ref _labelColor, normalized))
+            {
+                OnPropertyChanged(nameof(LabelBrush));
+                OnPropertyChanged(nameof(IsStyleValid));
+                OnPropertyChanged(nameof(StyleValidationMessage));
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public string LabelFontFamily
+    {
+        get => _labelFontFamily;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (SetProperty(ref _labelFontFamily, normalized))
+            {
+                OnPropertyChanged(nameof(LabelFontChoices));
+                OnPropertyChanged(nameof(IsLabelFontMissing));
+                OnPropertyChanged(nameof(LabelFontAvailabilityMessage));
+                OnPropertyChanged(nameof(IsStyleValid));
+                OnPropertyChanged(nameof(StyleValidationMessage));
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public IReadOnlyList<string> LabelFontChoices =>
+        SystemFontCatalog.Instance.CreateChoices(LabelFontFamily);
+
+    public bool IsLabelFontMissing =>
+        !string.IsNullOrWhiteSpace(LabelFontFamily) &&
+        !SystemFontCatalog.Instance.IsInstalled(LabelFontFamily);
+
+    public string LabelFontAvailabilityMessage => IsLabelFontMissing
+        ? $"当前系统未安装字体 “{LabelFontFamily}”；导出时将使用回退字体，工程中的字体名会保留。"
+        : string.Empty;
+
+    public double LabelFontSizePt
+    {
+        get => _labelFontSizePt;
+        set
+        {
+            if (SetProperty(ref _labelFontSizePt, value))
+            {
+                OnPropertyChanged(nameof(LabelFontSizePixels));
+                OnPropertyChanged(nameof(IsStyleValid));
+                OnPropertyChanged(nameof(StyleValidationMessage));
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public double LabelFontSizePixels =>
+        double.IsFinite(LabelFontSizePt) ? Math.Clamp(LabelFontSizePt, 4, 72) / 72.0 * 96 : 22;
+
+    public bool LabelIsBold
+    {
+        get => _labelIsBold;
+        set
+        {
+            if (SetProperty(ref _labelIsBold, value))
+            {
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
     public double FillOpacityPercent
     {
         get => _fillOpacityPercent;
         set
         {
-            double normalized = double.IsFinite(value) ? Math.Clamp(value, 0, 60) : 8;
+            double normalized = double.IsFinite(value) ? Math.Clamp(value, 0, 100) : 8;
             if (SetProperty(ref _fillOpacityPercent, normalized))
             {
                 OnPropertyChanged(nameof(OverlayFill));
@@ -350,15 +492,34 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
     {
         get
         {
-            Color baseColor = TryParseColor(StrokeColor, out Color parsed)
+            Color baseColor = TryParseColor(FillColor, out Color parsed)
                 ? parsed
                 : Color.FromRgb(34, 199, 232);
-            baseColor.A = (byte)Math.Round(FillOpacityPercent / 100.0 * byte.MaxValue);
+            baseColor.A = (byte)Math.Round(baseColor.A * FillOpacityPercent / 100.0);
             var brush = new SolidColorBrush(baseColor);
             brush.Freeze();
             return brush;
         }
     }
+
+    public Brush MarkerStrokeBrush => CreateBrush(MarkerStrokeColor, Brushes.DeepSkyBlue);
+
+    public Brush MarkerFillBrush => CreateBrush(MarkerFillColor, Brushes.Black);
+
+    public Brush LabelBrush => CreateBrush(LabelColor, Brushes.DeepSkyBlue);
+
+    public bool IsStyleValid =>
+        ScientificStyleColor.ValidateColor(StrokeColor) &&
+        ScientificStyleColor.ValidateColor(FillColor) &&
+        ScientificStyleColor.ValidateColor(MarkerStrokeColor) &&
+        ScientificStyleColor.ValidateColor(MarkerFillColor) &&
+        ScientificStyleColor.ValidateColor(LabelColor) &&
+        !string.IsNullOrWhiteSpace(LabelFontFamily) && LabelFontFamily.Length <= 128 &&
+        double.IsFinite(LabelFontSizePt) && LabelFontSizePt is >= 4 and <= 72;
+
+    public string StyleValidationMessage => IsStyleValid
+        ? LabelFontAvailabilityMessage
+        : "颜色必须使用 #RRGGBB 或 #AARRGGBB；标签字体不能为空且字号必须为 4–72 pt。";
 
     public string TypeText => Kind switch
     {
@@ -379,9 +540,16 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
         StrokeColor = StrokeColor,
         StrokeWidthPixels = StrokeWidthPixels,
         LineStyle = LineStyle,
+        FillColor = FillColor,
+        MarkerStrokeColor = MarkerStrokeColor,
+        MarkerFillColor = MarkerFillColor,
         MarkerSizePixels = MarkerSizePixels,
         ShowMarkers = ShowMarkers,
         ShowLabel = ShowLabel,
+        LabelColor = LabelColor,
+        LabelFontFamily = LabelFontFamily,
+        LabelFontSizePt = LabelFontSizePt,
+        LabelIsBold = LabelIsBold,
         FillOpacityPercent = FillOpacityPercent,
         IsVisible = IsVisible,
         IsLocked = IsLocked,
@@ -395,7 +563,8 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
         _pointB,
         _pointC,
         $"{TypeText} {Number}",
-        _pathPoints.Count == 0 ? null : _pathPoints.ToArray());
+        _pathPoints.Count == 0 ? null : _pathPoints.ToArray(),
+        SourceRevision);
 
     public bool IsValid => Measurement.IsValid;
 
@@ -536,17 +705,38 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
             ? Math.Clamp(style.StrokeWidthPixels, 1, 12)
             : ScientificMeasurementVisualStyle.Default.StrokeWidthPixels;
         _lineStyle = NormalizeLineStyle(style.LineStyle);
+        _fillColor = ScientificStyleColor.ValidateColor(style.FillColor)
+            ? style.FillColor.Trim()
+            : ScientificMeasurementVisualStyle.Default.FillColor;
+        _markerStrokeColor = ScientificStyleColor.ValidateColor(style.MarkerStrokeColor)
+            ? style.MarkerStrokeColor.Trim()
+            : ScientificMeasurementVisualStyle.Default.MarkerStrokeColor;
+        _markerFillColor = ScientificStyleColor.ValidateColor(style.MarkerFillColor)
+            ? style.MarkerFillColor.Trim()
+            : ScientificMeasurementVisualStyle.Default.MarkerFillColor;
         _markerSizePixels = double.IsFinite(style.MarkerSizePixels)
             ? Math.Clamp(style.MarkerSizePixels, 8, 48)
             : ScientificMeasurementVisualStyle.Default.MarkerSizePixels;
         _showMarkers = style.ShowMarkers;
         _showLabel = style.ShowLabel;
+        _labelColor = ScientificStyleColor.ValidateColor(style.LabelColor)
+            ? style.LabelColor.Trim()
+            : ScientificMeasurementVisualStyle.Default.LabelColor;
+        _labelFontFamily = string.IsNullOrWhiteSpace(style.LabelFontFamily) ||
+                           style.LabelFontFamily.Trim().Length > 128
+            ? ScientificMeasurementVisualStyle.Default.LabelFontFamily
+            : style.LabelFontFamily.Trim();
+        _labelFontSizePt = double.IsFinite(style.LabelFontSizePt)
+            ? Math.Clamp(style.LabelFontSizePt, 4, 72)
+            : ScientificMeasurementVisualStyle.Default.LabelFontSizePt;
+        _labelIsBold = style.LabelIsBold;
         _fillOpacityPercent = double.IsFinite(style.FillOpacityPercent)
-            ? Math.Clamp(style.FillOpacityPercent, 0, 60)
+            ? Math.Clamp(style.FillOpacityPercent, 0, 100)
             : ScientificMeasurementVisualStyle.Default.FillOpacityPercent;
         _isVisible = style.IsVisible;
         _isLocked = style.IsLocked;
         OnPropertyChanged(string.Empty);
+        Changed?.Invoke(this, EventArgs.Empty);
     }
 
     public void CommitPolylinePoint(double x, double y)

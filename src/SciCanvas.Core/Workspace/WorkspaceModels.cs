@@ -82,6 +82,8 @@ public sealed record FigurePanel(
     string Label,
     int ZIndex)
 {
+    public int FrameIndex { get; init; }
+
     /// <summary>
     /// Canonical half-open integer source-pixel rectangle for manual mode.
     /// Null is reserved for legacy normalized-only domain objects.

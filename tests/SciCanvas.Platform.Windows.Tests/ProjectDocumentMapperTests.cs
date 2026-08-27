@@ -214,7 +214,7 @@ public sealed class ProjectDocumentMapperTests
             lockCropSizeAcrossSources: true,
             cropOverlayVisible: true);
 
-        Assert.Equal("2.2", document.SchemaVersion);
+        Assert.Equal(ProjectMigrationPipeline.CurrentVersion, document.SchemaVersion);
         ProjectCalibrationSnapshot savedCalibration = Assert.Single(document.Calibrations);
         Assert.Equal(source.Asset.Id, savedCalibration.SourceAssetId);
         Assert.Equal(0.02, savedCalibration.UnitsPerPixelX);

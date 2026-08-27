@@ -68,7 +68,8 @@ internal static class Program
                             variant,
                             profile.Format,
                             profile,
-                            labelScheme),
+                            labelScheme,
+                            SystemFontCatalog.Instance),
                         sources,
                         hasUnsavedChanges: false);
                     if (preflight.HasErrors)
@@ -94,7 +95,8 @@ internal static class Program
                             sources,
                             preflight,
                             profile.Id,
-                            profile.Name);
+                            profile.Name,
+                            sourceRevisions: project.Sources.ToDictionary(source => source.Id, source => source.SourceRevision));
                         FigureProvenanceWriter.WriteJson(provenance, Path.ChangeExtension(targetPath, ".provenance.json"));
                         FigureProvenanceWriter.WriteHtml(provenance, Path.ChangeExtension(targetPath, ".export-report.html"));
                     }
@@ -203,7 +205,9 @@ internal static class Program
                     layer.Visible,
                     scaleBar,
                     adjustment is null ? null : ToAdjustment(adjustment),
-                    layer.FrameIndex);
+                    layer.FrameIndex,
+                    IsInset: false,
+                    StyleOverride: ToStyleOverride(layer.StyleOverride));
             })
             .ToArray();
 
@@ -216,7 +220,11 @@ internal static class Program
                 annotation.EndX,
                 annotation.EndY,
                 annotation.Text,
-                annotation.Color,
+                annotation.StrokeColor,
+                annotation.FillColor,
+                annotation.FillOpacityPercent,
+                annotation.TextColor,
+                annotation.FontFamily,
                 annotation.FontSizePt,
                 annotation.StrokeWidthPt,
                 annotation.IsBold,
@@ -229,14 +237,65 @@ internal static class Program
             "transparent" => "#00FFFFFF",
             _ => "#FFFFFFFF",
         };
+        ProjectGlobalStyleSnapshot? savedStyle = project.TemplateSnapshot?.GlobalStyle;
+        FigureGlobalStyle globalStyle = savedStyle is null
+            ? FigureGlobalStyle.Default
+            : new FigureGlobalStyle(
+                savedStyle.FontFamily,
+                savedStyle.FontSizePt,
+                savedStyle.StrokeWidthPt,
+                savedStyle.TextColor,
+                savedStyle.ShapeColor,
+                savedStyle.ScaleBarColor,
+                savedStyle.PanelLabelFontFamily,
+                savedStyle.PanelLabelFontSizePt,
+                savedStyle.PanelLabelTextColor,
+                savedStyle.PanelLabelIsBold,
+                savedStyle.ScaleBarLabelColor,
+                savedStyle.ScaleBarFontFamily,
+                savedStyle.ScaleBarFontSizePt,
+                savedStyle.ScaleBarLabelIsBold,
+                savedStyle.ScaleBarThicknessPt);
         return new FigureExportDocument(
             project.Canvas.Width,
             project.Canvas.Height,
             dpi: ResolveCanvasDpi(project),
             panels,
             annotations,
-            background);
+            background,
+            globalStyle: globalStyle);
     }
+
+    private static StyleOverride? ToStyleOverride(ProjectPanelStyleOverrideSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        var result = new StyleOverride(
+            PanelLabel: ToTextStyle(snapshot.PanelLabel),
+            ScaleBarText: ToTextStyle(snapshot.ScaleBarText),
+            ScaleBar: snapshot.ScaleBar is null
+                ? null
+                : new ScaleBarStyle(
+                    snapshot.ScaleBar.DefaultPosition.ToLowerInvariant() switch
+                    {
+                        "bottomleft" => ScaleBarAnchor.BottomLeft,
+                        "topleft" => ScaleBarAnchor.TopLeft,
+                        "topright" => ScaleBarAnchor.TopRight,
+                        "custom" => ScaleBarAnchor.Custom,
+                        _ => ScaleBarAnchor.BottomRight,
+                    },
+                    snapshot.ScaleBar.BarThicknessPt,
+                    snapshot.ScaleBar.Color));
+        result.EnsureValid();
+        return result.IsEmpty ? null : result;
+    }
+
+    private static TextStyle? ToTextStyle(ProjectTextStyleSnapshot? snapshot) => snapshot is null
+        ? null
+        : new TextStyle(snapshot.FontFamily, snapshot.FontSizePt, snapshot.IsBold, snapshot.Color);
 
     private static int ResolveCanvasDpi(SciCanvasProjectDocument project) =>
         project.ExportProfiles.FirstOrDefault()?.Dpi is > 0 and var dpi ? dpi : 300;

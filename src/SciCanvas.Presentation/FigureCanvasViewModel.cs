@@ -5,9 +5,21 @@ using System.Windows.Media;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Workspace;
+using SciCanvas.Imaging;
 using SciCanvas.Templates;
 
 namespace SciCanvas.Presentation;
+
+public enum ScientificColorApplicationTarget
+{
+    Auto,
+    AnnotationStroke,
+    AnnotationFill,
+    AnnotationText,
+    ScaleBar,
+    ScaleBarLabel,
+    PanelLabel,
+}
 
 public sealed class FigureCanvasViewModel : ObservableObject
 {
@@ -33,8 +45,21 @@ public sealed class FigureCanvasViewModel : ObservableObject
     private string _lastValidGlobalTextColor = FigureGlobalStyle.Default.TextColor;
     private string _lastValidGlobalShapeColor = FigureGlobalStyle.Default.ShapeColor;
     private string _lastValidGlobalScaleBarColor = FigureGlobalStyle.Default.ScaleBarColor;
+    private string _panelLabelFontFamily = FigureGlobalStyle.Default.EffectivePanelLabelFontFamily;
+    private double _panelLabelFontSizePt = FigureGlobalStyle.Default.EffectivePanelLabelFontSizePt;
+    private string _panelLabelTextColor = FigureGlobalStyle.Default.EffectivePanelLabelTextColor;
+    private string _lastValidPanelLabelTextColor = FigureGlobalStyle.Default.EffectivePanelLabelTextColor;
+    private bool _panelLabelIsBold = FigureGlobalStyle.Default.PanelLabelIsBold;
+    private string _scaleBarLabelColor = FigureGlobalStyle.Default.EffectiveScaleBarLabelColor;
+    private string _lastValidScaleBarLabelColor = FigureGlobalStyle.Default.EffectiveScaleBarLabelColor;
+    private string _scaleBarFontFamily = FigureGlobalStyle.Default.EffectiveScaleBarFontFamily;
+    private double _scaleBarFontSizePt = FigureGlobalStyle.Default.EffectiveScaleBarFontSizePt;
+    private bool _scaleBarLabelIsBold = FigureGlobalStyle.Default.ScaleBarLabelIsBold;
+    private double _scaleBarThicknessPt = FigureGlobalStyle.Default.EffectiveScaleBarThicknessPt;
     private bool _isSynchronizingLinkedCrops;
     private ScientificColorEntryViewModel? _selectedScientificColor;
+    private ScientificColorApplicationTarget _scientificColorApplicationTarget;
+    private FigureAnnotationStyle? _copiedAnnotationStyle;
 
     public event EventHandler? DocumentChanged;
 
@@ -128,6 +153,13 @@ public sealed class FigureCanvasViewModel : ObservableObject
             () => RenumberPanelLabels(force: true),
             () => Panels.Count > 0);
         ApplyGlobalStyleCommand = new RelayCommand(ApplyGlobalStyleToAnnotations, () => IsGlobalStyleValid);
+        ResetSelectedPanelLabelStyleCommand = new RelayCommand(
+            ResetSelectedPanelLabelStyle,
+            () => SelectedPanel is { IsLocked: false, StyleOverride.PanelLabel: not null });
+        ResetSelectedPanelScaleBarStyleCommand = new RelayCommand(
+            ResetSelectedPanelScaleBarStyle,
+            () => SelectedPanel is { IsLocked: false } panel &&
+                  (panel.StyleOverride?.ScaleBarText is not null || panel.StyleOverride?.ScaleBar is not null));
         foreach (ScientificColorDefinition definition in ScientificColorPalette.Default)
         {
             AddScientificColorEntry(definition);
@@ -159,6 +191,19 @@ public sealed class FigureCanvasViewModel : ObservableObject
         MoveAnnotationDownCommand = new RelayCommand(
             MoveAnnotationDown,
             () => SelectedAnnotation is { IsLocked: false });
+        ResetSelectedAnnotationStyleCommand = new RelayCommand(
+            ResetSelectedAnnotationStyle,
+            () => SelectedAnnotation is { IsLocked: false });
+        CopySelectedAnnotationStyleCommand = new RelayCommand(
+            CopySelectedAnnotationStyle,
+            () => SelectedAnnotation is not null);
+        PasteSelectedAnnotationStyleCommand = new RelayCommand(
+            PasteSelectedAnnotationStyle,
+            () => SelectedAnnotation is { IsLocked: false } selected &&
+                  _copiedAnnotationStyle?.Kind == selected.Kind);
+        ApplyAnnotationStyleToSameTypeCommand = new RelayCommand(
+            ApplyAnnotationStyleToSameType,
+            () => SelectedAnnotation is not null);
     }
 
     public FigureTemplateDefinition Template { get; }
@@ -243,11 +288,23 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
     public RelayCommand MoveAnnotationDownCommand { get; }
 
+    public RelayCommand ResetSelectedAnnotationStyleCommand { get; }
+
+    public RelayCommand CopySelectedAnnotationStyleCommand { get; }
+
+    public RelayCommand PasteSelectedAnnotationStyleCommand { get; }
+
+    public RelayCommand ApplyAnnotationStyleToSameTypeCommand { get; }
+
     public RelayCommand ResetBackgroundCommand { get; }
 
     public RelayCommand RenumberPanelLabelsCommand { get; }
 
     public RelayCommand ApplyGlobalStyleCommand { get; }
+
+    public RelayCommand ResetSelectedPanelLabelStyleCommand { get; }
+
+    public RelayCommand ResetSelectedPanelScaleBarStyleCommand { get; }
 
     public RelayCommand AddScientificColorCommand { get; }
 
@@ -388,10 +445,24 @@ public sealed class FigureCanvasViewModel : ObservableObject
             string normalized = value?.Trim() ?? string.Empty;
             if (SetProperty(ref _globalFontFamily, normalized))
             {
+                OnPropertyChanged(nameof(GlobalFontChoices));
+                OnPropertyChanged(nameof(IsGlobalFontMissing));
+                OnPropertyChanged(nameof(GlobalFontAvailabilityMessage));
                 NotifyGlobalStyleChanged();
             }
         }
     }
+
+    public IReadOnlyList<string> GlobalFontChoices =>
+        SystemFontCatalog.Instance.CreateChoices(GlobalFontFamily);
+
+    public bool IsGlobalFontMissing =>
+        !string.IsNullOrWhiteSpace(GlobalFontFamily) &&
+        !SystemFontCatalog.Instance.IsInstalled(GlobalFontFamily);
+
+    public string GlobalFontAvailabilityMessage => IsGlobalFontMissing
+        ? $"当前系统未安装字体 “{GlobalFontFamily}”；标注导出会使用回退字体，保存值不会改变。"
+        : string.Empty;
 
     public double GlobalFontSizePt
     {
@@ -447,13 +518,317 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
     public Brush GlobalScaleBarBrush => CreateBrush(_lastValidGlobalScaleBarColor);
 
+    public string PanelLabelFontFamily
+    {
+        get => _panelLabelFontFamily;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (SetProperty(ref _panelLabelFontFamily, normalized))
+            {
+                OnPropertyChanged(nameof(PanelLabelFontChoices));
+                OnPropertyChanged(nameof(IsPanelLabelFontMissing));
+                OnPropertyChanged(nameof(PanelLabelFontAvailabilityMessage));
+                NotifyGlobalStyleChanged();
+            }
+        }
+    }
+
+    public IReadOnlyList<string> PanelLabelFontChoices =>
+        SystemFontCatalog.Instance.CreateChoices(PanelLabelFontFamily);
+
+    public bool IsPanelLabelFontMissing =>
+        !string.IsNullOrWhiteSpace(PanelLabelFontFamily) &&
+        !SystemFontCatalog.Instance.IsInstalled(PanelLabelFontFamily);
+
+    public string PanelLabelFontAvailabilityMessage => IsPanelLabelFontMissing
+        ? $"当前系统未安装字体 “{PanelLabelFontFamily}”；Panel Label 导出会回退，但工程保存值不变。"
+        : string.Empty;
+
+    public double PanelLabelFontSizePt
+    {
+        get => _panelLabelFontSizePt;
+        set
+        {
+            if (SetProperty(ref _panelLabelFontSizePt, value))
+            {
+                OnPropertyChanged(nameof(PanelLabelFontSizePixels));
+                NotifyGlobalStyleChanged();
+            }
+        }
+    }
+
+    public string PanelLabelTextColor
+    {
+        get => _panelLabelTextColor;
+        set => SetGlobalColor(
+            ref _panelLabelTextColor,
+            ref _lastValidPanelLabelTextColor,
+            value,
+            nameof(PanelLabelTextColor),
+            nameof(PanelLabelTextBrush));
+    }
+
+    public bool PanelLabelIsBold
+    {
+        get => _panelLabelIsBold;
+        set
+        {
+            if (SetProperty(ref _panelLabelIsBold, value))
+            {
+                OnPropertyChanged(nameof(PanelLabelFontWeight));
+                NotifyGlobalStyleChanged();
+            }
+        }
+    }
+
+    public string ScaleBarLabelColor
+    {
+        get => _scaleBarLabelColor;
+        set => SetGlobalColor(
+            ref _scaleBarLabelColor,
+            ref _lastValidScaleBarLabelColor,
+            value,
+            nameof(ScaleBarLabelColor),
+            nameof(ScaleBarLabelBrush));
+    }
+
+    public string ScaleBarFontFamily
+    {
+        get => _scaleBarFontFamily;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (SetProperty(ref _scaleBarFontFamily, normalized))
+            {
+                OnPropertyChanged(nameof(ScaleBarFontChoices));
+                OnPropertyChanged(nameof(IsScaleBarFontMissing));
+                OnPropertyChanged(nameof(ScaleBarFontAvailabilityMessage));
+                NotifyGlobalStyleChanged();
+            }
+        }
+    }
+
+    public IReadOnlyList<string> ScaleBarFontChoices =>
+        SystemFontCatalog.Instance.CreateChoices(ScaleBarFontFamily);
+
+    public bool IsScaleBarFontMissing =>
+        !string.IsNullOrWhiteSpace(ScaleBarFontFamily) &&
+        !SystemFontCatalog.Instance.IsInstalled(ScaleBarFontFamily);
+
+    public string ScaleBarFontAvailabilityMessage => IsScaleBarFontMissing
+        ? $"当前系统未安装字体 “{ScaleBarFontFamily}”；Scale Bar 导出会回退，但工程保存值不变。"
+        : string.Empty;
+
+    public double ScaleBarFontSizePt
+    {
+        get => _scaleBarFontSizePt;
+        set
+        {
+            if (SetProperty(ref _scaleBarFontSizePt, value))
+            {
+                OnPropertyChanged(nameof(ScaleBarFontSizePixels));
+                NotifyGlobalStyleChanged();
+            }
+        }
+    }
+
+    public bool ScaleBarLabelIsBold
+    {
+        get => _scaleBarLabelIsBold;
+        set
+        {
+            if (SetProperty(ref _scaleBarLabelIsBold, value))
+            {
+                OnPropertyChanged(nameof(ScaleBarLabelFontWeight));
+                NotifyGlobalStyleChanged();
+            }
+        }
+    }
+
+    public double ScaleBarThicknessPt
+    {
+        get => _scaleBarThicknessPt;
+        set
+        {
+            if (SetProperty(ref _scaleBarThicknessPt, value))
+            {
+                OnPropertyChanged(nameof(ScaleBarThicknessPixels));
+                NotifyGlobalStyleChanged();
+            }
+        }
+    }
+
+    public double PanelLabelFontSizePixels => Math.Max(12, PanelLabelFontSizePt / 72.0 * Dpi);
+
+    public double ScaleBarFontSizePixels => Math.Max(12, ScaleBarFontSizePt / 72.0 * Dpi);
+
+    public double ScaleBarThicknessPixels => Math.Max(1, ScaleBarThicknessPt / 72.0 * Dpi);
+
+    public Brush PanelLabelTextBrush => CreateBrush(_lastValidPanelLabelTextColor);
+
+    public Brush ScaleBarLabelBrush => CreateBrush(_lastValidScaleBarLabelColor);
+
+    public FontWeight PanelLabelFontWeight => PanelLabelIsBold ? FontWeights.Bold : FontWeights.Normal;
+
+    public FontWeight ScaleBarLabelFontWeight => ScaleBarLabelIsBold ? FontWeights.Bold : FontWeights.Normal;
+
     public FigureGlobalStyle GlobalStyle => new(
         GlobalFontFamily,
         GlobalFontSizePt,
         GlobalStrokeWidthPt,
         GlobalTextColor,
         GlobalShapeColor,
-        GlobalScaleBarColor);
+        GlobalScaleBarColor,
+        PanelLabelFontFamily,
+        PanelLabelFontSizePt,
+        PanelLabelTextColor,
+        PanelLabelIsBold,
+        ScaleBarLabelColor,
+        ScaleBarFontFamily,
+        ScaleBarFontSizePt,
+        ScaleBarLabelIsBold,
+        ScaleBarThicknessPt);
+
+    public string SelectedPanelLabelFontFamily
+    {
+        get => SelectedPanel?.StyleOverride?.PanelLabel?.FontFamily ?? PanelLabelFontFamily;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                UpdateSelectedPanelLabelStyle(style => style with { FontFamily = normalized });
+            }
+        }
+    }
+
+    public IReadOnlyList<string> SelectedPanelLabelFontChoices =>
+        SystemFontCatalog.Instance.CreateChoices(SelectedPanelLabelFontFamily);
+
+    public string SelectedPanelLabelFontAvailabilityMessage =>
+        !string.IsNullOrWhiteSpace(SelectedPanelLabelFontFamily) &&
+        !SystemFontCatalog.Instance.IsInstalled(SelectedPanelLabelFontFamily)
+            ? $"当前系统未安装字体 “{SelectedPanelLabelFontFamily}”；保存值不变，QC 会提示。"
+            : string.Empty;
+
+    public double SelectedPanelLabelFontSizePt
+    {
+        get => SelectedPanel?.StyleOverride?.PanelLabel?.FontSizePt ?? PanelLabelFontSizePt;
+        set
+        {
+            if (double.IsFinite(value) && value is >= 4 and <= 72)
+            {
+                UpdateSelectedPanelLabelStyle(style => style with { FontSizePt = value });
+            }
+        }
+    }
+
+    public string SelectedPanelLabelTextColor
+    {
+        get => SelectedPanel?.StyleOverride?.PanelLabel?.Color ?? PanelLabelTextColor;
+        set
+        {
+            if (TryNormalizeColor(value, out string normalized))
+            {
+                UpdateSelectedPanelLabelStyle(style => style with { Color = normalized });
+            }
+        }
+    }
+
+    public Brush SelectedPanelLabelTextBrush => CreateBrush(SelectedPanelLabelTextColor);
+
+    public bool SelectedPanelLabelIsBold
+    {
+        get => SelectedPanel?.StyleOverride?.PanelLabel?.IsBold ?? PanelLabelIsBold;
+        set => UpdateSelectedPanelLabelStyle(style => style with { IsBold = value });
+    }
+
+    public string SelectedPanelScaleBarFontFamily
+    {
+        get => SelectedPanel?.StyleOverride?.ScaleBarText?.FontFamily ?? ScaleBarFontFamily;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                UpdateSelectedPanelScaleBarTextStyle(style => style with { FontFamily = normalized });
+            }
+        }
+    }
+
+    public IReadOnlyList<string> SelectedPanelScaleBarFontChoices =>
+        SystemFontCatalog.Instance.CreateChoices(SelectedPanelScaleBarFontFamily);
+
+    public string SelectedPanelScaleBarFontAvailabilityMessage =>
+        !string.IsNullOrWhiteSpace(SelectedPanelScaleBarFontFamily) &&
+        !SystemFontCatalog.Instance.IsInstalled(SelectedPanelScaleBarFontFamily)
+            ? $"当前系统未安装字体 “{SelectedPanelScaleBarFontFamily}”；保存值不变，QC 会提示。"
+            : string.Empty;
+
+    public double SelectedPanelScaleBarFontSizePt
+    {
+        get => SelectedPanel?.StyleOverride?.ScaleBarText?.FontSizePt ?? ScaleBarFontSizePt;
+        set
+        {
+            if (double.IsFinite(value) && value is >= 4 and <= 72)
+            {
+                UpdateSelectedPanelScaleBarTextStyle(style => style with { FontSizePt = value });
+            }
+        }
+    }
+
+    public string SelectedPanelScaleBarLabelColor
+    {
+        get => SelectedPanel?.StyleOverride?.ScaleBarText?.Color ?? ScaleBarLabelColor;
+        set
+        {
+            if (TryNormalizeColor(value, out string normalized))
+            {
+                UpdateSelectedPanelScaleBarTextStyle(style => style with { Color = normalized });
+            }
+        }
+    }
+
+    public Brush SelectedPanelScaleBarLabelBrush => CreateBrush(SelectedPanelScaleBarLabelColor);
+
+    public bool SelectedPanelScaleBarLabelIsBold
+    {
+        get => SelectedPanel?.StyleOverride?.ScaleBarText?.IsBold ?? ScaleBarLabelIsBold;
+        set => UpdateSelectedPanelScaleBarTextStyle(style => style with { IsBold = value });
+    }
+
+    public string SelectedPanelScaleBarColor
+    {
+        get => SelectedPanel?.StyleOverride?.ScaleBar?.Color ?? GlobalScaleBarColor;
+        set
+        {
+            if (TryNormalizeColor(value, out string normalized))
+            {
+                UpdateSelectedPanelScaleBarStyle(style => style with { Color = normalized });
+            }
+        }
+    }
+
+    public Brush SelectedPanelScaleBarBrush => CreateBrush(SelectedPanelScaleBarColor);
+
+    public double SelectedPanelScaleBarThicknessPt
+    {
+        get => SelectedPanel?.StyleOverride?.ScaleBar?.BarThicknessPt ?? ScaleBarThicknessPt;
+        set
+        {
+            if (double.IsFinite(value) && value is >= 0.25 and <= 10)
+            {
+                UpdateSelectedPanelScaleBarStyle(style => style with { BarThicknessPt = value });
+            }
+        }
+    }
+
+    public string SelectedPanelStyleOverrideStatusText => SelectedPanel is null
+        ? "请选择 Panel 后编辑局部覆盖。"
+        : SelectedPanel.StyleOverride is null
+            ? "当前 Panel 完全继承 Figure 样式。"
+            : "当前 Panel 含局部覆盖；未覆盖字段仍随 Figure 样式变化。";
 
     public bool IsGlobalStyleValid => GlobalStyle.IsValid;
 
@@ -484,6 +859,15 @@ public sealed class FigureCanvasViewModel : ObservableObject
                 ? $"{ScientificColors.Count} 个项目颜色 · 名称唯一 · 红绿色觉缺陷模拟未发现近似色"
                 : string.Join(" ", review.Warnings);
         }
+    }
+
+    public IReadOnlyList<ScientificColorApplicationTarget> ScientificColorApplicationTargets { get; } =
+        Enum.GetValues<ScientificColorApplicationTarget>();
+
+    public ScientificColorApplicationTarget ScientificColorApplicationTarget
+    {
+        get => _scientificColorApplicationTarget;
+        set => SetProperty(ref _scientificColorApplicationTarget, value);
     }
 
     public int SlotCount => _layout.Slots.Count;
@@ -624,6 +1008,10 @@ public sealed class FigureCanvasViewModel : ObservableObject
             RemoveSelectedAnnotationCommand.NotifyCanExecuteChanged();
             MoveAnnotationUpCommand.NotifyCanExecuteChanged();
             MoveAnnotationDownCommand.NotifyCanExecuteChanged();
+            ResetSelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
+            CopySelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
+            PasteSelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
+            ApplyAnnotationStyleToSameTypeCommand.NotifyCanExecuteChanged();
         }
     }
 
@@ -871,6 +1259,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
         }
 
         var panel = new FigurePanelViewModel(source, sourceRect, slot, Panels.Count, _layout.Dpi);
+        panel.UpdateInheritedGlobalStyle(GlobalStyle);
         panel.PropertyChanged += OnPanelPropertyChanged;
         Panels.Add(panel);
         RenumberPanelLabels(force: false);
@@ -914,6 +1303,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
             Adjustments = adjustments ?? new(),
             FrameIndex = frameIndex,
         };
+        panel.UpdateInheritedGlobalStyle(GlobalStyle);
         panel.RestoreDestinationSize(destinationRect, lockAspectRatio ?? slot.LockAspectRatio);
         panel.PropertyChanged += OnPanelPropertyChanged;
         Panels.Add(panel);
@@ -975,7 +1365,8 @@ public sealed class FigureCanvasViewModel : ObservableObject
                 panel.CreateScaleBarExportSpec(),
                 panel.Adjustments,
                 panel.FrameIndex,
-                panel.IsInset))
+                panel.IsInset,
+                panel.StyleOverride))
             .ToArray();
         FigureAnnotationExportItem[] annotations = Annotations
             .OrderBy(annotation => annotation.ZIndex)
@@ -1029,6 +1420,15 @@ public sealed class FigureCanvasViewModel : ObservableObject
         GlobalTextColor = style.TextColor;
         GlobalShapeColor = style.ShapeColor;
         GlobalScaleBarColor = style.ScaleBarColor;
+        PanelLabelFontFamily = style.EffectivePanelLabelFontFamily;
+        PanelLabelFontSizePt = style.EffectivePanelLabelFontSizePt;
+        PanelLabelTextColor = style.EffectivePanelLabelTextColor;
+        PanelLabelIsBold = style.PanelLabelIsBold;
+        ScaleBarLabelColor = style.EffectiveScaleBarLabelColor;
+        ScaleBarFontFamily = style.EffectiveScaleBarFontFamily;
+        ScaleBarFontSizePt = style.EffectiveScaleBarFontSizePt;
+        ScaleBarLabelIsBold = style.ScaleBarLabelIsBold;
+        ScaleBarThicknessPt = style.EffectiveScaleBarThicknessPt;
     }
 
     public void RestoreScientificColors(IEnumerable<ScientificColorDefinition>? definitions)
@@ -1067,6 +1467,47 @@ public sealed class FigureCanvasViewModel : ObservableObject
         bool isLocked,
         int zIndex)
     {
+        return RestoreAnnotation(
+            id,
+            kind,
+            x,
+            y,
+            endX,
+            endY,
+            text,
+            kind == FigureAnnotationKind.Text ? GlobalShapeColor : color,
+            color,
+            0,
+            kind == FigureAnnotationKind.Text ? color : GlobalTextColor,
+            GlobalFontFamily,
+            fontSizePt,
+            strokeWidthPt,
+            isBold,
+            isVisible,
+            isLocked,
+            zIndex);
+    }
+
+    public FigureAnnotationViewModel RestoreAnnotation(
+        Guid id,
+        FigureAnnotationKind kind,
+        double x,
+        double y,
+        double endX,
+        double endY,
+        string text,
+        string strokeColor,
+        string fillColor,
+        double fillOpacityPercent,
+        string textColor,
+        string fontFamily,
+        double fontSizePt,
+        double strokeWidthPt,
+        bool isBold,
+        bool isVisible,
+        bool isLocked,
+        int zIndex)
+    {
         var annotation = new FigureAnnotationViewModel(
             kind,
             CanvasWidth,
@@ -1080,7 +1521,11 @@ public sealed class FigureCanvasViewModel : ObservableObject
             EndX = endX,
             EndY = endY,
             Text = text,
-            Color = color,
+            StrokeColor = strokeColor,
+            FillColor = fillColor,
+            FillOpacityPercent = fillOpacityPercent,
+            TextColor = textColor,
+            FontFamily = fontFamily,
             FontSizePt = fontSizePt,
             StrokeWidthPt = strokeWidthPt,
             IsBold = isBold,
@@ -1178,7 +1623,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
     private void AddAnnotation(FigureAnnotationKind kind)
     {
-        FigureAnnotationViewModel? previous = SelectedAnnotation;
+        FigureAnnotationViewModel? previous = Annotations.LastOrDefault();
         var annotation = new FigureAnnotationViewModel(
             kind,
             CanvasWidth,
@@ -1186,8 +1631,11 @@ public sealed class FigureCanvasViewModel : ObservableObject
             Dpi,
             Annotations.Count)
         {
-            Color = previous?.Color ??
-                    (kind == FigureAnnotationKind.Text ? GlobalTextColor : GlobalShapeColor),
+            StrokeColor = previous?.StrokeColor ?? GlobalShapeColor,
+            FillColor = previous?.FillColor ?? GlobalShapeColor,
+            FillOpacityPercent = previous?.FillOpacityPercent ?? 0,
+            TextColor = previous?.TextColor ?? GlobalTextColor,
+            FontFamily = previous?.FontFamily ?? GlobalFontFamily,
             FontSizePt = previous?.FontSizePt ?? GlobalFontSizePt,
             StrokeWidthPt = previous?.StrokeWidthPt ?? GlobalStrokeWidthPt,
             IsBold = previous?.IsBold ?? false,
@@ -1196,6 +1644,65 @@ public sealed class FigureCanvasViewModel : ObservableObject
         Annotations.Add(annotation);
         SelectedAnnotation = annotation;
         NotifyAnnotationCollectionChanged();
+    }
+
+    private void ResetSelectedAnnotationStyle()
+    {
+        if (SelectedAnnotation is not { IsLocked: false } annotation)
+        {
+            return;
+        }
+
+        annotation.ApplyStyle(new FigureAnnotationStyle(
+            annotation.Kind,
+            GlobalShapeColor,
+            GlobalShapeColor,
+            0,
+            GlobalTextColor,
+            GlobalFontFamily,
+            GlobalFontSizePt,
+            GlobalStrokeWidthPt,
+            IsBold: false));
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void CopySelectedAnnotationStyle()
+    {
+        _copiedAnnotationStyle = SelectedAnnotation?.CaptureStyle();
+        PasteSelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
+    }
+
+    private void PasteSelectedAnnotationStyle()
+    {
+        if (SelectedAnnotation is not { IsLocked: false } annotation ||
+            _copiedAnnotationStyle is not { } style ||
+            style.Kind != annotation.Kind)
+        {
+            return;
+        }
+
+        annotation.ApplyStyle(style);
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ApplyAnnotationStyleToSameType()
+    {
+        if (SelectedAnnotation is not { } selected)
+        {
+            return;
+        }
+
+        FigureAnnotationStyle style = selected.CaptureStyle();
+        foreach (FigureAnnotationViewModel annotation in Annotations
+                     .Where(annotation => annotation.Kind == selected.Kind && !annotation.IsLocked))
+        {
+            annotation.ApplyStyle(style);
+        }
+
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+        EditCompleted?.Invoke(this, EventArgs.Empty);
     }
 
     private void AddGuide(FigureGuideOrientation orientation)
@@ -1521,19 +2028,101 @@ public sealed class FigureCanvasViewModel : ObservableObject
         {
             if (annotation.Kind == FigureAnnotationKind.Text)
             {
+                annotation.FontFamily = GlobalFontFamily;
                 annotation.FontSizePt = GlobalFontSizePt;
-                annotation.Color = GlobalTextColor;
+                annotation.TextColor = GlobalTextColor;
             }
             else
             {
                 annotation.StrokeWidthPt = GlobalStrokeWidthPt;
-                annotation.Color = GlobalShapeColor;
+                annotation.StrokeColor = GlobalShapeColor;
             }
         }
 
         DocumentChanged?.Invoke(this, EventArgs.Empty);
         EditCompleted?.Invoke(this, EventArgs.Empty);
         OnPropertyChanged(nameof(GlobalStyleStatusText));
+    }
+
+    private void UpdateSelectedPanelLabelStyle(Func<TextStyle, TextStyle> update)
+    {
+        if (SelectedPanel is not { IsLocked: false } panel)
+        {
+            return;
+        }
+
+        TextStyle inherited = new(
+            PanelLabelFontFamily,
+            PanelLabelFontSizePt,
+            PanelLabelIsBold,
+            PanelLabelTextColor);
+        StyleOverride current = panel.StyleOverride ?? new StyleOverride();
+        panel.RestoreStyleOverride(current with
+        {
+            PanelLabel = update(current.PanelLabel ?? inherited),
+        });
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void UpdateSelectedPanelScaleBarTextStyle(Func<TextStyle, TextStyle> update)
+    {
+        if (SelectedPanel is not { IsLocked: false } panel)
+        {
+            return;
+        }
+
+        TextStyle inherited = new(
+            ScaleBarFontFamily,
+            ScaleBarFontSizePt,
+            ScaleBarLabelIsBold,
+            ScaleBarLabelColor);
+        StyleOverride current = panel.StyleOverride ?? new StyleOverride();
+        panel.RestoreStyleOverride(current with
+        {
+            ScaleBarText = update(current.ScaleBarText ?? inherited),
+        });
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void UpdateSelectedPanelScaleBarStyle(Func<ScaleBarStyle, ScaleBarStyle> update)
+    {
+        if (SelectedPanel is not { IsLocked: false } panel)
+        {
+            return;
+        }
+
+        ScaleBarStyle inherited = new(
+            ScaleBarAnchor.BottomRight,
+            ScaleBarThicknessPt,
+            GlobalScaleBarColor);
+        StyleOverride current = panel.StyleOverride ?? new StyleOverride();
+        panel.RestoreStyleOverride(current with
+        {
+            ScaleBar = update(current.ScaleBar ?? inherited),
+        });
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ResetSelectedPanelLabelStyle()
+    {
+        if (SelectedPanel is not { IsLocked: false } panel || panel.StyleOverride is not { } current)
+        {
+            return;
+        }
+
+        panel.RestoreStyleOverride(current with { PanelLabel = null });
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ResetSelectedPanelScaleBarStyle()
+    {
+        if (SelectedPanel is not { IsLocked: false } panel || panel.StyleOverride is not { } current)
+        {
+            return;
+        }
+
+        panel.RestoreStyleOverride(current with { ScaleBarText = null, ScaleBar = null });
+        EditCompleted?.Invoke(this, EventArgs.Empty);
     }
 
     private void AddScientificColor()
@@ -1575,13 +2164,43 @@ public sealed class FigureCanvasViewModel : ObservableObject
             return;
         }
 
-        if (SelectedAnnotation is not null)
+        switch (ScientificColorApplicationTarget)
         {
-            SelectedAnnotation.Color = selected.Color;
-        }
-        else
-        {
-            GlobalShapeColor = selected.Color;
+            case ScientificColorApplicationTarget.AnnotationStroke when SelectedAnnotation is not null:
+                SelectedAnnotation.StrokeColor = selected.Color;
+                break;
+            case ScientificColorApplicationTarget.AnnotationFill when SelectedAnnotation is not null:
+                SelectedAnnotation.FillColor = selected.Color;
+                break;
+            case ScientificColorApplicationTarget.AnnotationText when SelectedAnnotation is not null:
+                SelectedAnnotation.TextColor = selected.Color;
+                break;
+            case ScientificColorApplicationTarget.ScaleBar:
+                GlobalScaleBarColor = selected.Color;
+                break;
+            case ScientificColorApplicationTarget.ScaleBarLabel:
+                ScaleBarLabelColor = selected.Color;
+                break;
+            case ScientificColorApplicationTarget.PanelLabel:
+                PanelLabelTextColor = selected.Color;
+                break;
+            default:
+                if (SelectedAnnotation is not null)
+                {
+                    if (SelectedAnnotation.Kind == FigureAnnotationKind.Text)
+                    {
+                        SelectedAnnotation.TextColor = selected.Color;
+                    }
+                    else
+                    {
+                        SelectedAnnotation.StrokeColor = selected.Color;
+                    }
+                }
+                else
+                {
+                    GlobalShapeColor = selected.Color;
+                }
+                break;
         }
 
         DocumentChanged?.Invoke(this, EventArgs.Empty);
@@ -1648,6 +2267,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
             Adjustments = reference.Adjustments,
             FrameIndex = reference.FrameIndex,
         };
+        inset.UpdateInheritedGlobalStyle(GlobalStyle);
         inset.ApplySpatialCalibration(reference.Source.Calibration.Calibration);
         inset.PropertyChanged += OnPanelPropertyChanged;
         Panels.Add(inset);
@@ -1727,6 +2347,11 @@ public sealed class FigureCanvasViewModel : ObservableObject
         OnPropertyChanged(nameof(GlobalStyle));
         OnPropertyChanged(nameof(IsGlobalStyleValid));
         OnPropertyChanged(nameof(GlobalStyleStatusText));
+        foreach (FigurePanelViewModel panel in Panels)
+        {
+            panel.UpdateInheritedGlobalStyle(GlobalStyle);
+        }
+        NotifySelectedPanelStyleChanged();
         ApplyGlobalStyleCommand.NotifyCanExecuteChanged();
         DocumentChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -1770,7 +2395,32 @@ public sealed class FigureCanvasViewModel : ObservableObject
             MoveLayerUpCommand.NotifyCanExecuteChanged();
             MoveLayerDownCommand.NotifyCanExecuteChanged();
             NotifyPanelAlignmentCanExecuteChanged();
+            NotifySelectedPanelStyleChanged();
         }
+    }
+
+    private void NotifySelectedPanelStyleChanged()
+    {
+        OnPropertyChanged(nameof(SelectedPanelLabelFontFamily));
+        OnPropertyChanged(nameof(SelectedPanelLabelFontChoices));
+        OnPropertyChanged(nameof(SelectedPanelLabelFontAvailabilityMessage));
+        OnPropertyChanged(nameof(SelectedPanelLabelFontSizePt));
+        OnPropertyChanged(nameof(SelectedPanelLabelTextColor));
+        OnPropertyChanged(nameof(SelectedPanelLabelTextBrush));
+        OnPropertyChanged(nameof(SelectedPanelLabelIsBold));
+        OnPropertyChanged(nameof(SelectedPanelScaleBarFontFamily));
+        OnPropertyChanged(nameof(SelectedPanelScaleBarFontChoices));
+        OnPropertyChanged(nameof(SelectedPanelScaleBarFontAvailabilityMessage));
+        OnPropertyChanged(nameof(SelectedPanelScaleBarFontSizePt));
+        OnPropertyChanged(nameof(SelectedPanelScaleBarLabelColor));
+        OnPropertyChanged(nameof(SelectedPanelScaleBarLabelBrush));
+        OnPropertyChanged(nameof(SelectedPanelScaleBarLabelIsBold));
+        OnPropertyChanged(nameof(SelectedPanelScaleBarColor));
+        OnPropertyChanged(nameof(SelectedPanelScaleBarBrush));
+        OnPropertyChanged(nameof(SelectedPanelScaleBarThicknessPt));
+        OnPropertyChanged(nameof(SelectedPanelStyleOverrideStatusText));
+        ResetSelectedPanelLabelStyleCommand.NotifyCanExecuteChanged();
+        ResetSelectedPanelScaleBarStyleCommand.NotifyCanExecuteChanged();
     }
 
     private void NotifyPanelSelectionChanged()
@@ -1846,6 +2496,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
             nameof(FigurePanelViewModel.ScaleBarPhysicalLength) or
             nameof(FigurePanelViewModel.ScaleBarUnit) or
             nameof(FigurePanelViewModel.ScaleBarShowLabel) or
+            nameof(FigurePanelViewModel.StyleOverride) or
             nameof(FigurePanelViewModel.Adjustments) or
             nameof(FigurePanelViewModel.Brightness) or
             nameof(FigurePanelViewModel.Contrast) or
@@ -1859,6 +2510,12 @@ public sealed class FigureCanvasViewModel : ObservableObject
             nameof(FigurePanelViewModel.Label))
         {
             DocumentChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        if (e.PropertyName == nameof(FigurePanelViewModel.StyleOverride) &&
+            ReferenceEquals(sender, SelectedPanel))
+        {
+            NotifySelectedPanelStyleChanged();
         }
 
         if (e.PropertyName == nameof(FigurePanelViewModel.SourceRect) &&
@@ -1932,7 +2589,11 @@ public sealed class FigureCanvasViewModel : ObservableObject
             nameof(FigureAnnotationViewModel.EndX) or
             nameof(FigureAnnotationViewModel.EndY) or
             nameof(FigureAnnotationViewModel.Text) or
-            nameof(FigureAnnotationViewModel.Color) or
+            nameof(FigureAnnotationViewModel.StrokeColor) or
+            nameof(FigureAnnotationViewModel.FillColor) or
+            nameof(FigureAnnotationViewModel.FillOpacityPercent) or
+            nameof(FigureAnnotationViewModel.TextColor) or
+            nameof(FigureAnnotationViewModel.FontFamily) or
             nameof(FigureAnnotationViewModel.FontSizePt) or
             nameof(FigureAnnotationViewModel.StrokeWidthPt) or
             nameof(FigureAnnotationViewModel.IsBold) or
@@ -1948,6 +2609,8 @@ public sealed class FigureCanvasViewModel : ObservableObject
             RemoveSelectedAnnotationCommand.NotifyCanExecuteChanged();
             MoveAnnotationUpCommand.NotifyCanExecuteChanged();
             MoveAnnotationDownCommand.NotifyCanExecuteChanged();
+            ResetSelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
+            PasteSelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
         }
     }
 

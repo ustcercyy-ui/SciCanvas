@@ -1,6 +1,7 @@
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
 using SciCanvas.Core.Sources;
+using SciCanvas.Core.Workspace;
 
 namespace SciCanvas.Core.Export;
 
@@ -19,21 +20,116 @@ public sealed record FigurePanelExportItem(
     FigureScaleBarExportSpec? ScaleBar = null,
     ImageAdjustmentParameters? Adjustments = null,
     int FrameIndex = 0,
-    bool IsInset = false);
+    bool IsInset = false,
+    StyleOverride? StyleOverride = null);
 
-public sealed record FigureAnnotationExportItem(
-    string Kind,
-    double X,
-    double Y,
-    double EndX,
-    double EndY,
-    string Text,
-    string Color,
-    double FontSizePt,
-    double StrokeWidthPt,
-    bool IsBold,
-    bool IsVisible,
-    int ZIndex);
+public sealed record FigureAnnotationExportItem
+{
+    public FigureAnnotationExportItem(
+        string Kind,
+        double X,
+        double Y,
+        double EndX,
+        double EndY,
+        string Text,
+        string Color,
+        double FontSizePt,
+        double StrokeWidthPt,
+        bool IsBold,
+        bool IsVisible,
+        int ZIndex)
+        : this(
+            Kind,
+            X,
+            Y,
+            EndX,
+            EndY,
+            Text,
+            Color,
+            Color,
+            0,
+            Color,
+            "Arial",
+            FontSizePt,
+            StrokeWidthPt,
+            IsBold,
+            IsVisible,
+            ZIndex)
+    {
+    }
+
+    public FigureAnnotationExportItem(
+        string kind,
+        double x,
+        double y,
+        double endX,
+        double endY,
+        string text,
+        string strokeColor,
+        string fillColor,
+        double fillOpacityPercent,
+        string textColor,
+        string fontFamily,
+        double fontSizePt,
+        double strokeWidthPt,
+        bool isBold,
+        bool isVisible,
+        int zIndex)
+    {
+        Kind = kind;
+        X = x;
+        Y = y;
+        EndX = endX;
+        EndY = endY;
+        Text = text;
+        StrokeColor = strokeColor;
+        FillColor = fillColor;
+        FillOpacityPercent = fillOpacityPercent;
+        TextColor = textColor;
+        FontFamily = fontFamily;
+        FontSizePt = fontSizePt;
+        StrokeWidthPt = strokeWidthPt;
+        IsBold = isBold;
+        IsVisible = isVisible;
+        ZIndex = zIndex;
+    }
+
+    public string Kind { get; init; }
+
+    public double X { get; init; }
+
+    public double Y { get; init; }
+
+    public double EndX { get; init; }
+
+    public double EndY { get; init; }
+
+    public string Text { get; init; }
+
+    public string StrokeColor { get; init; }
+
+    public string FillColor { get; init; }
+
+    public double FillOpacityPercent { get; init; }
+
+    public string TextColor { get; init; }
+
+    public string FontFamily { get; init; }
+
+    public double FontSizePt { get; init; }
+
+    public double StrokeWidthPt { get; init; }
+
+    public bool IsBold { get; init; }
+
+    public bool IsVisible { get; init; }
+
+    public int ZIndex { get; init; }
+
+    public string Color => string.Equals(Kind, "text", StringComparison.OrdinalIgnoreCase)
+        ? TextColor
+        : StrokeColor;
+}
 
 public sealed record FigureGlobalStyle(
     string FontFamily,
@@ -41,7 +137,16 @@ public sealed record FigureGlobalStyle(
     double StrokeWidthPt,
     string TextColor,
     string ShapeColor,
-    string ScaleBarColor)
+    string ScaleBarColor,
+    string? PanelLabelFontFamily = null,
+    double? PanelLabelFontSizePt = null,
+    string? PanelLabelTextColor = null,
+    bool PanelLabelIsBold = true,
+    string? ScaleBarLabelColor = null,
+    string? ScaleBarFontFamily = null,
+    double? ScaleBarFontSizePt = null,
+    bool ScaleBarLabelIsBold = true,
+    double? ScaleBarThicknessPt = null)
 {
     public static FigureGlobalStyle Default { get; } = new(
         "Arial",
@@ -51,11 +156,66 @@ public sealed record FigureGlobalStyle(
         "#FFE53935",
         "#FFFFFFFF");
 
+    public string EffectivePanelLabelFontFamily =>
+        string.IsNullOrWhiteSpace(PanelLabelFontFamily) ? FontFamily : PanelLabelFontFamily;
+
+    public double EffectivePanelLabelFontSizePt => PanelLabelFontSizePt ?? FontSizePt;
+
+    public string EffectivePanelLabelTextColor =>
+        string.IsNullOrWhiteSpace(PanelLabelTextColor) ? TextColor : PanelLabelTextColor;
+
+    public string EffectiveScaleBarLabelColor =>
+        string.IsNullOrWhiteSpace(ScaleBarLabelColor) ? ScaleBarColor : ScaleBarLabelColor;
+
+    public string EffectiveScaleBarFontFamily =>
+        string.IsNullOrWhiteSpace(ScaleBarFontFamily) ? FontFamily : ScaleBarFontFamily;
+
+    public double EffectiveScaleBarFontSizePt => ScaleBarFontSizePt ?? FontSizePt;
+
+    public double EffectiveScaleBarThicknessPt => ScaleBarThicknessPt ?? StrokeWidthPt;
+
+    public FigureGlobalStyle ResolvePanelOverride(StyleOverride? styleOverride)
+    {
+        if (styleOverride is null || styleOverride.IsEmpty)
+        {
+            return this;
+        }
+
+        styleOverride.EnsureValid();
+        TextStyle? panelLabel = styleOverride.PanelLabel;
+        TextStyle? scaleBarText = styleOverride.ScaleBarText;
+        ScaleBarStyle? scaleBar = styleOverride.ScaleBar;
+        return this with
+        {
+            PanelLabelFontFamily = panelLabel?.FontFamily ?? PanelLabelFontFamily,
+            PanelLabelFontSizePt = panelLabel?.FontSizePt ?? PanelLabelFontSizePt,
+            PanelLabelTextColor = panelLabel?.Color ?? PanelLabelTextColor,
+            PanelLabelIsBold = panelLabel?.IsBold ?? PanelLabelIsBold,
+            ScaleBarLabelColor = scaleBarText?.Color ?? ScaleBarLabelColor,
+            ScaleBarFontFamily = scaleBarText?.FontFamily ?? ScaleBarFontFamily,
+            ScaleBarFontSizePt = scaleBarText?.FontSizePt ?? ScaleBarFontSizePt,
+            ScaleBarLabelIsBold = scaleBarText?.IsBold ?? ScaleBarLabelIsBold,
+            ScaleBarColor = scaleBar?.Color ?? ScaleBarColor,
+            ScaleBarThicknessPt = scaleBar?.BarThicknessPt ?? ScaleBarThicknessPt,
+        };
+    }
+
     public bool IsValid =>
         !string.IsNullOrWhiteSpace(FontFamily) && FontFamily.Length <= 128 &&
         double.IsFinite(FontSizePt) && FontSizePt is >= 4 and <= 72 &&
         double.IsFinite(StrokeWidthPt) && StrokeWidthPt is >= 0.25 and <= 10 &&
-        IsColor(TextColor) && IsColor(ShapeColor) && IsColor(ScaleBarColor);
+        !string.IsNullOrWhiteSpace(EffectivePanelLabelFontFamily) &&
+        EffectivePanelLabelFontFamily.Length <= 128 &&
+        double.IsFinite(EffectivePanelLabelFontSizePt) &&
+        EffectivePanelLabelFontSizePt is >= 4 and <= 72 &&
+        !string.IsNullOrWhiteSpace(EffectiveScaleBarFontFamily) &&
+        EffectiveScaleBarFontFamily.Length <= 128 &&
+        double.IsFinite(EffectiveScaleBarFontSizePt) &&
+        EffectiveScaleBarFontSizePt is >= 4 and <= 72 &&
+        double.IsFinite(EffectiveScaleBarThicknessPt) &&
+        EffectiveScaleBarThicknessPt is >= 0.25 and <= 10 &&
+        IsColor(TextColor) && IsColor(ShapeColor) && IsColor(ScaleBarColor) &&
+        IsColor(EffectivePanelLabelTextColor) && IsColor(EffectiveScaleBarLabelColor);
 
     public void EnsureValid()
     {

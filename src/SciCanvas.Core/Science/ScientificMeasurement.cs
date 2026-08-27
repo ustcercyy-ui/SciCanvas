@@ -22,7 +22,8 @@ public sealed record ScientificMeasurement(
     MeasurementPoint PointB,
     MeasurementPoint? PointC = null,
     string? Name = null,
-    IReadOnlyList<MeasurementPoint>? PathPoints = null)
+    IReadOnlyList<MeasurementPoint>? PathPoints = null,
+    long SourceRevision = 1)
 {
     public IReadOnlyList<MeasurementPoint> EffectivePathPoints =>
         Kind == ScientificMeasurementKind.Polyline && PathPoints is { Count: >= 2 }
@@ -32,6 +33,7 @@ public sealed record ScientificMeasurement(
     public bool IsValid =>
         Id != Guid.Empty &&
         SourceAssetId != Guid.Empty &&
+        SourceRevision >= 1 &&
         PointA.IsFinite &&
         PointB.IsFinite &&
         (Kind != ScientificMeasurementKind.Angle || PointC is { IsFinite: true }) &&

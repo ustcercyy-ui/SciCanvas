@@ -25,9 +25,9 @@ public static class FigureAssistance
         {
             bool mismatch = annotation.Kind == "text"
                 ? Math.Abs(annotation.FontSizePt - style.FontSizePt) > 0.01 ||
-                  !SameColor(annotation.Color, style.TextColor)
+                  !SameColor(annotation.TextColor, style.TextColor)
                 : Math.Abs(annotation.StrokeWidthPt - style.StrokeWidthPt) > 0.01 ||
-                  !SameColor(annotation.Color, style.ShapeColor);
+                  !SameColor(annotation.StrokeColor, style.ShapeColor);
             if (mismatch)
             {
                 issues.Add(new(

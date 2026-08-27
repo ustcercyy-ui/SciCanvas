@@ -58,7 +58,8 @@ internal sealed record PanelHistorySnapshot(
     Guid? CropLinkGroupId,
     PanelFitMode FitMode,
     double RotationDegrees,
-    ScientificValidity ReplacementValidity);
+    ScientificValidity ReplacementValidity,
+    StyleOverride? StyleOverride);
 
 internal sealed record AnnotationHistorySnapshot(
     Guid Id,
@@ -68,7 +69,11 @@ internal sealed record AnnotationHistorySnapshot(
     double EndX,
     double EndY,
     string Text,
-    string Color,
+    string StrokeColor,
+    string FillColor,
+    double FillOpacityPercent,
+    string TextColor,
+    string FontFamily,
     double FontSizePt,
     double StrokeWidthPt,
     bool IsBold,
@@ -93,6 +98,7 @@ internal sealed record CalibrationHistorySnapshot(
 internal sealed record MeasurementHistorySnapshot(
     Guid Id,
     Guid SourceId,
+    long SourceRevision,
     ScientificMeasurementKind Kind,
     MeasurementPoint PointA,
     MeasurementPoint PointB,
@@ -101,9 +107,16 @@ internal sealed record MeasurementHistorySnapshot(
     string StrokeColor,
     double StrokeWidthPixels,
     string LineStyle,
+    string FillColor,
+    string MarkerStrokeColor,
+    string MarkerFillColor,
     double MarkerSizePixels,
     bool ShowMarkers,
     bool ShowLabel,
+    string LabelColor,
+    string LabelFontFamily,
+    double LabelFontSizePt,
+    bool LabelIsBold,
     double FillOpacityPercent,
     bool IsVisible,
     bool IsLocked);

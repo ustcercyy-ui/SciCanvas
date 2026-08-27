@@ -5,6 +5,7 @@ using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
+using SciCanvas.Core.Workspace;
 using SciCanvas.Imaging;
 using SciCanvas.Persistence;
 using SciCanvas.Platform.Windows;
@@ -28,6 +29,7 @@ public sealed class ProjectRoundTripIntegrationTests
         SourceAsset asset = await CreateReader().ImportAsync(sourcePath);
         BitmapSource preview = await new WpfImagePreviewLoader().LoadAsync(sourcePath, 1400);
         var sourceItem = new SourceAssetItemViewModel(asset, preview);
+        sourceItem.RestoreSourceRevision(3);
         original.Sources.Add(sourceItem);
         original.SelectedSource = sourceItem;
         Assert.True(original.Crop.RestoreForSource(
@@ -52,6 +54,29 @@ public sealed class ProjectRoundTripIntegrationTests
                 0,
                 255),
         });
+        ScientificMeasurementViewModel styledMeasurement = sourceItem.AddMeasurement(
+            ScientificMeasurementKind.RectangleRoi,
+            new MeasurementPoint(4, 5),
+            new MeasurementPoint(12, 10),
+            visualStyle: new ScientificMeasurementVisualStyle
+            {
+                StrokeColor = "#FFFF0000",
+                StrokeWidthPixels = 4,
+                LineStyle = "dash",
+                FillColor = "#FF0000FF",
+                FillOpacityPercent = 20,
+                MarkerStrokeColor = "#FF00FF00",
+                MarkerFillColor = "#FF111111",
+                MarkerSizePixels = 14,
+                ShowMarkers = true,
+                ShowLabel = true,
+                LabelColor = "#FF00FF00",
+                LabelFontFamily = "Consolas",
+                LabelFontSizePt = 11,
+                LabelIsBold = true,
+                IsVisible = true,
+                IsLocked = false,
+            });
         original.SelectedFigureTemplate = original.AvailableTemplates.Single(
             template => template.Id == "materials.synthesis-structure-performance.nature-double");
         FigurePanelViewModel panel = Assert.IsType<FigurePanelViewModel>(
@@ -72,7 +97,9 @@ public sealed class ProjectRoundTripIntegrationTests
         textAnnotation.Text = "界面区域";
         textAnnotation.X = 300;
         textAnnotation.Y = 400;
-        textAnnotation.Color = "#FF2255AA";
+        textAnnotation.TextColor = "#FF2255AA";
+        textAnnotation.FontFamily = "Times New Roman";
+        textAnnotation.FontSizePt = 12;
         textAnnotation.IsBold = true;
         original.Figure.AddArrowAnnotationCommand.Execute(null);
         FigureAnnotationViewModel arrowAnnotation = Assert.IsType<FigureAnnotationViewModel>(
@@ -81,14 +108,14 @@ public sealed class ProjectRoundTripIntegrationTests
         arrowAnnotation.Y = 500;
         arrowAnnotation.EndX = 450;
         arrowAnnotation.EndY = 560;
-        arrowAnnotation.Color = "#FFE53935";
+        arrowAnnotation.StrokeColor = "#FFE53935";
         arrowAnnotation.StrokeWidthPt = 1.5;
         arrowAnnotation.IsLocked = true;
         original.Figure.AddTextAnnotationCommand.Execute(null);
         FigureAnnotationViewModel draftAnnotation = Assert.IsType<FigureAnnotationViewModel>(
             original.Figure.SelectedAnnotation);
         draftAnnotation.Text = string.Empty;
-        draftAnnotation.Color = "待填写";
+        draftAnnotation.TextColor = "#FF111111";
         original.Figure.AddRectangleAnnotationCommand.Execute(null);
         FigureAnnotationViewModel rectangle = Assert.IsType<FigureAnnotationViewModel>(
             original.Figure.SelectedAnnotation);
@@ -96,7 +123,9 @@ public sealed class ProjectRoundTripIntegrationTests
         rectangle.Y = 260;
         rectangle.EndX = 820;
         rectangle.EndY = 560;
-        rectangle.Color = "#FFFFB300";
+        rectangle.StrokeColor = "#FFFFFF00";
+        rectangle.FillColor = "#FF00FFFF";
+        rectangle.FillOpacityPercent = 24;
         rectangle.StrokeWidthPt = 1.75;
         original.Figure.AddEllipseAnnotationCommand.Execute(null);
         FigureAnnotationViewModel ellipse = Assert.IsType<FigureAnnotationViewModel>(
@@ -129,6 +158,16 @@ public sealed class ProjectRoundTripIntegrationTests
             Assert.Single(restored.Sources[0].AnalysisResults));
         Assert.Equal(new PixelRect64(3, 4, 12, 8), restoredAnalysis.Region);
         Assert.Equal(12288, restoredAnalysis.IntegratedIntensity);
+        ScientificMeasurementViewModel restoredMeasurement = Assert.Single(restored.Sources[0].Measurements);
+        Assert.Equal(styledMeasurement.Id, restoredMeasurement.Id);
+        Assert.Equal(3, restoredMeasurement.SourceRevision);
+        Assert.Equal("#FFFF0000", restoredMeasurement.StrokeColor);
+        Assert.Equal("#FF0000FF", restoredMeasurement.FillColor);
+        Assert.Equal("#FF00FF00", restoredMeasurement.MarkerStrokeColor);
+        Assert.Equal("#FF00FF00", restoredMeasurement.LabelColor);
+        Assert.Equal("Consolas", restoredMeasurement.LabelFontFamily);
+        Assert.Equal(11, restoredMeasurement.LabelFontSizePt);
+        Assert.True(restoredMeasurement.LabelIsBold);
         Assert.True(restored.Crop.TryGetCrop(out PixelRect64 restoredCrop));
         Assert.Equal(new PixelRect64(3, 4, 12, 8), restoredCrop);
         FigurePanelViewModel restoredPanel = Assert.Single(restored.Figure.Panels);
@@ -150,6 +189,9 @@ public sealed class ProjectRoundTripIntegrationTests
         Assert.Equal("界面区域", restoredText.Text);
         Assert.Equal(300, restoredText.X);
         Assert.True(restoredText.IsBold);
+        Assert.Equal("Times New Roman", restoredText.FontFamily);
+        Assert.Equal(12, restoredText.FontSizePt);
+        Assert.Equal("#FF2255AA", restoredText.TextColor);
         FigureAnnotationViewModel restoredArrow = restored.Figure.Annotations.Single(
             annotation => annotation.Kind == FigureAnnotationKind.Arrow);
         Assert.Equal(450, restoredArrow.EndX);
@@ -157,12 +199,15 @@ public sealed class ProjectRoundTripIntegrationTests
         Assert.True(restoredArrow.IsLocked);
         FigureAnnotationViewModel restoredDraft = restored.Figure.Annotations.Single(
             annotation => annotation.Kind == FigureAnnotationKind.Text && annotation.Text.Length == 0);
-        Assert.Equal("待填写", restoredDraft.Color);
+        Assert.Equal("#FF111111", restoredDraft.TextColor);
         Assert.False(restoredDraft.IsValid);
         FigureAnnotationViewModel restoredRectangle = restored.Figure.Annotations.Single(
             annotation => annotation.Kind == FigureAnnotationKind.Rectangle);
         Assert.Equal(820, restoredRectangle.EndX);
         Assert.Equal(1.75, restoredRectangle.StrokeWidthPt);
+        Assert.Equal("#FFFFFF00", restoredRectangle.StrokeColor);
+        Assert.Equal("#FF00FFFF", restoredRectangle.FillColor);
+        Assert.Equal(24, restoredRectangle.FillOpacityPercent);
         FigureAnnotationViewModel restoredEllipse = restored.Figure.Annotations.Single(
             annotation => annotation.Kind == FigureAnnotationKind.Ellipse);
         Assert.Equal(320, restoredEllipse.ShapeHeight);
@@ -511,6 +556,10 @@ public sealed class ProjectRoundTripIntegrationTests
         original.Figure.GlobalTextColor = "#FF223344";
         original.Figure.GlobalShapeColor = "#FF00AA88";
         original.Figure.GlobalScaleBarColor = "#FFFFFFFF";
+        panel.RestoreStyleOverride(new StyleOverride(
+            PanelLabel: new TextStyle("Consolas", 10, false, "#FF123456"),
+            ScaleBarText: new TextStyle("Times New Roman", 9, true, "#FFABCDEF"),
+            ScaleBar: new ScaleBarStyle(ScaleBarAnchor.BottomRight, 2.5, "#FF00FF00")));
         panel.Label = "SEM-1";
         await original.SaveProjectToPathAsync(projectPath);
 
@@ -522,7 +571,16 @@ public sealed class ProjectRoundTripIntegrationTests
         Assert.False(restored.Figure.AutoPanelLabelsEnabled);
         Assert.True(restored.Figure.ShowPanelLabels);
         Assert.Equal("uppercase", restored.Figure.PanelLabelSequence);
-        Assert.Equal("SEM-1", Assert.Single(restored.Figure.Panels).Label);
+        FigurePanelViewModel restoredPanel = Assert.Single(restored.Figure.Panels);
+        Assert.Equal("SEM-1", restoredPanel.Label);
+        Assert.Equal("Consolas", restoredPanel.StyleOverride?.PanelLabel?.FontFamily);
+        Assert.Equal("#FF123456", restoredPanel.StyleOverride?.PanelLabel?.Color);
+        Assert.Equal("Times New Roman", restoredPanel.StyleOverride?.ScaleBarText?.FontFamily);
+        Assert.Equal("#FF00FF00", restoredPanel.StyleOverride?.ScaleBar?.Color);
+        FigureGlobalStyle resolvedPanelStyle = restored.Figure.GlobalStyle.ResolvePanelOverride(
+            restoredPanel.StyleOverride);
+        Assert.Equal("Consolas", resolvedPanelStyle.EffectivePanelLabelFontFamily);
+        Assert.Equal(2.5, resolvedPanelStyle.EffectiveScaleBarThicknessPt);
         Assert.Equal("#FFECEFF1", restored.Figure.CreateExportDocument().BackgroundColor);
         Assert.Equal("Segoe UI", restored.Figure.GlobalFontFamily);
         Assert.Equal(8, restored.Figure.GlobalFontSizePt);
@@ -566,6 +624,39 @@ public sealed class ProjectRoundTripIntegrationTests
         viewModel.NavigateToSelectedQcIssueCommand.Execute(null);
         Assert.Equal(WorkspaceMode.Figure, viewModel.WorkspaceMode);
         Assert.Same(panel, viewModel.Figure.SelectedPanel);
+    }
+
+    [Fact]
+    public async Task FigureQc_ReportsAndNavigatesToStaleMeasurementRevision()
+    {
+        using var workspace = new TestWorkspace();
+        string sourcePath = Path.Combine(workspace.Root, "stale-measurement.png");
+        CreatePng(sourcePath, 30, 20);
+
+        MainWindowViewModel viewModel = CreateViewModel();
+        SourceAsset asset = await CreateReader().ImportAsync(sourcePath);
+        BitmapSource preview = await new WpfImagePreviewLoader().LoadAsync(sourcePath, 1400);
+        var sourceItem = new SourceAssetItemViewModel(asset, preview);
+        viewModel.Sources.Add(sourceItem);
+        viewModel.SelectedSource = sourceItem;
+        ScientificMeasurementViewModel measurement = sourceItem.AddMeasurement(
+            ScientificMeasurementKind.Length,
+            new MeasurementPoint(1, 1),
+            new MeasurementPoint(10, 10));
+        sourceItem.RestoreSourceRevision(2);
+
+        viewModel.RunFigureQcCommand.Execute(null);
+
+        FigureQcIssueViewModel issue = Assert.Single(
+            viewModel.FigureQcIssues,
+            item => item.Code == "STALE_MEASUREMENT_REVISION");
+        Assert.Equal(measurement.Id, issue.ObjectId);
+        Assert.True(issue.CanNavigate);
+        viewModel.SelectedFigureQcIssue = issue;
+        viewModel.NavigateToSelectedQcIssueCommand.Execute(null);
+        Assert.Equal(WorkspaceMode.Crop, viewModel.WorkspaceMode);
+        Assert.Same(sourceItem, viewModel.SelectedSource);
+        Assert.Same(measurement, sourceItem.SelectedMeasurement);
     }
 
     [Fact]

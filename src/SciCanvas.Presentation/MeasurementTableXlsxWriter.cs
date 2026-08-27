@@ -16,8 +16,17 @@ public static class MeasurementTableXlsxWriter
 
     public static void WriteNew(string targetPath, SourceAssetItemViewModel source)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(targetPath);
         ArgumentNullException.ThrowIfNull(source);
+        WriteNew(targetPath, [source]);
+    }
+
+    public static void WriteNew(
+        string targetPath,
+        IEnumerable<SourceAssetItemViewModel> sources)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetPath);
+        ArgumentNullException.ThrowIfNull(sources);
+        SourceAssetItemViewModel[] materialized = sources.ToArray();
         bool created = false;
         try
         {
@@ -32,7 +41,7 @@ public static class MeasurementTableXlsxWriter
             WriteTextEntry(archive, "_rels/.rels", RootRelationshipsXml);
             WriteTextEntry(archive, "xl/workbook.xml", WorkbookXml);
             WriteTextEntry(archive, "xl/_rels/workbook.xml.rels", WorkbookRelationshipsXml);
-            WriteWorksheet(archive, source);
+            WriteWorksheet(archive, materialized);
         }
         catch
         {
@@ -54,7 +63,9 @@ public static class MeasurementTableXlsxWriter
         }
     }
 
-    private static void WriteWorksheet(ZipArchive archive, SourceAssetItemViewModel source)
+    private static void WriteWorksheet(
+        ZipArchive archive,
+        IReadOnlyCollection<SourceAssetItemViewModel> sources)
     {
         ZipArchiveEntry entry = archive.CreateEntry("xl/worksheets/sheet1.xml", CompressionLevel.Optimal);
         using Stream stream = entry.Open();
@@ -76,31 +87,34 @@ public static class MeasurementTableXlsxWriter
 
         writer.WriteEndElement();
         int rowNumber = 2;
-        foreach (ScientificMeasurementViewModel measurement in source.Measurements)
+        foreach (SourceAssetItemViewModel source in sources)
         {
-            var model = measurement.Measurement;
-            bool hasRegion = model.PixelArea > 0;
-            double? area = hasRegion
-                ? model.PhysicalArea(source.Calibration.Calibration) ?? model.PixelArea
-                : null;
-            double? perimeter = hasRegion
-                ? model.PhysicalPerimeter(source.Calibration.Calibration) ?? model.PixelPerimeter
-                : null;
-            string lengthUnit = source.Calibration.IsCalibrated ? source.Calibration.Unit : "px";
-            writer.WriteStartElement("row", SpreadsheetNamespace);
-            writer.WriteAttributeString("r", rowNumber.ToString(CultureInfo.InvariantCulture));
-            WriteInlineStringCell(writer, CellReference(0, rowNumber), source.DisplayName);
-            WriteNumberCell(writer, CellReference(1, rowNumber), measurement.Number);
-            WriteInlineStringCell(writer, CellReference(2, rowNumber), measurement.TypeText);
-            WriteNumberCell(writer, CellReference(3, rowNumber), measurement.NumericValue ?? model.PixelValue);
-            WriteInlineStringCell(writer, CellReference(4, rowNumber), measurement.UnitText);
-            WriteNumberCell(writer, CellReference(5, rowNumber), model.PixelValue);
-            WriteOptionalNumberCell(writer, CellReference(6, rowNumber), area);
-            WriteInlineStringCell(writer, CellReference(7, rowNumber), hasRegion ? $"{lengthUnit}²" : string.Empty);
-            WriteOptionalNumberCell(writer, CellReference(8, rowNumber), perimeter);
-            WriteInlineStringCell(writer, CellReference(9, rowNumber), hasRegion ? lengthUnit : string.Empty);
-            writer.WriteEndElement();
-            rowNumber++;
+            foreach (ScientificMeasurementViewModel measurement in source.Measurements)
+            {
+                var model = measurement.Measurement;
+                bool hasRegion = model.PixelArea > 0;
+                double? area = hasRegion
+                    ? model.PhysicalArea(source.Calibration.Calibration) ?? model.PixelArea
+                    : null;
+                double? perimeter = hasRegion
+                    ? model.PhysicalPerimeter(source.Calibration.Calibration) ?? model.PixelPerimeter
+                    : null;
+                string lengthUnit = source.Calibration.IsCalibrated ? source.Calibration.Unit : "px";
+                writer.WriteStartElement("row", SpreadsheetNamespace);
+                writer.WriteAttributeString("r", rowNumber.ToString(CultureInfo.InvariantCulture));
+                WriteInlineStringCell(writer, CellReference(0, rowNumber), source.DisplayName);
+                WriteNumberCell(writer, CellReference(1, rowNumber), measurement.Number);
+                WriteInlineStringCell(writer, CellReference(2, rowNumber), measurement.TypeText);
+                WriteNumberCell(writer, CellReference(3, rowNumber), measurement.NumericValue ?? model.PixelValue);
+                WriteInlineStringCell(writer, CellReference(4, rowNumber), measurement.UnitText);
+                WriteNumberCell(writer, CellReference(5, rowNumber), model.PixelValue);
+                WriteOptionalNumberCell(writer, CellReference(6, rowNumber), area);
+                WriteInlineStringCell(writer, CellReference(7, rowNumber), hasRegion ? $"{lengthUnit}²" : string.Empty);
+                WriteOptionalNumberCell(writer, CellReference(8, rowNumber), perimeter);
+                WriteInlineStringCell(writer, CellReference(9, rowNumber), hasRegion ? lengthUnit : string.Empty);
+                writer.WriteEndElement();
+                rowNumber++;
+            }
         }
 
         writer.WriteEndElement();

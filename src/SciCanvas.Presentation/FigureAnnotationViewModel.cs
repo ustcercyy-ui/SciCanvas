@@ -1,7 +1,8 @@
-using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media;
 using SciCanvas.Core.Export;
+using SciCanvas.Core.Workspace;
+using SciCanvas.Imaging;
 
 namespace SciCanvas.Presentation;
 
@@ -14,6 +15,17 @@ public enum FigureAnnotationKind
     Ellipse,
 }
 
+public sealed record FigureAnnotationStyle(
+    FigureAnnotationKind Kind,
+    string StrokeColor,
+    string FillColor,
+    double FillOpacityPercent,
+    string TextColor,
+    string FontFamily,
+    double FontSizePt,
+    double StrokeWidthPt,
+    bool IsBold);
+
 public sealed partial class FigureAnnotationViewModel : ObservableObject
 {
     private readonly int _canvasWidth;
@@ -24,7 +36,11 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
     private double _endX;
     private double _endY;
     private string _text;
-    private string _color;
+    private string _strokeColor;
+    private string _fillColor;
+    private double _fillOpacityPercent;
+    private string _textColor;
+    private string _fontFamily;
     private double _fontSizePt;
     private double _strokeWidthPt;
     private bool _isBold;
@@ -57,7 +73,11 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
             ? canvasHeight * 0.45
             : canvasHeight * 0.25;
         _text = kind == FigureAnnotationKind.Text ? "文字标注" : string.Empty;
-        _color = kind == FigureAnnotationKind.Text ? "#FF111111" : "#FFE53935";
+        _strokeColor = "#FFE53935";
+        _fillColor = "#FFE53935";
+        _fillOpacityPercent = 0;
+        _textColor = "#FF111111";
+        _fontFamily = "Arial";
         _fontSizePt = 7;
         _strokeWidthPt = 1.25;
     }
@@ -182,16 +202,103 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
         }
     }
 
-    public string Color
+    public string StrokeColor
     {
-        get => _color;
+        get => _strokeColor;
         set
         {
             string normalized = value?.Trim() ?? string.Empty;
-            if (SetProperty(ref _color, normalized))
+            if (SetProperty(ref _strokeColor, normalized))
             {
+                OnPropertyChanged(nameof(StrokeBrush));
                 OnPropertyChanged(nameof(PreviewBrush));
                 NotifyValidationChanged();
+            }
+        }
+    }
+
+    public string FillColor
+    {
+        get => _fillColor;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (SetProperty(ref _fillColor, normalized))
+            {
+                OnPropertyChanged(nameof(FillBrush));
+                NotifyValidationChanged();
+            }
+        }
+    }
+
+    public double FillOpacityPercent
+    {
+        get => _fillOpacityPercent;
+        set
+        {
+            if (SetProperty(ref _fillOpacityPercent, value))
+            {
+                OnPropertyChanged(nameof(FillBrush));
+                NotifyValidationChanged();
+            }
+        }
+    }
+
+    public string TextColor
+    {
+        get => _textColor;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (SetProperty(ref _textColor, normalized))
+            {
+                OnPropertyChanged(nameof(TextBrush));
+                OnPropertyChanged(nameof(PreviewBrush));
+                NotifyValidationChanged();
+            }
+        }
+    }
+
+    public string FontFamily
+    {
+        get => _fontFamily;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (SetProperty(ref _fontFamily, normalized))
+            {
+                OnPropertyChanged(nameof(FontChoices));
+                OnPropertyChanged(nameof(IsFontMissing));
+                OnPropertyChanged(nameof(FontAvailabilityMessage));
+                NotifyValidationChanged();
+            }
+        }
+    }
+
+    public IReadOnlyList<string> FontChoices =>
+        SystemFontCatalog.Instance.CreateChoices(FontFamily);
+
+    public bool IsFontMissing =>
+        !string.IsNullOrWhiteSpace(FontFamily) &&
+        !SystemFontCatalog.Instance.IsInstalled(FontFamily);
+
+    public string FontAvailabilityMessage => IsFontMissing
+        ? $"当前系统未安装字体 “{FontFamily}”；导出时将使用回退字体，工程中的字体名会保留。"
+        : string.Empty;
+
+    // Compatibility adapter for v2.2 callers. New code must use the semantic properties above.
+    public string Color
+    {
+        get => Kind == FigureAnnotationKind.Text ? TextColor : StrokeColor;
+        set
+        {
+            if (Kind == FigureAnnotationKind.Text)
+            {
+                TextColor = value;
+            }
+            else
+            {
+                StrokeColor = value;
             }
         }
     }
@@ -268,25 +375,28 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
 
     public Geometry LineGeometry => CreateLineGeometry();
 
-    public Brush PreviewBrush
+    public Brush StrokeBrush => CreateBrush(StrokeColor, Brushes.Magenta);
+
+    public Brush TextBrush => CreateBrush(TextColor, Brushes.Magenta);
+
+    public Brush FillBrush
     {
         get
         {
-            try
+            if (!ScientificStyleColor.TryParseColor(FillColor, out ScientificColorValue parsed))
             {
-                if (ColorConverter.ConvertFromString(Color) is SolidColorBrush brush)
-                {
-                    brush.Freeze();
-                    return brush;
-                }
-            }
-            catch (FormatException)
-            {
+                return Brushes.Magenta;
             }
 
-            return Brushes.Magenta;
+            byte alpha = (byte)Math.Round(parsed.Alpha * Math.Clamp(FillOpacityPercent, 0, 100) / 100.0);
+            var brush = new SolidColorBrush(
+                System.Windows.Media.Color.FromArgb(alpha, parsed.Red, parsed.Green, parsed.Blue));
+            brush.Freeze();
+            return brush;
         }
     }
+
+    public Brush PreviewBrush => Kind == FigureAnnotationKind.Text ? TextBrush : StrokeBrush;
 
     public string Summary => Kind switch
     {
@@ -307,7 +417,11 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
                 return false;
             }
 
-            if (!ColorPattern().IsMatch(Color) ||
+            if (!ScientificStyleColor.ValidateColor(StrokeColor) ||
+                !ScientificStyleColor.ValidateColor(FillColor) ||
+                !ScientificStyleColor.ValidateColor(TextColor) ||
+                !double.IsFinite(FillOpacityPercent) || FillOpacityPercent is < 0 or > 100 ||
+                string.IsNullOrWhiteSpace(FontFamily) || FontFamily.Length > 128 ||
                 !double.IsFinite(FontSizePt) || FontSizePt is < 4 or > 72 ||
                 !double.IsFinite(StrokeWidthPt) || StrokeWidthPt is < 0.25 or > 10)
             {
@@ -334,9 +448,21 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
                 return "标注坐标必须位于当前画布内。";
             }
 
-            if (!ColorPattern().IsMatch(Color))
+            if (!ScientificStyleColor.ValidateColor(StrokeColor) ||
+                !ScientificStyleColor.ValidateColor(FillColor) ||
+                !ScientificStyleColor.ValidateColor(TextColor))
             {
                 return "颜色必须使用 #RRGGBB 或 #AARRGGBB。";
+            }
+
+            if (!double.IsFinite(FillOpacityPercent) || FillOpacityPercent is < 0 or > 100)
+            {
+                return "填充透明度范围为 0–100%。";
+            }
+
+            if (string.IsNullOrWhiteSpace(FontFamily) || FontFamily.Length > 128)
+            {
+                return "字体名称不能为空且最多 128 个字符。";
             }
 
             if (!double.IsFinite(FontSizePt) || FontSizePt is < 4 or > 72)
@@ -407,12 +533,45 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
             EndX,
             EndY,
             Text,
-            Color,
+            StrokeColor,
+            FillColor,
+            FillOpacityPercent,
+            TextColor,
+            FontFamily,
             FontSizePt,
             StrokeWidthPt,
             IsBold,
             IsVisible,
             ZIndex);
+    }
+
+    public FigureAnnotationStyle CaptureStyle() => new(
+        Kind,
+        StrokeColor,
+        FillColor,
+        FillOpacityPercent,
+        TextColor,
+        FontFamily,
+        FontSizePt,
+        StrokeWidthPt,
+        IsBold);
+
+    public void ApplyStyle(FigureAnnotationStyle style)
+    {
+        ArgumentNullException.ThrowIfNull(style);
+        if (style.Kind != Kind)
+        {
+            throw new InvalidOperationException("只能向相同类型的标注粘贴样式。");
+        }
+
+        StrokeColor = style.StrokeColor;
+        FillColor = style.FillColor;
+        FillOpacityPercent = style.FillOpacityPercent;
+        TextColor = style.TextColor;
+        FontFamily = style.FontFamily;
+        FontSizePt = style.FontSizePt;
+        StrokeWidthPt = style.StrokeWidthPt;
+        IsBold = style.IsBold;
     }
 
     private Geometry CreateArrowGeometry()
@@ -505,6 +664,16 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
     private static double NormalizeRange(double value, double minimum, double maximum, double fallback) =>
         double.IsFinite(value) ? Math.Clamp(value, minimum, maximum) : fallback;
 
-    [GeneratedRegex("^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$")]
-    private static partial Regex ColorPattern();
+    private static Brush CreateBrush(string value, Brush fallback)
+    {
+        if (!ScientificStyleColor.TryParseColor(value, out ScientificColorValue parsed))
+        {
+            return fallback;
+        }
+
+        var brush = new SolidColorBrush(
+            System.Windows.Media.Color.FromArgb(parsed.Alpha, parsed.Red, parsed.Green, parsed.Blue));
+        brush.Freeze();
+        return brush;
+    }
 }

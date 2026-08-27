@@ -356,6 +356,134 @@ public sealed class WorkspaceDomainTests
         Assert.DoesNotContain(issues, issue => issue.RuleId == "panel-label.sequence");
     }
 
+    [Fact]
+    public void QcEngine_FontAvailabilityUsesCatalogAndReportsWarning()
+    {
+        ScientificAsset asset = CreateAsset(calibrated: true);
+        Guid figureId = Guid.NewGuid();
+        FigurePanel panel = CreatePanel(asset.Id, new FigureRectMm(0, 0, 40, 40), figureId);
+        var figure = new ScientificFigure(figureId, "Figure 1", 50, 50, [panel], [], null, DateTimeOffset.UtcNow);
+        ProjectStyle style = ProjectStyle.Default with
+        {
+            PanelLabel = ProjectStyle.Default.PanelLabel with { FontFamily = "MissingFont123" },
+        };
+        ScientificProject project = CreateProject([asset], figure, style);
+
+        IReadOnlyList<QcResult> issues = new QcEngine().Evaluate(
+            new QcContext(project, new QcConfiguration(), new FixedFontCatalog(["Arial"])));
+
+        Assert.Contains(issues, issue =>
+            issue.RuleId == "typography.font-availability" &&
+            issue.Severity == QcSeverity.Warning &&
+            issue.Message.Contains("MissingFont123", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void QcEngine_DetectsExactDuplicateSourceContent()
+    {
+        ScientificAsset first = CreateAsset(calibrated: true);
+        ScientificAsset second = CreateAsset(calibrated: true);
+        Guid figureId = Guid.NewGuid();
+        var figure = new ScientificFigure(figureId, "Figure 1", 50, 50, [], [], null, DateTimeOffset.UtcNow);
+        ScientificProject project = CreateProject([first, second], figure);
+
+        IReadOnlyList<QcResult> issues = new QcEngine().Evaluate(new QcContext(project, new QcConfiguration()));
+
+        Assert.Contains(issues, issue => issue.RuleId == "integrity.exact-duplicate-source");
+    }
+
+    [Fact]
+    public void QcEngine_DetectsExactCropAndStrongOverlapButSeparatesFramesAndSources()
+    {
+        ScientificAsset firstAsset = CreateAsset(calibrated: true);
+        ScientificAsset secondAsset = CreateAsset(calibrated: true) with
+        {
+            Source = CreateAsset(calibrated: true).Source with
+            {
+                Fingerprint = new SourceFingerprint(2048, DateTimeOffset.UtcNow, new string('B', 64), null),
+            },
+        };
+        Guid figureId = Guid.NewGuid();
+        FigurePanel exactA = CreatePanel(firstAsset.Id, new FigureRectMm(0, 0, 20, 20), figureId) with
+        {
+            Label = "a",
+            ManualCropPixels = new PixelRect64(0, 0, 1000, 1000),
+        };
+        FigurePanel exactB = CreatePanel(firstAsset.Id, new FigureRectMm(25, 0, 20, 20), figureId) with
+        {
+            Label = "b",
+            ManualCropPixels = new PixelRect64(0, 0, 1000, 1000),
+        };
+        FigurePanel overlap = CreatePanel(firstAsset.Id, new FigureRectMm(50, 0, 20, 20), figureId) with
+        {
+            Label = "c",
+            ManualCropPixels = new PixelRect64(40, 40, 1000, 1000),
+        };
+        FigurePanel differentFrame = exactA with
+        {
+            Id = Guid.NewGuid(),
+            Label = "d",
+            Frame = new FigureRectMm(75, 0, 20, 20),
+            FrameIndex = 1,
+        };
+        FigurePanel differentSource = exactA with
+        {
+            Id = Guid.NewGuid(),
+            AssetId = secondAsset.Id,
+            Label = "e",
+            Frame = new FigureRectMm(100, 0, 20, 20),
+        };
+        var figure = new ScientificFigure(
+            figureId,
+            "Figure 1",
+            125,
+            25,
+            [exactA, exactB, overlap, differentFrame, differentSource],
+            [],
+            null,
+            DateTimeOffset.UtcNow)
+        {
+            LabelScheme = PanelLabelScheme.Custom,
+        };
+        ScientificProject project = CreateProject([firstAsset, secondAsset], figure);
+
+        QcResult[] cropIssues = new QcEngine().Evaluate(new QcContext(project, new QcConfiguration()))
+            .Where(issue => issue.RuleId == "integrity.crop-reuse")
+            .ToArray();
+
+        Assert.Contains(cropIssues, issue => issue.Message.Contains("exact same", StringComparison.Ordinal));
+        Assert.Contains(cropIssues, issue => issue.Message.Contains("more than 90%", StringComparison.Ordinal));
+        Assert.DoesNotContain(cropIssues, issue => issue.Message.Contains("(d)", StringComparison.Ordinal));
+        Assert.DoesNotContain(cropIssues, issue => issue.Message.Contains("(e)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void QcEngine_StaleScientificObjectRevisionIsError()
+    {
+        ScientificAsset asset = CreateAsset(calibrated: true) with
+        {
+            Source = CreateAsset(calibrated: true).Source with { SourceRevision = 2 },
+        };
+        Guid figureId = Guid.NewGuid();
+        var figure = new ScientificFigure(figureId, "Figure 1", 50, 50, [], [], null, DateTimeOffset.UtcNow);
+        var staleRoi = new RoiObject
+        {
+            Id = Guid.NewGuid(),
+            AssetId = asset.Id,
+            SourceRevision = 1,
+            SourceGeometry = [new MeasurementPoint(0, 0), new MeasurementPoint(10, 10)],
+        };
+        ScientificProject project = CreateProject(
+            [asset],
+            figure,
+            objects: new Dictionary<Guid, ScientificObject> { [staleRoi.Id] = staleRoi });
+
+        IReadOnlyList<QcResult> issues = new QcEngine().Evaluate(new QcContext(project, new QcConfiguration()));
+
+        Assert.Contains(issues, issue =>
+            issue.RuleId == "integrity.source-revision" && issue.Severity == QcSeverity.Error);
+    }
+
     private static ScientificProject CreateProject(
         ScientificAsset asset,
         ScientificFigure figure) => new(
@@ -366,6 +494,21 @@ public sealed class WorkspaceDomainTests
             new Dictionary<Guid, ScientificFigure> { [figure.Id] = figure },
             ProjectStyle.Default,
             new Dictionary<Guid, ScientificObject>(),
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow);
+
+    private static ScientificProject CreateProject(
+        IEnumerable<ScientificAsset> assets,
+        ScientificFigure figure,
+        ProjectStyle? style = null,
+        IReadOnlyDictionary<Guid, ScientificObject>? objects = null) => new(
+            ScientificProject.CurrentSchemaVersion,
+            Guid.NewGuid(),
+            "Workspace test",
+            assets.ToDictionary(asset => asset.Id),
+            new Dictionary<Guid, ScientificFigure> { [figure.Id] = figure },
+            style ?? ProjectStyle.Default,
+            objects ?? new Dictionary<Guid, ScientificObject>(),
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow);
 

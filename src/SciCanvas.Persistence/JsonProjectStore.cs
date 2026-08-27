@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SciCanvas.Core.Workspace;
 
 namespace SciCanvas.Persistence;
 
@@ -173,6 +174,11 @@ public sealed class JsonProjectStore : IProjectStore
             {
                 throw new InvalidDataException($"图层 {layer.Name} 的 V2 工作区状态无效。");
             }
+
+            if (layer.StyleOverride is { } styleOverride && !IsValidPanelStyleOverride(styleOverride))
+            {
+                throw new InvalidDataException($"图层 {layer.Name} 的 Panel 局部样式覆盖无效。");
+            }
         }
 
         ProjectWorkspaceSnapshot workspace = document.Workspace;
@@ -225,6 +231,10 @@ public sealed class JsonProjectStore : IProjectStore
                 double.IsFinite(point.X) && double.IsFinite(point.Y));
             if (measurement.Id == Guid.Empty ||
                 !sourceIds.Contains(measurement.SourceAssetId) ||
+                measurement.SourceRevision < 1 ||
+                document.Sources.Any(source =>
+                    source.Id == measurement.SourceAssetId &&
+                    measurement.SourceRevision > source.SourceRevision) ||
                 !coordinatesFinite ||
                 !pathValid ||
                 (string.Equals(measurement.Kind, "polyline", StringComparison.OrdinalIgnoreCase) &&
@@ -233,10 +243,18 @@ public sealed class JsonProjectStore : IProjectStore
                 !double.IsFinite(measurement.StrokeWidthPixels) ||
                 measurement.StrokeWidthPixels is < 1 or > 12 ||
                 measurement.LineStyle is not ("solid" or "dash" or "dot" or "dash-dot") ||
+                !IsHexColor(measurement.FillColor) ||
+                !IsHexColor(measurement.MarkerStrokeColor) ||
+                !IsHexColor(measurement.MarkerFillColor) ||
                 !double.IsFinite(measurement.MarkerSizePixels) ||
                 measurement.MarkerSizePixels is < 8 or > 48 ||
+                !IsHexColor(measurement.LabelColor) ||
+                string.IsNullOrWhiteSpace(measurement.LabelFontFamily) ||
+                measurement.LabelFontFamily.Length > 128 ||
+                !double.IsFinite(measurement.LabelFontSizePt) ||
+                measurement.LabelFontSizePt is < 4 or > 72 ||
                 !double.IsFinite(measurement.FillOpacityPercent) ||
-                measurement.FillOpacityPercent is < 0 or > 60)
+                measurement.FillOpacityPercent is < 0 or > 100)
             {
                 throw new InvalidDataException("工程包含无效的科学测量记录。");
             }
@@ -393,12 +411,48 @@ public sealed class JsonProjectStore : IProjectStore
             throw new InvalidDataException("工程包含无效的吸附或精确间距设置。");
         }
 
+        foreach (ProjectAnnotationSnapshot annotation in document.TemplateSnapshot?.Annotations ?? [])
+        {
+            bool knownKind = annotation.Kind is "text" or "arrow" or "line" or "rectangle" or "ellipse";
+            if (annotation.Id == Guid.Empty ||
+                !knownKind ||
+                !double.IsFinite(annotation.X) || !double.IsFinite(annotation.Y) ||
+                !double.IsFinite(annotation.EndX) || !double.IsFinite(annotation.EndY) ||
+                !IsHexColor(annotation.StrokeColor) ||
+                !IsHexColor(annotation.FillColor) ||
+                !IsHexColor(annotation.TextColor) ||
+                !double.IsFinite(annotation.FillOpacityPercent) ||
+                annotation.FillOpacityPercent is < 0 or > 100 ||
+                string.IsNullOrWhiteSpace(annotation.FontFamily) ||
+                annotation.FontFamily.Length > 128 ||
+                !double.IsFinite(annotation.FontSizePt) ||
+                annotation.FontSizePt is < 4 or > 72 ||
+                !double.IsFinite(annotation.StrokeWidthPt) ||
+                annotation.StrokeWidthPt is < 0.25 or > 10 ||
+                annotation.ZIndex < 0)
+            {
+                throw new InvalidDataException("工程包含无效的标注样式或几何记录。");
+            }
+        }
+
         if (document.TemplateSnapshot?.GlobalStyle is { } style &&
             (string.IsNullOrWhiteSpace(style.FontFamily) || style.FontFamily.Length > 128 ||
              !double.IsFinite(style.FontSizePt) || style.FontSizePt is < 4 or > 72 ||
              !double.IsFinite(style.StrokeWidthPt) || style.StrokeWidthPt is < 0.25 or > 10 ||
              !IsHexColor(style.TextColor) || !IsHexColor(style.ShapeColor) ||
-             !IsHexColor(style.ScaleBarColor)))
+             !IsHexColor(style.ScaleBarColor) ||
+             string.IsNullOrWhiteSpace(style.PanelLabelFontFamily) ||
+             style.PanelLabelFontFamily.Length > 128 ||
+             !double.IsFinite(style.PanelLabelFontSizePt) ||
+             style.PanelLabelFontSizePt is < 4 or > 72 ||
+             !IsHexColor(style.PanelLabelTextColor) ||
+             string.IsNullOrWhiteSpace(style.ScaleBarFontFamily) ||
+             style.ScaleBarFontFamily.Length > 128 ||
+             !double.IsFinite(style.ScaleBarFontSizePt) ||
+             style.ScaleBarFontSizePt is < 4 or > 72 ||
+             !IsHexColor(style.ScaleBarLabelColor) ||
+             !double.IsFinite(style.ScaleBarThicknessPt) ||
+             style.ScaleBarThicknessPt is < 0.25 or > 10))
         {
             throw new InvalidDataException("工程包含无效的全局图样式。字体须为 4–72 pt，线宽须为 0.25–10 pt，颜色须为 HEX。 ");
         }
@@ -419,10 +473,31 @@ public sealed class JsonProjectStore : IProjectStore
     }
 
     private static bool IsHexColor(string? value)
+        => ScientificStyleColor.ValidateColor(value);
+
+    private static bool IsValidPanelStyleOverride(ProjectPanelStyleOverrideSnapshot style)
     {
-        string hex = value?.Trim().TrimStart('#') ?? string.Empty;
-        return hex.Length is 6 or 8 && hex.All(Uri.IsHexDigit);
+        bool hasOverride = style.PanelLabel is not null ||
+                           style.ScaleBarText is not null ||
+                           style.ScaleBar is not null;
+        bool scaleBarValid = style.ScaleBar is null ||
+            (style.ScaleBar.DefaultPosition is
+                 "bottomLeft" or "bottomRight" or "topLeft" or "topRight" or "custom" &&
+             double.IsFinite(style.ScaleBar.BarThicknessPt) &&
+             style.ScaleBar.BarThicknessPt is >= 0.25 and <= 10 &&
+             IsHexColor(style.ScaleBar.Color));
+        return hasOverride &&
+               IsValidTextStyle(style.PanelLabel) &&
+               IsValidTextStyle(style.ScaleBarText) &&
+               scaleBarValid;
     }
+
+    private static bool IsValidTextStyle(ProjectTextStyleSnapshot? style) => style is null ||
+        (!string.IsNullOrWhiteSpace(style.FontFamily) &&
+         style.FontFamily.Length <= 128 &&
+         double.IsFinite(style.FontSizePt) &&
+         style.FontSizePt is >= 4 and <= 72 &&
+         IsHexColor(style.Color));
 
     private static void TryDeleteTemporaryFile(string path)
     {

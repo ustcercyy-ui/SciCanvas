@@ -216,6 +216,37 @@ public sealed class ProjectImageLayerSnapshot
     public double RotationDegrees { get; init; }
 
     public ProjectScientificValiditySnapshot ScientificValidity { get; init; } = new();
+
+    public ProjectPanelStyleOverrideSnapshot? StyleOverride { get; init; }
+}
+
+public sealed class ProjectPanelStyleOverrideSnapshot
+{
+    public ProjectTextStyleSnapshot? PanelLabel { get; init; }
+
+    public ProjectTextStyleSnapshot? ScaleBarText { get; init; }
+
+    public ProjectScaleBarStyleSnapshot? ScaleBar { get; init; }
+}
+
+public sealed class ProjectTextStyleSnapshot
+{
+    public string FontFamily { get; init; } = "Arial";
+
+    public double FontSizePt { get; init; } = 7;
+
+    public bool IsBold { get; init; }
+
+    public string Color { get; init; } = "#FF111111";
+}
+
+public sealed class ProjectScaleBarStyleSnapshot
+{
+    public string DefaultPosition { get; init; } = "bottomRight";
+
+    public double BarThicknessPt { get; init; } = 1.25;
+
+    public string Color { get; init; } = "#FFFFFFFF";
 }
 
 public sealed class ProjectNormalizedRectSnapshot
@@ -358,6 +389,8 @@ public sealed class ProjectMeasurementSnapshot
 
     public Guid SourceAssetId { get; init; }
 
+    public long SourceRevision { get; init; } = 1;
+
     public string Kind { get; init; } = "length";
 
     public double X1 { get; init; }
@@ -378,11 +411,25 @@ public sealed class ProjectMeasurementSnapshot
 
     public string LineStyle { get; init; } = "solid";
 
+    public string FillColor { get; init; } = string.Empty;
+
+    public string MarkerStrokeColor { get; init; } = string.Empty;
+
+    public string MarkerFillColor { get; init; } = string.Empty;
+
     public double MarkerSizePixels { get; init; } = 18;
 
     public bool ShowMarkers { get; init; } = true;
 
     public bool ShowLabel { get; init; } = true;
+
+    public string LabelColor { get; init; } = string.Empty;
+
+    public string LabelFontFamily { get; init; } = string.Empty;
+
+    public double LabelFontSizePt { get; init; }
+
+    public bool LabelIsBold { get; init; }
 
     public double FillOpacityPercent { get; init; } = 8;
 
@@ -564,6 +611,24 @@ public sealed class ProjectGlobalStyleSnapshot
     public string ShapeColor { get; init; } = "#FFE53935";
 
     public string ScaleBarColor { get; init; } = "#FFFFFFFF";
+
+    public string PanelLabelFontFamily { get; init; } = "Arial";
+
+    public double PanelLabelFontSizePt { get; init; } = 7;
+
+    public string PanelLabelTextColor { get; init; } = "#FF111111";
+
+    public bool PanelLabelIsBold { get; init; } = true;
+
+    public string ScaleBarLabelColor { get; init; } = "#FFFFFFFF";
+
+    public string ScaleBarFontFamily { get; init; } = "Arial";
+
+    public double ScaleBarFontSizePt { get; init; } = 7;
+
+    public bool ScaleBarLabelIsBold { get; init; } = true;
+
+    public double ScaleBarThicknessPt { get; init; } = 1.25;
 }
 
 public sealed class ProjectScientificColorSnapshot
@@ -605,6 +670,16 @@ public sealed class ProjectAnnotationSnapshot
     public string Text { get; init; } = string.Empty;
 
     public string Color { get; init; } = "#FF111111";
+
+    public string StrokeColor { get; init; } = string.Empty;
+
+    public string FillColor { get; init; } = string.Empty;
+
+    public double FillOpacityPercent { get; init; }
+
+    public string TextColor { get; init; } = string.Empty;
+
+    public string FontFamily { get; init; } = string.Empty;
 
     public double FontSizePt { get; init; } = 7;
 

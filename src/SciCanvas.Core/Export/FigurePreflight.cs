@@ -14,7 +14,9 @@ public sealed record FigurePreflightIssue(
     FigurePreflightSeverity Severity,
     string Code,
     string Message,
-    string? PanelLabel = null);
+    string? PanelLabel = null,
+    Guid? SourceId = null,
+    Guid? ObjectId = null);
 
 public sealed record FigurePreflightResult(IReadOnlyList<FigurePreflightIssue> Issues)
 {
@@ -54,7 +56,8 @@ public sealed record FigurePreflightContext(
     FigureExportDocument Document,
     string? TargetFormat = null,
     FigureExportProfile? Profile = null,
-    PanelLabelScheme LabelScheme = PanelLabelScheme.Custom)
+    PanelLabelScheme LabelScheme = PanelLabelScheme.Custom,
+    IFontCatalog? FontCatalog = null)
 {
     public int BitDepth => Profile?.BitDepth ?? Document.BitDepth;
 
@@ -194,6 +197,75 @@ public static class FigurePreflight
             {
                 issues.Add(new(FigurePreflightSeverity.Error, "INVALID_ADJUSTMENT", $"面板 {panel.Label} 的图像处理参数无效。", panel.Label));
             }
+
+            try
+            {
+                panel.StyleOverride?.EnsureValid();
+            }
+            catch (InvalidOperationException)
+            {
+                issues.Add(new(
+                    FigurePreflightSeverity.Error,
+                    "INVALID_PANEL_STYLE",
+                    $"面板 {panel.Label} 的局部样式覆盖包含无效字体、字号、线宽或颜色。",
+                    panel.Label));
+            }
+        }
+
+        foreach (IGrouping<string, SourceAsset> duplicateSources in projectSources
+                     .Where(source => !string.IsNullOrWhiteSpace(source.Fingerprint.Sha256))
+                     .GroupBy(source => source.Fingerprint.Sha256, StringComparer.OrdinalIgnoreCase)
+                     .Where(group => group.Count() > 1))
+        {
+            issues.Add(new(
+                FigurePreflightSeverity.Warning,
+                "EXACT_DUPLICATE_SOURCE",
+                $"多个 Asset 引用了完全相同的源图内容：{string.Join(", ", duplicateSources.Select(source => source.DisplayName))}。"));
+        }
+
+        FigurePanelExportItem[] integrityPanels = document.Panels.Where(panel => panel.IsVisible).ToArray();
+        for (int firstIndex = 0; firstIndex < integrityPanels.Length; firstIndex++)
+        {
+            for (int secondIndex = firstIndex + 1; secondIndex < integrityPanels.Length; secondIndex++)
+            {
+                FigurePanelExportItem first = integrityPanels[firstIndex];
+                FigurePanelExportItem second = integrityPanels[secondIndex];
+                if (first.Source.Id != second.Source.Id || first.FrameIndex != second.FrameIndex)
+                {
+                    continue;
+                }
+
+                if (first.SourceRect == second.SourceRect)
+                {
+                    issues.Add(new(
+                        FigurePreflightSeverity.Warning,
+                        "EXACT_DUPLICATE_CROP",
+                        $"Panels ({first.Label}) and ({second.Label}) use the exact same source crop.",
+                        second.Label));
+                    continue;
+                }
+
+                long intersectionWidth = Math.Max(
+                    0,
+                    Math.Min(first.SourceRect.Right, second.SourceRect.Right) -
+                    Math.Max(first.SourceRect.X, second.SourceRect.X));
+                long intersectionHeight = Math.Max(
+                    0,
+                    Math.Min(first.SourceRect.Bottom, second.SourceRect.Bottom) -
+                    Math.Max(first.SourceRect.Y, second.SourceRect.Y));
+                long intersectionArea = intersectionWidth * intersectionHeight;
+                long smallerArea = Math.Min(
+                    first.SourceRect.Width * first.SourceRect.Height,
+                    second.SourceRect.Width * second.SourceRect.Height);
+                if (smallerArea > 0 && intersectionArea / (double)smallerArea > 0.90)
+                {
+                    issues.Add(new(
+                        FigurePreflightSeverity.Warning,
+                        "STRONG_CROP_OVERLAP",
+                        $"Panels ({first.Label}) and ({second.Label}) reuse more than 90% of the same source crop.",
+                        second.Label));
+                }
+            }
         }
 
         foreach (FigureAnnotationExportItem annotation in document.Annotations.Where(item => item.IsVisible))
@@ -216,12 +288,83 @@ public static class FigurePreflight
                 issues.Add(new(FigurePreflightSeverity.Error, "INVALID_ANNOTATION_BOUNDS", "存在类型未知、坐标无效或超出画布的标注。"));
             }
 
-            if (!IsHexColor(annotation.Color) ||
+            if (!ScientificStyleColor.ValidateColor(annotation.StrokeColor) ||
+                !ScientificStyleColor.ValidateColor(annotation.FillColor) ||
+                !ScientificStyleColor.ValidateColor(annotation.TextColor) ||
+                !double.IsFinite(annotation.FillOpacityPercent) ||
+                annotation.FillOpacityPercent is < 0 or > 100 ||
+                string.IsNullOrWhiteSpace(annotation.FontFamily) ||
+                annotation.FontFamily.Length > 128 ||
                 !double.IsFinite(annotation.FontSizePt) || annotation.FontSizePt is < 4 or > 72 ||
                 !double.IsFinite(annotation.StrokeWidthPt) || annotation.StrokeWidthPt is < 0.25 or > 10)
             {
                 issues.Add(new(FigurePreflightSeverity.Error, "INVALID_ANNOTATION_STYLE", "存在颜色、字号或线宽无效的标注。"));
             }
+
+            if (annotation.Kind == "text" &&
+                context.FontCatalog is not null &&
+                !context.FontCatalog.IsInstalled(annotation.FontFamily))
+            {
+                issues.Add(new(
+                    FigurePreflightSeverity.Warning,
+                    "FONT_MISSING",
+                    $"Font “{annotation.FontFamily}” is not installed on this system. Export will use a fallback font."));
+            }
+        }
+
+        if (context.FontCatalog is not null)
+        {
+            IEnumerable<(string Role, string FontFamily)> globalFonts =
+            [
+                ("Figure", document.GlobalStyle.FontFamily),
+                ("Panel Label", document.GlobalStyle.EffectivePanelLabelFontFamily),
+                ("Scale Bar", document.GlobalStyle.EffectiveScaleBarFontFamily),
+            ];
+            IEnumerable<(string Role, string FontFamily)> panelFonts = document.Panels
+                .Where(panel => panel.IsVisible)
+                .SelectMany(panel =>
+                {
+                    FigureGlobalStyle resolved = ResolvePanelStyleOrGlobal(document.GlobalStyle, panel.StyleOverride);
+                    return new (string Role, string FontFamily)[]
+                    {
+                        ($"Panel {panel.Label} label", resolved.EffectivePanelLabelFontFamily),
+                        ($"Panel {panel.Label} scale bar", resolved.EffectiveScaleBarFontFamily),
+                    };
+                });
+            foreach ((string Role, string FontFamily) font in globalFonts
+                     .Concat(panelFonts)
+                     .DistinctBy(item => item.FontFamily, StringComparer.OrdinalIgnoreCase))
+            {
+                if (!context.FontCatalog.IsInstalled(font.FontFamily))
+                {
+                    issues.Add(new(
+                        FigurePreflightSeverity.Warning,
+                        "FONT_MISSING",
+                        $"{font.Role} font “{font.FontFamily}” is not installed on this system. Export will use a fallback font."));
+                }
+            }
+        }
+
+        FigureGlobalStyle[] visiblePanelStyles = document.Panels
+            .Where(panel => panel.IsVisible)
+            .Select(panel => ResolvePanelStyleOrGlobal(document.GlobalStyle, panel.StyleOverride))
+            .ToArray();
+        if (visiblePanelStyles.Select(style => style.EffectivePanelLabelFontFamily)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+        {
+            issues.Add(new(
+                FigurePreflightSeverity.Warning,
+                "MIXED_PANEL_LABEL_FONT",
+                "可见 Panel 使用了不一致的 Panel Label 字体；请确认这是有意的局部覆盖。"));
+        }
+
+        if (visiblePanelStyles.Select(style => style.EffectiveScaleBarFontFamily)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+        {
+            issues.Add(new(
+                FigurePreflightSeverity.Warning,
+                "MIXED_SCALE_BAR_FONT",
+                "可见 Panel 使用了不一致的比例尺字体；请确认这是有意的局部覆盖。"));
         }
 
         FigurePanelExportItem[] visiblePanels = document.Panels.Where(panel => panel.IsVisible).ToArray();
@@ -294,6 +437,20 @@ public static class FigurePreflight
     {
         string hex = value?.Trim().TrimStart('#') ?? string.Empty;
         return hex.Length is 6 or 8 && hex.All(Uri.IsHexDigit);
+    }
+
+    private static FigureGlobalStyle ResolvePanelStyleOrGlobal(
+        FigureGlobalStyle globalStyle,
+        StyleOverride? styleOverride)
+    {
+        try
+        {
+            return globalStyle.ResolvePanelOverride(styleOverride);
+        }
+        catch (InvalidOperationException)
+        {
+            return globalStyle;
+        }
     }
 
     private static bool TryGetAlpha(string? color, out byte alpha)

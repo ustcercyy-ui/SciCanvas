@@ -155,7 +155,7 @@ public sealed class ScientificAnalysisPersistenceTests
         ProjectScientificAnalysisSnapshot restoredSnapshot = Assert.Single(
             restored.Analyses,
             item => item.Kind == "roiStatistics");
-        Assert.Equal("2.2", restored.SchemaVersion);
+        Assert.Equal(ProjectMigrationPipeline.CurrentVersion, restored.SchemaVersion);
         Assert.Equal(65535, restoredSnapshot.Maximum);
         Assert.Equal(4, Assert.Single(restoredSnapshot.Histogram).Count);
         ProjectScientificAnalysisSnapshot restoredParticles = Assert.Single(

@@ -175,14 +175,166 @@ public partial class MainWindow : Window
         }
     }
 
-    private void AnnotationColorPicker_OnClick(object sender, RoutedEventArgs e)
+    private void MeasurementFillColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel
+            {
+                SelectedSource.SelectedMeasurement: { } measurement,
+            } viewModel && TryPickColor(measurement.FillColor, out string color))
+        {
+            measurement.FillColor = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void MeasurementMarkerStrokeColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel
+            {
+                SelectedSource.SelectedMeasurement: { } measurement,
+            } viewModel && TryPickColor(measurement.MarkerStrokeColor, out string color))
+        {
+            measurement.MarkerStrokeColor = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void MeasurementMarkerFillColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel
+            {
+                SelectedSource.SelectedMeasurement: { } measurement,
+            } viewModel && TryPickColor(measurement.MarkerFillColor, out string color))
+        {
+            measurement.MarkerFillColor = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void MeasurementLabelColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel
+            {
+                SelectedSource.SelectedMeasurement: { } measurement,
+            } viewModel && TryPickColor(measurement.LabelColor, out string color))
+        {
+            measurement.LabelColor = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void AnnotationTextColorPicker_OnClick(object sender, RoutedEventArgs e)
     {
         if (DataContext is MainWindowViewModel
             {
                 Figure.SelectedAnnotation: { } annotation,
-            } viewModel && TryPickColor(annotation.Color, out string color))
+            } viewModel && TryPickColor(annotation.TextColor, out string color))
         {
-            annotation.Color = color;
+            annotation.TextColor = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void AnnotationStrokeColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel
+            {
+                Figure.SelectedAnnotation: { } annotation,
+            } viewModel && TryPickColor(annotation.StrokeColor, out string color))
+        {
+            annotation.StrokeColor = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void AnnotationFillColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel
+            {
+                Figure.SelectedAnnotation: { } annotation,
+            } viewModel && TryPickColor(annotation.FillColor, out string color))
+        {
+            annotation.FillColor = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void FigureGlobalTextColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel &&
+            TryPickColor(viewModel.Figure.GlobalTextColor, out string color))
+        {
+            viewModel.Figure.GlobalTextColor = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void FigureGlobalShapeColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel &&
+            TryPickColor(viewModel.Figure.GlobalShapeColor, out string color))
+        {
+            viewModel.Figure.GlobalShapeColor = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void FigureScaleBarColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel &&
+            TryPickColor(viewModel.Figure.GlobalScaleBarColor, out string color))
+        {
+            viewModel.Figure.GlobalScaleBarColor = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void FigurePanelLabelColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel &&
+            TryPickColor(viewModel.Figure.PanelLabelTextColor, out string color))
+        {
+            viewModel.Figure.PanelLabelTextColor = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void FigureScaleBarLabelColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel &&
+            TryPickColor(viewModel.Figure.ScaleBarLabelColor, out string color))
+        {
+            viewModel.Figure.ScaleBarLabelColor = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void SelectedPanelLabelColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel &&
+            TryPickColor(viewModel.Figure.SelectedPanelLabelTextColor, out string color))
+        {
+            viewModel.Figure.SelectedPanelLabelTextColor = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void SelectedPanelScaleBarColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel &&
+            TryPickColor(viewModel.Figure.SelectedPanelScaleBarColor, out string color))
+        {
+            viewModel.Figure.SelectedPanelScaleBarColor = color;
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void SelectedPanelScaleBarLabelColorPicker_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel &&
+            TryPickColor(viewModel.Figure.SelectedPanelScaleBarLabelColor, out string color))
+        {
+            viewModel.Figure.SelectedPanelScaleBarLabelColor = color;
             viewModel.CompleteHistoryGesture();
         }
     }

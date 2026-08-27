@@ -2,6 +2,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
+using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
 
 namespace SciCanvas.Core.Export;
@@ -21,7 +22,8 @@ public sealed record FigureProvenanceSource(
     double? DpiY,
     string? PhysicalUnit,
     int FrameCount,
-    OmeImageMetadata? Ome = null);
+    OmeImageMetadata? Ome = null,
+    long SourceRevision = 1);
 
 public sealed record FigureProvenancePanel(
     string Label,
@@ -31,6 +33,19 @@ public sealed record FigureProvenancePanel(
     PixelRect64 DestinationRect,
     bool Visible,
     ImageAdjustmentParameters Adjustments);
+
+public sealed record FigureProvenanceAnalysis(
+    Guid AnalysisId,
+    string Kind,
+    Guid SourceAssetId,
+    long SourceRevision,
+    int FrameIndex,
+    string Channel,
+    string AlgorithmId,
+    string AlgorithmVersion,
+    DateTimeOffset AnalyzedAt,
+    string State,
+    IReadOnlyDictionary<string, object?> Parameters);
 
 public sealed record FigureProvenanceDocument(
     string Software,
@@ -47,7 +62,8 @@ public sealed record FigureProvenanceDocument(
     IReadOnlyList<FigureProvenancePanel> Panels,
     IReadOnlyList<FigurePreflightIssue> PreflightIssues,
     string? ExportProfileId = null,
-    string? ExportProfileName = null);
+    string? ExportProfileName = null,
+    IReadOnlyList<FigureProvenanceAnalysis>? Analyses = null);
 
 public static class FigureProvenanceWriter
 {
@@ -84,7 +100,9 @@ public static class FigureProvenanceWriter
         IReadOnlyCollection<SourceAsset> sources,
         FigurePreflightResult preflight,
         string? exportProfileId = null,
-        string? exportProfileName = null)
+        string? exportProfileName = null,
+        IReadOnlyDictionary<Guid, long>? sourceRevisions = null,
+        IEnumerable<ScientificImageAnalysisResult>? analyses = null)
     {
         return new FigureProvenanceDocument(
             "SciCanvas",
@@ -112,7 +130,8 @@ public static class FigureProvenanceWriter
                 source.Metadata.DpiY,
                 source.Metadata.PhysicalUnit,
                 source.Metadata.FrameCount,
-                source.Metadata.Ome)).ToArray(),
+                source.Metadata.Ome,
+                sourceRevisions?.GetValueOrDefault(source.Id) ?? 1)).ToArray(),
             document.Panels.Select(panel => new FigureProvenancePanel(
                 panel.Label,
                 panel.Source.Id,
@@ -123,7 +142,58 @@ public static class FigureProvenanceWriter
                 (panel.Adjustments ?? new()).Normalize())).ToArray(),
             preflight.Issues,
             exportProfileId,
-            exportProfileName);
+            exportProfileName,
+            (analyses ?? []).Select(CreateAnalysisProvenance).ToArray());
+    }
+
+    private static FigureProvenanceAnalysis CreateAnalysisProvenance(
+        ScientificImageAnalysisResult result)
+    {
+        string analyzerId = result.AnalyzerId.Trim();
+        int versionSeparator = analyzerId.LastIndexOf(".v", StringComparison.OrdinalIgnoreCase);
+        string version = versionSeparator >= 0 && versionSeparator + 2 < analyzerId.Length
+            ? analyzerId[(versionSeparator + 2)..]
+            : "unspecified";
+        IReadOnlyDictionary<string, object?> parameters = result switch
+        {
+            RoiStatisticsResult roi => new Dictionary<string, object?>
+            {
+                ["region"] = roi.Region,
+                ["sourceBitDepth"] = roi.SourceBitDepth,
+                ["histogramBinCount"] = roi.Histogram.Bins.Count,
+            },
+            IntensityProfileResult profile => new Dictionary<string, object?>
+            {
+                ["sampleCount"] = profile.Samples.Count,
+                ["distanceUnit"] = profile.DistanceUnit,
+                ["sourceBitDepth"] = profile.SourceBitDepth,
+            },
+            AssistedRegionAnalysisResult particles => new Dictionary<string, object?>
+            {
+                ["mode"] = particles.Options.Mode.ToString(),
+                ["regionOfInterest"] = particles.Options.RegionOfInterest,
+                ["useAutomaticThreshold"] = particles.Options.UseAutomaticThreshold,
+                ["requestedThreshold"] = particles.Options.ThresholdNormalized,
+                ["appliedThreshold"] = particles.AppliedThresholdNormalized,
+                ["minimumAreaPixels"] = particles.Options.MinimumAreaPixels,
+                ["maximumCandidates"] = particles.Options.MaximumCandidates,
+                ["particleCount"] = particles.Candidates.Count,
+                ["sourceBitDepth"] = particles.SourceBitDepth,
+            },
+            _ => new Dictionary<string, object?>(),
+        };
+        return new FigureProvenanceAnalysis(
+            result.Id,
+            result.Kind.ToString(),
+            result.SourceAssetId,
+            result.SourceRevision,
+            result.FrameIndex,
+            result.Channel.ToString(),
+            analyzerId,
+            version,
+            result.AnalyzedAt,
+            result.Validity.State.ToString(),
+            parameters);
     }
 
     private static void WriteNewFile(string path, string content)

@@ -214,7 +214,8 @@ public sealed class SourceAssetItemViewModel : ObservableObject
         string? strokeColor = null,
         double strokeWidthPixels = 3,
         IReadOnlyList<MeasurementPoint>? pathPoints = null,
-        ScientificMeasurementVisualStyle? visualStyle = null)
+        ScientificMeasurementVisualStyle? visualStyle = null,
+        long? sourceRevision = null)
     {
         var measurement = new ScientificMeasurementViewModel(
             id ?? Guid.NewGuid(),
@@ -226,7 +227,8 @@ public sealed class SourceAssetItemViewModel : ObservableObject
             pointC,
             Calibration.Calibration,
             Measurements.Count + 1,
-            pathPoints)
+            pathPoints,
+            sourceRevision ?? SourceRevision)
         {
             StrokeColor = strokeColor ?? "#FF22C7E8",
             StrokeWidthPixels = strokeWidthPixels,
@@ -309,7 +311,8 @@ public sealed class SourceAssetItemViewModel : ObservableObject
                 style.StrokeColor,
                 style.StrokeWidthPixels,
                 measurement.PathPoints,
-                style);
+                style,
+                measurement.SourceRevision);
         }
 
         SelectedMeasurement = Measurements.FirstOrDefault();

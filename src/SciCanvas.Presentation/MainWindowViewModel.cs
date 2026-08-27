@@ -13,11 +13,21 @@ using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
 using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
+using SciCanvas.Core.Workspace;
 using SciCanvas.Imaging;
 using SciCanvas.Persistence;
 using SciCanvas.Templates;
 
 namespace SciCanvas.Presentation;
+
+public enum MeasurementScientificColorTarget
+{
+    Stroke,
+    Fill,
+    MarkerStroke,
+    MarkerFill,
+    Label
+}
 
 public sealed class MainWindowViewModel : ObservableObject
 {
@@ -37,6 +47,8 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly ITemplateFilePicker? _templateFilePicker;
     private readonly IUserTemplateCatalog? _userTemplateCatalog;
     private readonly IBatchExportFolderPicker? _batchExportFolderPicker;
+    private readonly ISubmissionPackageFolderPicker? _submissionPackageFolderPicker;
+    private readonly SubmissionPackageBuilder _submissionPackageBuilder;
     private readonly IUnsavedChangesPrompt _unsavedChangesPrompt;
     private readonly IReadOnlyList<FigureTemplateDefinition> _figureTemplates;
     private readonly IIntensityProfileAnalyzer _intensityProfileAnalyzer;
@@ -91,6 +103,8 @@ public sealed class MainWindowViewModel : ObservableObject
     private string _assetSearchText = string.Empty;
     private int _figureQcMinimumDpi = 300;
     private ScientificMeasurementVisualStyle _measurementDrawingStyle = ScientificMeasurementVisualStyle.Default;
+    private ScientificMeasurementVisualStyle? _copiedMeasurementStyle;
+    private MeasurementScientificColorTarget _measurementScientificColorTarget;
     private int _customCanvasWidth;
     private int _customCanvasHeight;
 
@@ -115,7 +129,8 @@ public sealed class MainWindowViewModel : ObservableObject
         IIntensityProfileAnalyzer? intensityProfileAnalyzer = null,
         IAssistedRegionAnalyzer? assistedRegionAnalyzer = null,
         IUnsavedChangesPrompt? unsavedChangesPrompt = null,
-        IRoiStatisticsAnalyzer? roiStatisticsAnalyzer = null)
+        IRoiStatisticsAnalyzer? roiStatisticsAnalyzer = null,
+        ISubmissionPackageFolderPicker? submissionPackageFolderPicker = null)
     {
         _filePicker = filePicker ?? throw new ArgumentNullException(nameof(filePicker));
         _sourceReader = sourceReader ?? throw new ArgumentNullException(nameof(sourceReader));
@@ -131,6 +146,8 @@ public sealed class MainWindowViewModel : ObservableObject
         _templateFilePicker = templateFilePicker;
         _userTemplateCatalog = userTemplateCatalog;
         _batchExportFolderPicker = batchExportFolderPicker;
+        _submissionPackageFolderPicker = submissionPackageFolderPicker;
+        _submissionPackageBuilder = new SubmissionPackageBuilder(_figureExporter);
         _sourceRelinkFilePicker = sourceRelinkFilePicker ?? new NullSourceRelinkFilePicker();
         _sourceRevisionAcceptancePrompt = sourceRevisionAcceptancePrompt ??
             new DeclineSourceRevisionAcceptancePrompt();
@@ -148,6 +165,7 @@ public sealed class MainWindowViewModel : ObservableObject
         AvailableTemplates = new ObservableCollection<FigureTemplateDefinition>(_figureTemplates);
         _selectedFigureTemplate = _figureTemplates[0];
         _figure = new FigureCanvasViewModel(_selectedFigureTemplate);
+        _measurementDrawingStyle = CreateInheritedMeasurementStyle();
         _customCanvasWidth = _figure.CanvasWidth;
         _customCanvasHeight = _figure.CanvasHeight;
         Sources.CollectionChanged += OnSourcesCollectionChanged;
@@ -210,6 +228,10 @@ public sealed class MainWindowViewModel : ObservableObject
             ExportFigureVariantsAsync,
             () => Figure.Panels.Count > 0 && !IsBusy && _batchExportFolderPicker is not null,
             HandleUnexpectedCommandError);
+        BuildSubmissionPackageCommand = new AsyncRelayCommand(
+            BuildSubmissionPackageAsync,
+            () => Figure.Panels.Count > 0 && !IsBusy && _submissionPackageFolderPicker is not null,
+            HandleUnexpectedCommandError);
         RunFigureQcCommand = new RelayCommand(RunFigureQc, () => !IsBusy);
         ApplySmartLayoutCommand = new RelayCommand(ApplySmartLayout, () => !IsBusy);
         HarmonizeFigureStyleCommand = new RelayCommand(HarmonizeFigureStyle, () => !IsBusy);
@@ -237,6 +259,11 @@ public sealed class MainWindowViewModel : ObservableObject
         DeleteSelectedMeasurementCommand = new RelayCommand(
             DeleteSelectedMeasurement,
             () => SelectedSource?.SelectedMeasurement is { IsLocked: false } && !IsBusy);
+        ResetSelectedMeasurementStyleCommand = new RelayCommand(ResetSelectedMeasurementStyle);
+        CopySelectedMeasurementStyleCommand = new RelayCommand(CopySelectedMeasurementStyle);
+        PasteSelectedMeasurementStyleCommand = new RelayCommand(PasteSelectedMeasurementStyle);
+        ApplyMeasurementStyleToSameTypeCommand = new RelayCommand(ApplyMeasurementStyleToSameType);
+        ApplyScientificColorToMeasurementCommand = new RelayCommand(ApplyScientificColorToMeasurement);
         DeleteSelectionCommand = new RelayCommand(DeleteCurrentSelection, () => !IsBusy);
         CopyMeasurementsCommand = new RelayCommand(
             CopyMeasurements,
@@ -391,6 +418,38 @@ public sealed class MainWindowViewModel : ObservableObject
         $"{FigureQcIssues.Count(issue => issue.Severity == FigurePreflightSeverity.Error)} 错误 · " +
         $"{FigureQcIssues.Count(issue => issue.Severity == FigurePreflightSeverity.Warning)} 提醒 · " +
         $"{FigureQcIssues.Count(issue => issue.Severity == FigurePreflightSeverity.Info)} 信息";
+
+    public string SubmissionPreflightSummary
+    {
+        get
+        {
+            if (_isFigureQcStale)
+            {
+                return "○ 投稿检查已过期，请重新运行 Figure QC。";
+            }
+
+            return string.Join(Environment.NewLine,
+            [
+                SubmissionCheckLine("Sources verified", Sources.All(source => source.Asset.LinkState == SourceLinkState.Verified),
+                    "SOURCE_UNVERIFIED", "SOURCE_NOT_IN_PROJECT"),
+                SubmissionCheckLine("Calibration valid", Figure.Panels.Where(panel => panel.ShowScaleBar).All(panel => panel.IsScaleBarValid),
+                    "INVALID_SCALE_BAR", "SCALE_BAR_TOO_LONG"),
+                SubmissionCheckLine("Effective DPI", Figure.Panels.Where(panel => panel.IsVisible).All(panel => panel.EffectiveDpi >= FigureQcMinimumDpi),
+                    "LOW_EFFECTIVE_DPI"),
+                SubmissionCheckLine("Fonts available", true, "FONT_MISSING"),
+                SubmissionCheckLine("Panel labels", true, "MISSING_LABEL", "DUPLICATE_LABEL", "LABEL_SEQUENCE"),
+                SubmissionCheckLine("Scale bars", true, "INVALID_SCALE_BAR", "SCALE_BAR_TOO_LONG"),
+                SubmissionCheckLine("Analysis / measurement revision", true, "STALE_ANALYSIS_REVISION", "STALE_MEASUREMENT_REVISION"),
+                SelectedExportProfile?.IsValid == true ? "✓ Export format" : "✗ Export format",
+                FigureQcIssues.Any(issue => issue.Severity == FigurePreflightSeverity.Warning)
+                    ? $"⚠ Warnings: {FigureQcIssues.Count(issue => issue.Severity == FigurePreflightSeverity.Warning)}"
+                    : "✓ Warnings: 0",
+                FigureQcIssues.Any(issue => issue.Severity == FigurePreflightSeverity.Error)
+                    ? $"✗ Errors: {FigureQcIssues.Count(issue => issue.Severity == FigurePreflightSeverity.Error)}"
+                    : "✓ Errors: 0",
+            ]);
+        }
+    }
 
     public int FigureQcMinimumDpi
     {
@@ -556,6 +615,7 @@ public sealed class MainWindowViewModel : ObservableObject
             if (SetProperty(ref _selectedExportProfile, value))
             {
                 RemoveSelectedExportProfileCommand.NotifyCanExecuteChanged();
+                OnPropertyChanged(nameof(SubmissionPreflightSummary));
             }
         }
     }
@@ -630,6 +690,8 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public AsyncRelayCommand ExportFigureVariantsCommand { get; }
 
+    public AsyncRelayCommand BuildSubmissionPackageCommand { get; }
+
     public RelayCommand RunFigureQcCommand { get; }
     public RelayCommand ApplySmartLayoutCommand { get; }
     public RelayCommand HarmonizeFigureStyleCommand { get; }
@@ -660,6 +722,25 @@ public sealed class MainWindowViewModel : ObservableObject
     public RelayCommand SelectCircleRoiToolCommand { get; }
     public RelayCommand SelectPolylineToolCommand { get; }
     public RelayCommand DeleteSelectedMeasurementCommand { get; }
+
+    public RelayCommand ResetSelectedMeasurementStyleCommand { get; }
+
+    public RelayCommand CopySelectedMeasurementStyleCommand { get; }
+
+    public RelayCommand PasteSelectedMeasurementStyleCommand { get; }
+
+    public RelayCommand ApplyMeasurementStyleToSameTypeCommand { get; }
+
+    public RelayCommand ApplyScientificColorToMeasurementCommand { get; }
+
+    public IReadOnlyList<MeasurementScientificColorTarget> MeasurementScientificColorTargets { get; } =
+        Enum.GetValues<MeasurementScientificColorTarget>();
+
+    public MeasurementScientificColorTarget MeasurementScientificColorTarget
+    {
+        get => _measurementScientificColorTarget;
+        set => SetProperty(ref _measurementScientificColorTarget, value);
+    }
 
     public RelayCommand DeleteSelectionCommand { get; }
     public RelayCommand CopyMeasurementsCommand { get; }
@@ -819,6 +900,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 ExportCropCommand.NotifyCanExecuteChanged();
                 ExportFigureCommand.NotifyCanExecuteChanged();
                 ExportFigureVariantsCommand.NotifyCanExecuteChanged();
+                BuildSubmissionPackageCommand.NotifyCanExecuteChanged();
                 RunFigureQcCommand.NotifyCanExecuteChanged();
                 ApplySmartLayoutCommand.NotifyCanExecuteChanged();
                 HarmonizeFigureStyleCommand.NotifyCanExecuteChanged();
@@ -1215,6 +1297,128 @@ public sealed class MainWindowViewModel : ObservableObject
 
         SelectedSource.RemoveMeasurement(measurement);
         StatusMessage = "已删除测量对象 · 原图未修改";
+    }
+
+    private void ResetSelectedMeasurementStyle()
+    {
+        if (SelectedSource?.SelectedMeasurement is not { IsLocked: false } measurement)
+        {
+            return;
+        }
+
+        measurement.RestoreVisualStyle(CreateInheritedMeasurementStyle());
+        _measurementDrawingStyle = measurement.VisualStyle;
+        CompleteHistoryGesture();
+        StatusMessage = "测量样式已恢复为项目继承默认值";
+    }
+
+    private ScientificMeasurementVisualStyle CreateInheritedMeasurementStyle()
+    {
+        MeasurementStyle inherited = ProjectStyle.Default.EffectiveMeasurement;
+        return new ScientificMeasurementVisualStyle
+        {
+            StrokeColor = Figure.GlobalShapeColor,
+            StrokeWidthPixels = Math.Max(1, Figure.GlobalStrokeWidthPt / 72.0 * Figure.Dpi),
+            LineStyle = inherited.Dash,
+            FillColor = Figure.GlobalShapeColor,
+            FillOpacityPercent = inherited.Shape.FillOpacityPercent,
+            MarkerStrokeColor = Figure.GlobalShapeColor,
+            MarkerFillColor = Figure.NormalizedBackgroundColor,
+            MarkerSizePixels = inherited.Marker.SizePixels,
+            ShowMarkers = inherited.ShowMarkers,
+            LabelColor = Figure.GlobalTextColor,
+            LabelFontFamily = Figure.GlobalFontFamily,
+            LabelFontSizePt = Math.Max(4, Figure.GlobalFontSizePt),
+            LabelIsBold = inherited.Label.IsBold,
+            ShowLabel = inherited.ShowLabel,
+            IsVisible = true,
+            IsLocked = false,
+        };
+    }
+
+    private void CopySelectedMeasurementStyle()
+    {
+        _copiedMeasurementStyle = SelectedSource?.SelectedMeasurement?.VisualStyle;
+        if (_copiedMeasurementStyle is not null)
+        {
+            StatusMessage = "已复制当前测量的完整样式";
+        }
+    }
+
+    private void PasteSelectedMeasurementStyle()
+    {
+        if (SelectedSource?.SelectedMeasurement is not { IsLocked: false } measurement ||
+            _copiedMeasurementStyle is null)
+        {
+            return;
+        }
+
+        measurement.RestoreVisualStyle(_copiedMeasurementStyle);
+        _measurementDrawingStyle = measurement.VisualStyle;
+        CompleteHistoryGesture();
+        StatusMessage = "已粘贴测量样式";
+    }
+
+    private void ApplyMeasurementStyleToSameType()
+    {
+        if (SelectedSource?.SelectedMeasurement is not { } selected)
+        {
+            return;
+        }
+
+        ScientificMeasurementVisualStyle style = selected.VisualStyle;
+        int changed = 0;
+        foreach (ScientificMeasurementViewModel measurement in Sources
+                     .SelectMany(source => source.Measurements)
+                     .Where(measurement => measurement.Kind == selected.Kind && !measurement.IsLocked))
+        {
+            measurement.RestoreVisualStyle(style);
+            changed++;
+        }
+
+        _measurementDrawingStyle = style;
+        CompleteHistoryGesture();
+        StatusMessage = $"已将样式应用到 {changed} 个同类型测量";
+    }
+
+    private void ApplyScientificColorToMeasurement()
+    {
+        if (SelectedSource?.SelectedMeasurement is not { IsLocked: false } measurement)
+        {
+            StatusMessage = "请先选择一个未锁定的测量对象";
+            return;
+        }
+
+        string? color = Figure.SelectedScientificColor?.Definition.Color;
+        if (string.IsNullOrWhiteSpace(color))
+        {
+            StatusMessage = "请先在 Figure 调色板中选择一个有效颜色";
+            return;
+        }
+        switch (MeasurementScientificColorTarget)
+        {
+            case MeasurementScientificColorTarget.Stroke:
+                measurement.StrokeColor = color;
+                break;
+            case MeasurementScientificColorTarget.Fill:
+                measurement.FillColor = color;
+                break;
+            case MeasurementScientificColorTarget.MarkerStroke:
+                measurement.MarkerStrokeColor = color;
+                break;
+            case MeasurementScientificColorTarget.MarkerFill:
+                measurement.MarkerFillColor = color;
+                break;
+            case MeasurementScientificColorTarget.Label:
+                measurement.LabelColor = color;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException();
+        }
+
+        _measurementDrawingStyle = measurement.VisualStyle;
+        CompleteHistoryGesture();
+        StatusMessage = $"已将科学调色板颜色 {color} 应用到测量 {MeasurementScientificColorTarget}";
     }
 
     private void DeleteCurrentSelection()
@@ -2630,7 +2834,9 @@ public sealed class MainWindowViewModel : ObservableObject
                 decision.NormalizedTargetPath,
                 typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "1.2.0-alpha",
                 Sources.Select(item => item.Asset).ToArray(),
-                preflight);
+                preflight,
+                sourceRevisions: Sources.ToDictionary(item => item.Asset.Id, item => item.SourceRevision),
+                analyses: Sources.SelectMany(item => item.AnalysisResults));
             try
             {
                 FigureProvenanceWriter.WriteJson(provenance, provenancePath);
@@ -2647,6 +2853,82 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             LastError = exception.Message;
             StatusMessage = "拼版导出失败 · 未修改源文件";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private async Task BuildSubmissionPackageAsync()
+    {
+        if (_submissionPackageFolderPicker is null || Figure.Panels.Count == 0)
+        {
+            return;
+        }
+
+        string? targetDirectory = _submissionPackageFolderPicker.PickSubmissionPackageFolder();
+        if (targetDirectory is null)
+        {
+            return;
+        }
+
+        IsBusy = true;
+        LastError = null;
+        StatusMessage = "正在验证投稿包中的源文件与科学对象…";
+        try
+        {
+            foreach (SourceAssetItemViewModel source in Sources)
+            {
+                SourceVerification verification = await _sourceReader.VerifyAsync(source.Asset);
+                if (verification.State != SourceLinkState.Verified)
+                {
+                    LastError = $"{source.DisplayName}：{verification.Message ?? "源文件验证失败。"}";
+                    StatusMessage = "投稿包已阻止 · 源文件验证失败";
+                    return;
+                }
+            }
+
+            FigureExportDocument exportDocument = Figure.CreateExportDocument();
+            FigurePreflightResult qc = UpdateFigureQc(exportDocument);
+            if (qc.HasErrors)
+            {
+                LastError = string.Join(Environment.NewLine, qc.Issues
+                    .Where(issue => issue.Severity == FigurePreflightSeverity.Error)
+                    .Select(issue => issue.Message));
+                StatusMessage = $"投稿包已阻止 · {qc.Summary}";
+                return;
+            }
+
+            var auditEntry = new ProjectAuditEntrySnapshot
+            {
+                Timestamp = DateTimeOffset.UtcNow,
+                Command = "BuildSubmissionPackage",
+                Parameters = new Dictionary<string, object?>
+                {
+                    ["targetDirectory"] = Path.GetFullPath(targetDirectory),
+                    ["sourceCount"] = Sources.Count,
+                    ["panelCount"] = Figure.Panels.Count,
+                    ["warningCount"] = qc.Issues.Count(issue => issue.Severity == FigurePreflightSeverity.Warning),
+                },
+            };
+            string version = typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "2.3.0-alpha";
+            SubmissionPackageResult result = await _submissionPackageBuilder.BuildAsync(
+                new SubmissionPackageRequest(
+                    targetDirectory,
+                    exportDocument,
+                    Sources.ToArray(),
+                    qc,
+                    _auditTrail.Concat([auditEntry]).ToArray(),
+                    version));
+            _auditTrail.Add(auditEntry);
+            StatusMessage = $"投稿包完成 · {result.CreatedFiles.Count} 个文件 · {result.WarningCount} 个 warning · 原图未复制或修改";
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or NotSupportedException or InvalidOperationException)
+        {
+            LastError = exception.Message;
+            StatusMessage = "投稿包生成失败 · 未覆盖已有文件";
         }
         finally
         {
@@ -2732,6 +3014,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private void OnExportProfilePropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         OnPropertyChanged(nameof(ExportProfileSummary));
+        OnPropertyChanged(nameof(SubmissionPreflightSummary));
         MarkDirty();
     }
 
@@ -2803,15 +3086,16 @@ public sealed class MainWindowViewModel : ObservableObject
                 try
                 {
                     FigureExportDocument variant = profile.Apply(baseDocument);
-                    FigurePreflightResult preflight = FigurePreflight.Check(
+                    FigurePreflightResult preflight = AddScientificIntegrityIssues(FigurePreflight.Check(
                         new FigurePreflightContext(
                             variant,
                             profile.Format,
                             profile,
-                            Figure.LabelScheme),
+                            Figure.LabelScheme,
+                            SystemFontCatalog.Instance),
                         figureSources,
                         IsDirty,
-                        CreateFigurePreflightConfiguration());
+                        CreateFigurePreflightConfiguration()));
                     if (preflight.HasErrors)
                     {
                         throw new InvalidDataException(string.Join(Environment.NewLine, preflight.Issues
@@ -2848,7 +3132,11 @@ public sealed class MainWindowViewModel : ObservableObject
                             figureSources,
                             preflight,
                             profile.Id,
-                            profile.Name);
+                            profile.Name,
+                            sourceRevisions: Sources.ToDictionary(item => item.Asset.Id, item => item.SourceRevision),
+                            analyses: Sources
+                                .Where(item => figureSources.Any(source => source.Id == item.Asset.Id))
+                                .SelectMany(item => item.AnalysisResults));
                         try
                         {
                             FigureProvenanceWriter.WriteJson(
@@ -3354,9 +3642,16 @@ public sealed class MainWindowViewModel : ObservableObject
                             StrokeColor = item.StrokeColor,
                             StrokeWidthPixels = item.StrokeWidthPixels,
                             LineStyle = item.LineStyle,
+                            FillColor = item.FillColor,
+                            MarkerStrokeColor = item.MarkerStrokeColor,
+                            MarkerFillColor = item.MarkerFillColor,
                             MarkerSizePixels = item.MarkerSizePixels,
                             ShowMarkers = item.ShowMarkers,
                             ShowLabel = item.ShowLabel,
+                            LabelColor = item.LabelColor,
+                            LabelFontFamily = item.LabelFontFamily,
+                            LabelFontSizePt = item.LabelFontSizePt,
+                            LabelIsBold = item.LabelIsBold,
                             FillOpacityPercent = item.FillOpacityPercent,
                             IsVisible = item.IsVisible,
                             IsLocked = item.IsLocked,
@@ -3433,6 +3728,7 @@ public sealed class MainWindowViewModel : ObservableObject
                     ProjectDocumentMapper.ParsePanelFitMode(layer.FitMode),
                     layer.RotationDegrees,
                     ProjectDocumentMapper.ToScientificValidity(layer.ScientificValidity));
+                restored.RestoreStyleOverride(ProjectDocumentMapper.ToStyleOverride(layer.StyleOverride));
 
                 if (scaleBars.TryGetValue(layer.Id, out ProjectScaleBarSnapshot? scaleBar))
                 {
@@ -3456,7 +3752,16 @@ public sealed class MainWindowViewModel : ObservableObject
                     globalStyle.StrokeWidthPt,
                     globalStyle.TextColor,
                     globalStyle.ShapeColor,
-                    globalStyle.ScaleBarColor));
+                    globalStyle.ScaleBarColor,
+                    globalStyle.PanelLabelFontFamily,
+                    globalStyle.PanelLabelFontSizePt,
+                    globalStyle.PanelLabelTextColor,
+                    globalStyle.PanelLabelIsBold,
+                    globalStyle.ScaleBarLabelColor,
+                    globalStyle.ScaleBarFontFamily,
+                    globalStyle.ScaleBarFontSizePt,
+                    globalStyle.ScaleBarLabelIsBold,
+                    globalStyle.ScaleBarThicknessPt));
             Figure.RestoreScientificColors((editor?.ScientificColors ?? [])
                 .Select(color => new ScientificColorDefinition(color.Id, color.Name, color.Color)));
             foreach (ProjectAnnotationSnapshot annotation in
@@ -3471,7 +3776,11 @@ public sealed class MainWindowViewModel : ObservableObject
                     annotation.EndX,
                     annotation.EndY,
                     annotation.Text,
-                    annotation.Color,
+                    annotation.StrokeColor,
+                    annotation.FillColor,
+                    annotation.FillOpacityPercent,
+                    annotation.TextColor,
+                    annotation.FontFamily,
                     annotation.FontSizePt,
                     annotation.StrokeWidthPt,
                     annotation.IsBold,
@@ -3710,6 +4019,7 @@ public sealed class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(IsTemplateSelectionEnabled));
         ExportFigureCommand.NotifyCanExecuteChanged();
         ExportFigureVariantsCommand.NotifyCanExecuteChanged();
+        BuildSubmissionPackageCommand.NotifyCanExecuteChanged();
         AddCurrentCropToFigureCommand.NotifyCanExecuteChanged();
         ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
         RefreshAssetUsageCounts();
@@ -3824,9 +4134,9 @@ public sealed class MainWindowViewModel : ObservableObject
         int changed = before.Annotations.Count(annotation => annotation.IsVisible &&
             (annotation.Kind == "text"
                 ? Math.Abs(annotation.FontSizePt - style.FontSizePt) > 0.01 ||
-                  !SameHexColor(annotation.Color, style.TextColor)
+                  !SameHexColor(annotation.TextColor, style.TextColor)
                 : Math.Abs(annotation.StrokeWidthPt - style.StrokeWidthPt) > 0.01 ||
-                  !SameHexColor(annotation.Color, style.ShapeColor)));
+                  !SameHexColor(annotation.StrokeColor, style.ShapeColor)));
         Figure.ApplyGlobalStyleCommand.Execute(null);
         _auditTrail.Add(new ProjectAuditEntrySnapshot
         {
@@ -3930,15 +4240,94 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private FigurePreflightResult UpdateFigureQc(FigureExportDocument document)
     {
-        FigurePreflightResult result = FigurePreflight.Check(
+        FigurePreflightResult result = AddScientificIntegrityIssues(FigurePreflight.Check(
             new FigurePreflightContext(
                 document,
-                LabelScheme: Figure.LabelScheme),
+                LabelScheme: Figure.LabelScheme,
+                FontCatalog: SystemFontCatalog.Instance),
             Sources.Select(item => item.Asset).ToArray(),
             IsDirty,
-            CreateFigurePreflightConfiguration());
+            CreateFigurePreflightConfiguration()));
         UpdateFigureQcIssues(result);
         return result;
+    }
+
+    private FigurePreflightResult AddScientificIntegrityIssues(FigurePreflightResult result)
+    {
+        var issues = result.Issues.ToList();
+        foreach (string missingFont in Sources
+                     .SelectMany(source => source.Measurements)
+                     .Select(measurement => measurement.LabelFontFamily)
+                     .Where(font => !SystemFontCatalog.Instance.IsInstalled(font))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            issues.Add(new FigurePreflightIssue(
+                FigurePreflightSeverity.Warning,
+                "FONT_MISSING",
+                $"Font “{missingFont}” is not installed on this system. Measurement labels will use a fallback font."));
+        }
+
+        foreach (SourceAssetItemViewModel source in Sources)
+        {
+            foreach (ScientificImageAnalysisResult analysis in source.AnalysisResults
+                         .Where(analysis => analysis.SourceRevision != source.SourceRevision))
+            {
+                issues.Add(new FigurePreflightIssue(
+                    FigurePreflightSeverity.Error,
+                    "STALE_ANALYSIS_REVISION",
+                    $"Analysis {analysis.AnalyzerId} uses source revision {analysis.SourceRevision}; current revision is {source.SourceRevision}.",
+                    SourceId: source.Asset.Id,
+                    ObjectId: analysis.Id));
+            }
+
+            foreach (ScientificMeasurementViewModel measurement in source.Measurements
+                         .Where(measurement => measurement.SourceRevision != source.SourceRevision))
+            {
+                issues.Add(new FigurePreflightIssue(
+                    FigurePreflightSeverity.Error,
+                    "STALE_MEASUREMENT_REVISION",
+                    $"Measurement {measurement.TypeText} {measurement.Number} uses source revision {measurement.SourceRevision}; current revision is {source.SourceRevision}.",
+                    SourceId: source.Asset.Id,
+                    ObjectId: measurement.Id));
+            }
+        }
+
+        string[] measurementFonts = Sources.SelectMany(source => source.Measurements)
+            .Where(measurement => measurement.IsVisible && measurement.ShowLabel)
+            .Select(measurement => measurement.LabelFontFamily)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (measurementFonts.Length > 1)
+        {
+            issues.Add(new FigurePreflightIssue(
+                FigurePreflightSeverity.Info,
+                "MIXED_MEASUREMENT_LABEL_FONT",
+                $"Measurement labels use mixed fonts: {string.Join(", ", measurementFonts)}."));
+        }
+
+        string[] annotationFonts = Figure.Annotations
+            .Where(annotation => annotation.IsVisible && annotation.Kind == FigureAnnotationKind.Text)
+            .Select(annotation => annotation.FontFamily)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (annotationFonts.Length > 1)
+        {
+            issues.Add(new FigurePreflightIssue(
+                FigurePreflightSeverity.Info,
+                "MIXED_ANNOTATION_FONT",
+                $"Text annotations use mixed fonts: {string.Join(", ", annotationFonts)}."));
+        }
+
+        foreach (FigurePanelViewModel panel in Figure.Panels.Where(panel => panel.RequiresScientificReview))
+        {
+            issues.Add(new FigurePreflightIssue(
+                FigurePreflightSeverity.Error,
+                "SCIENTIFIC_OBJECT_REVIEW_REQUIRED",
+                $"Panel {panel.Label} contains scientific objects that require review after source replacement.",
+                panel.Label));
+        }
+
+        return new FigurePreflightResult(issues);
     }
 
     private FigurePreflightConfiguration CreateFigurePreflightConfiguration() => new()
@@ -3961,6 +4350,7 @@ public sealed class MainWindowViewModel : ObservableObject
         _isFigureQcStale = false;
         FigureQcStatusText = result.Summary;
         OnPropertyChanged(nameof(FigureQcCountText));
+        OnPropertyChanged(nameof(SubmissionPreflightSummary));
     }
 
     private void MarkFigureQcStale()
@@ -3969,11 +4359,56 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             _isFigureQcStale = true;
             FigureQcStatusText = "拼版已更改 · 请重新运行 Figure QC";
+            OnPropertyChanged(nameof(SubmissionPreflightSummary));
         }
+    }
+
+    private string SubmissionCheckLine(string label, bool stateIsValid, params string[] issueCodes)
+    {
+        FigureQcIssueViewModel[] matching = FigureQcIssues
+            .Where(issue => issueCodes.Contains(issue.Code, StringComparer.Ordinal))
+            .ToArray();
+        if (!stateIsValid || matching.Any(issue => issue.Severity == FigurePreflightSeverity.Error))
+        {
+            return $"✗ {label}";
+        }
+
+        return matching.Any(issue => issue.Severity == FigurePreflightSeverity.Warning)
+            ? $"⚠ {label}"
+            : $"✓ {label}";
     }
 
     private void NavigateToSelectedQcIssue()
     {
+        if (SelectedFigureQcIssue?.ObjectId is Guid objectId)
+        {
+            foreach (SourceAssetItemViewModel source in Sources)
+            {
+                ScientificMeasurementViewModel? measurement = source.Measurements.FirstOrDefault(item => item.Id == objectId);
+                if (measurement is not null)
+                {
+                    SelectedSource = source;
+                    source.SelectedMeasurement = measurement;
+                    WorkspaceMode = WorkspaceMode.Crop;
+                    IsLayersTabActive = false;
+                    LastError = null;
+                    StatusMessage = $"已定位 Figure QC 问题 · {measurement.TypeText} {measurement.Number}";
+                    return;
+                }
+            }
+        }
+
+        if (SelectedFigureQcIssue?.SourceId is Guid sourceId &&
+            Sources.FirstOrDefault(source => source.Asset.Id == sourceId) is { } targetSource)
+        {
+            SelectedSource = targetSource;
+            WorkspaceMode = WorkspaceMode.Crop;
+            IsLayersTabActive = false;
+            LastError = null;
+            StatusMessage = $"已定位 Figure QC 问题 · 源素材 {targetSource.DisplayName}";
+            return;
+        }
+
         string? panelLabel = SelectedFigureQcIssue?.PanelLabel;
         if (string.IsNullOrWhiteSpace(panelLabel))
         {
@@ -4166,7 +4601,8 @@ public sealed class MainWindowViewModel : ObservableObject
                     panel.CropLinkGroupId,
                     panel.FitMode,
                     panel.RotationDegrees,
-                    panel.ReplacementValidity))
+                    panel.ReplacementValidity,
+                    panel.StyleOverride))
                 .ToArray(),
             Figure.Annotations
                 .OrderBy(annotation => annotation.ZIndex)
@@ -4178,7 +4614,11 @@ public sealed class MainWindowViewModel : ObservableObject
                     annotation.EndX,
                     annotation.EndY,
                     annotation.Text,
-                    annotation.Color,
+                    annotation.StrokeColor,
+                    annotation.FillColor,
+                    annotation.FillOpacityPercent,
+                    annotation.TextColor,
+                    annotation.FontFamily,
                     annotation.FontSizePt,
                     annotation.StrokeWidthPt,
                     annotation.IsBold,
@@ -4205,6 +4645,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 .Select(measurement => new MeasurementHistorySnapshot(
                     measurement.Id,
                     measurement.SourceAssetId,
+                    measurement.SourceRevision,
                     measurement.Kind,
                     measurement.Measurement.PointA,
                     measurement.Measurement.PointB,
@@ -4213,9 +4654,16 @@ public sealed class MainWindowViewModel : ObservableObject
                     measurement.StrokeColor,
                     measurement.StrokeWidthPixels,
                     measurement.LineStyle,
+                    measurement.FillColor,
+                    measurement.MarkerStrokeColor,
+                    measurement.MarkerFillColor,
                     measurement.MarkerSizePixels,
                     measurement.ShowMarkers,
                     measurement.ShowLabel,
+                    measurement.LabelColor,
+                    measurement.LabelFontFamily,
+                    measurement.LabelFontSizePt,
+                    measurement.LabelIsBold,
                     measurement.FillOpacityPercent,
                     measurement.IsVisible,
                     measurement.IsLocked))
@@ -4279,6 +4727,7 @@ public sealed class MainWindowViewModel : ObservableObject
                     panelSnapshot.FitMode,
                     panelSnapshot.RotationDegrees,
                     panelSnapshot.ReplacementValidity);
+                restored.RestoreStyleOverride(panelSnapshot.StyleOverride);
             }
 
             foreach (AnnotationHistorySnapshot annotation in
@@ -4292,7 +4741,11 @@ public sealed class MainWindowViewModel : ObservableObject
                     annotation.EndX,
                     annotation.EndY,
                     annotation.Text,
-                    annotation.Color,
+                    annotation.StrokeColor,
+                    annotation.FillColor,
+                    annotation.FillOpacityPercent,
+                    annotation.TextColor,
+                    annotation.FontFamily,
                     annotation.FontSizePt,
                     annotation.StrokeWidthPt,
                     annotation.IsBold,
@@ -4331,7 +4784,8 @@ public sealed class MainWindowViewModel : ObservableObject
                         item.PointB,
                         item.PointC,
                         Name: null,
-                        PathPoints: item.PathPoints)),
+                        PathPoints: item.PathPoints,
+                        SourceRevision: item.SourceRevision)),
                     measurementSnapshots.ToDictionary(
                         item => item.Id,
                         item => new ScientificMeasurementVisualStyle
@@ -4339,9 +4793,16 @@ public sealed class MainWindowViewModel : ObservableObject
                             StrokeColor = item.StrokeColor,
                             StrokeWidthPixels = item.StrokeWidthPixels,
                             LineStyle = item.LineStyle,
+                            FillColor = item.FillColor,
+                            MarkerStrokeColor = item.MarkerStrokeColor,
+                            MarkerFillColor = item.MarkerFillColor,
                             MarkerSizePixels = item.MarkerSizePixels,
                             ShowMarkers = item.ShowMarkers,
                             ShowLabel = item.ShowLabel,
+                            LabelColor = item.LabelColor,
+                            LabelFontFamily = item.LabelFontFamily,
+                            LabelFontSizePt = item.LabelFontSizePt,
+                            LabelIsBold = item.LabelIsBold,
                             FillOpacityPercent = item.FillOpacityPercent,
                             IsVisible = item.IsVisible,
                             IsLocked = item.IsLocked,
@@ -4397,6 +4858,7 @@ public sealed class MainWindowViewModel : ObservableObject
         }
 
         ExportFigureCommand.NotifyCanExecuteChanged();
+        BuildSubmissionPackageCommand.NotifyCanExecuteChanged();
         AddCurrentCropToFigureCommand.NotifyCanExecuteChanged();
         RefreshHistoryState();
     }
@@ -4623,6 +5085,7 @@ public sealed class MainWindowViewModel : ObservableObject
             restored.ScaleBarUnit = panel.ScaleBarUnit;
             restored.ScaleBarShowLabel = panel.ScaleBarShowLabel;
             restored.ShowScaleBar = panel.ShowScaleBar;
+            restored.RestoreStyleOverride(panel.StyleOverride);
         }
         migrated.RestorePanelSelection(selectedPanelIds, primaryPanelId);
 
@@ -4637,7 +5100,11 @@ public sealed class MainWindowViewModel : ObservableObject
                 Math.Clamp(annotation.EndX * scaleX, 0, migrated.CanvasWidth),
                 Math.Clamp(annotation.EndY * scaleY, 0, migrated.CanvasHeight),
                 annotation.Text,
-                annotation.Color,
+                annotation.StrokeColor,
+                annotation.FillColor,
+                annotation.FillOpacityPercent,
+                annotation.TextColor,
+                annotation.FontFamily,
                 annotation.FontSizePt,
                 annotation.StrokeWidthPt,
                 annotation.IsBold,
