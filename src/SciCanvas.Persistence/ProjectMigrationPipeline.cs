@@ -96,7 +96,7 @@ public static class ProjectMigrationPipeline
                 [
                     new ProjectAuditEntrySnapshot
                     {
-                        Timestamp = DateTimeOffset.UtcNow,
+                        Timestamp = document.UpdatedAt,
                         Command = "MigrateProject",
                         Parameters = new Dictionary<string, object?>
                         {
@@ -170,6 +170,7 @@ public static class ProjectMigrationPipeline
             PanelLabelSequence = template.PanelLabelSequence,
             LayerSlots = template.LayerSlots,
             ScaleBars = template.ScaleBars,
+            MeasurementOverlays = template.MeasurementOverlays,
             Annotations = template.Annotations
                 .Select(annotation => MigrateAnnotation(
                     annotation,

@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.Windows.Media.Imaging;
 using System.Windows;
 using System.Windows.Media;
@@ -26,6 +28,8 @@ public sealed class FigurePanelViewModel : ObservableObject
     private double _physicalUnitsPerSourcePixel;
     private double _scaleBarPhysicalLength = 1;
     private string _scaleBarUnit = "µm";
+    private string _calibrationUnit = "µm";
+    private ScaleBarAnchor _primaryScaleBarAnchor = ScaleBarAnchor.BottomRight;
     private bool _scaleBarShowLabel = true;
     private bool _isAspectRatioLocked;
     private bool _isUpdatingSize;
@@ -71,6 +75,8 @@ public sealed class FigurePanelViewModel : ObservableObject
         _scaleBarUnit = string.IsNullOrWhiteSpace(source.Asset.Metadata.PhysicalUnit)
             ? "µm"
             : source.Asset.Metadata.PhysicalUnit;
+        _calibrationUnit = _scaleBarUnit;
+        AdditionalScaleBars.CollectionChanged += OnAdditionalScaleBarsChanged;
         if (_physicalUnitsPerSourcePixel > 0)
         {
             _scaleBarPhysicalLength = ChooseReadablePhysicalLength(
@@ -111,6 +117,8 @@ public sealed class FigurePanelViewModel : ObservableObject
     public Brush EffectiveScaleBarBrush => CreateStyleBrush(EffectiveStyle.ScaleBarColor);
 
     public Guid Id { get; }
+
+    public int FigureDpi => _figureDpi;
 
     public PixelRect64 SourceRect { get; private set; }
 
@@ -327,6 +335,7 @@ public sealed class FigurePanelViewModel : ObservableObject
         if (physicalUnitsPerPixel > 0)
         {
             _scaleBarUnit = string.IsNullOrWhiteSpace(source.Asset.Metadata.PhysicalUnit) ? "µm" : source.Asset.Metadata.PhysicalUnit;
+            _calibrationUnit = _scaleBarUnit;
             _scaleBarPhysicalLength = ChooseReadablePhysicalLength(sourceRect.Width * physicalUnitsPerPixel * 0.2);
         }
         else
@@ -615,67 +624,103 @@ public sealed class FigurePanelViewModel : ObservableObject
         }
     }
 
+    /// <summary>Unit in which <see cref="PhysicalUnitsPerSourcePixel"/> is expressed.</summary>
+    public string CalibrationUnit
+    {
+        get => _calibrationUnit;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (SetProperty(ref _calibrationUnit, normalized))
+            {
+                NotifyScaleBarGeometryChanged();
+            }
+        }
+    }
+
+    public ScaleBarAnchor PrimaryScaleBarAnchor
+    {
+        get => _primaryScaleBarAnchor;
+        set
+        {
+            if (SetProperty(ref _primaryScaleBarAnchor, value))
+            {
+                NotifyScaleBarGeometryChanged();
+            }
+        }
+    }
+
+    /// <summary>Additional scale bars sharing this panel's source calibration.</summary>
+    public ObservableCollection<FigureAdditionalScaleBarViewModel> AdditionalScaleBars { get; } = [];
+
+    public bool HasScaleBars => ShowScaleBar || AdditionalScaleBars.Any(bar => bar.IsVisible);
+
+    public bool IsPrimaryScaleBarValid => !ShowScaleBar || TryValidateScaleBar(CreatePrimaryScaleBarSpec());
     public bool ScaleBarShowLabel
     {
         get => _scaleBarShowLabel;
-        set => SetProperty(ref _scaleBarShowLabel, value);
-    }
-
-    public bool IsScaleBarValid => !ShowScaleBar ||
-        (double.IsFinite(PhysicalUnitsPerSourcePixel) && PhysicalUnitsPerSourcePixel > 0 &&
-         double.IsFinite(ScaleBarPhysicalLength) && ScaleBarPhysicalLength > 0 &&
-         !string.IsNullOrWhiteSpace(ScaleBarUnit) &&
-         ScaleBarSourcePixelLength <= SourceRect.Width * 0.8);
-
-    public double ScaleBarSourcePixelLength =>
-        PhysicalUnitsPerSourcePixel > 0 && double.IsFinite(PhysicalUnitsPerSourcePixel)
-            ? ScaleBarPhysicalLength / PhysicalUnitsPerSourcePixel
-            : 0;
-
-    public double ScaleBarPreviewWidth
-    {
-        get
+        set
         {
-            if (!IsScaleBarValid || !ShowScaleBar)
+            if (SetProperty(ref _scaleBarShowLabel, value))
             {
-                return 0;
+                NotifyScaleBarGeometryChanged();
             }
-
-            return ScaleBarSourcePixelLength * ContainedScale;
         }
     }
 
-    public double ScaleBarPreviewX
+    public bool IsScaleBarValid => CreateScaleBarExportSpecs().All(specification =>
+        TryValidateScaleBar(specification));
+
+    public double ScaleBarSourcePixelLength => TryGetPrimaryScaleBarSourcePixels(out double sourcePixels)
+        ? sourcePixels
+        : 0;
+
+    internal FigureScaleBarGeometry? TryGetScaleBarPreviewGeometry(Guid id)
     {
-        get
+        try
         {
-            (double left, _, double imageWidth, _) = ContainedImageRect;
-            double margin = Math.Max(12, Math.Min(imageWidth, Height) * 0.035);
-            return left + imageWidth - margin - ScaleBarPreviewWidth;
+            (double left, double top, double width, double height) = ContainedImageRect;
+            return FigureScaleBarLayout.Calculate(
+                    CreateScaleBarExportSpecs(),
+                    SourceRect,
+                    new FigureImageRect(left, top, width, height),
+                    _figureDpi,
+                    EffectiveScaleBarThicknessPixels,
+                    EffectiveScaleBarFontSizePixels)
+                .FirstOrDefault(item => item.Spec.Id == id);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or InvalidOperationException)
+        {
+            return null;
         }
     }
+    private FigureScaleBarGeometry? PrimaryPreviewGeometry => TryGetScaleBarPreviewGeometry(Id);
 
-    public double ScaleBarPreviewY
-    {
-        get
-        {
-            (_, double top, _, double imageHeight) = ContainedImageRect;
-            double margin = Math.Max(12, Math.Min(Width, imageHeight) * 0.035);
-            return top + imageHeight - margin - 7;
-        }
-    }
+    public double ScaleBarPreviewWidth => PrimaryPreviewGeometry is { } geometry
+        ? geometry.Right - geometry.Left
+        : 0;
 
-    public double ScaleBarLabelPreviewY => Math.Max(2, ScaleBarPreviewY - 38);
+    public double ScaleBarPreviewX => PrimaryPreviewGeometry?.Left ?? 0;
 
-    public bool HasRenderableScaleBar => ShowScaleBar && IsScaleBarValid;
+    public double ScaleBarPreviewY => PrimaryPreviewGeometry is { } geometry
+        ? geometry.Y - EffectiveScaleBarThicknessPixels / 2
+        : 0;
 
-    public string ScaleBarLabel => $"{ScaleBarPhysicalLength:0.###} {ScaleBarUnit}";
+    public double ScaleBarLabelPreviewY => PrimaryPreviewGeometry?.LabelTop ?? 0;
+
+    public bool HasRenderableScaleBar => ShowScaleBar && IsPrimaryScaleBarValid &&
+        PrimaryPreviewGeometry is not null;
+
+    public string ScaleBarLabel => TryGetPrimaryScaleBarLabel(out string label)
+        ? label
+        : $"{ScaleBarPhysicalLength:0.###} {ScaleBarUnit}";
 
     public string ScaleBarStatusText
     {
         get
         {
-            if (!ShowScaleBar)
+            int additionalCount = AdditionalScaleBars.Count(bar => bar.IsVisible);
+            if (!ShowScaleBar && additionalCount == 0)
             {
                 return RequiresScaleBar
                     ? "该显微图插槽建议添加经过校准的比例尺。"
@@ -687,22 +732,39 @@ public sealed class FigurePanelViewModel : ObservableObject
                 return "请输入大于 0 的“每像素物理尺寸”。";
             }
 
-            if (!double.IsFinite(ScaleBarPhysicalLength) || ScaleBarPhysicalLength <= 0)
+            if (ShowScaleBar && (!double.IsFinite(ScaleBarPhysicalLength) || ScaleBarPhysicalLength <= 0))
             {
                 return "请输入大于 0 的比例尺长度。";
             }
 
-            if (string.IsNullOrWhiteSpace(ScaleBarUnit))
+            if (string.IsNullOrWhiteSpace(CalibrationUnit))
             {
-                return "请输入物理单位，例如 nm 或 µm。";
+                return "请输入校准单位，例如 nm 或 µm。";
             }
 
-            if (ScaleBarSourcePixelLength > SourceRect.Width * 0.8)
+            if (ShowScaleBar && string.IsNullOrWhiteSpace(ScaleBarUnit))
             {
-                return "比例尺超过图像宽度的 80%，请缩短长度或检查校准值。";
+                return "请输入主比例尺的显示单位，例如 nm 或 µm。";
             }
 
-            return $"已校准 · {ScaleBarLabel} = {ScaleBarSourcePixelLength:0.##} 个源像素";
+            if (ShowScaleBar && !IsPrimaryScaleBarValid)
+            {
+                return "主比例尺的显示单位无法换算到校准单位，或长度超过图像宽度的 80%。";
+            }
+
+            if (AdditionalScaleBars.Any(bar => bar.IsVisible &&
+                                               !TryValidateScaleBar(bar.ToExportSpec(PhysicalUnitsPerSourcePixel, CalibrationUnit))))
+            {
+                return "至少一条额外比例尺无法换算到校准单位，或长度超过图像宽度的 80%。";
+            }
+
+            if (!ShowScaleBar)
+            {
+                return $"已校准 · 已启用 {additionalCount} 条额外比例尺";
+            }
+
+            return $"已校准 · {ScaleBarLabel} = {ScaleBarSourcePixelLength:0.##} 个源像素" +
+                   (additionalCount == 0 ? string.Empty : $" · 另有 {additionalCount} 条比例尺");
         }
     }
 
@@ -719,6 +781,20 @@ public sealed class FigurePanelViewModel : ObservableObject
 
     public bool IsBelowMinimumDpi => EffectiveDpi < MinimumEffectiveDpi;
 
+    public IReadOnlyList<FigureScaleBarExportSpec> CreateScaleBarExportSpecs()
+    {
+        var specifications = new List<FigureScaleBarExportSpec>();
+        if (ShowScaleBar)
+        {
+            specifications.Add(CreatePrimaryScaleBarSpec());
+        }
+
+        specifications.AddRange(AdditionalScaleBars
+            .Where(bar => bar.IsVisible)
+            .Select(bar => bar.ToExportSpec(PhysicalUnitsPerSourcePixel, CalibrationUnit)));
+        return specifications;
+    }
+
     public FigureScaleBarExportSpec? CreateScaleBarExportSpec()
     {
         if (!ShowScaleBar)
@@ -726,18 +802,93 @@ public sealed class FigurePanelViewModel : ObservableObject
             return null;
         }
 
-        if (!IsScaleBarValid)
+        FigureScaleBarExportSpec specification = CreatePrimaryScaleBarSpec();
+        if (!TryValidateScaleBar(specification))
         {
             throw new InvalidOperationException($"面板 {Label} 的比例尺参数无效：{ScaleBarStatusText}");
         }
 
-        return new FigureScaleBarExportSpec(
-            PhysicalUnitsPerSourcePixel,
-            ScaleBarPhysicalLength,
-            ScaleBarUnit,
-            ScaleBarShowLabel);
+        return specification;
     }
 
+    public FigureAdditionalScaleBarViewModel AddAdditionalScaleBar()
+    {
+        double length = double.IsFinite(ScaleBarPhysicalLength) && ScaleBarPhysicalLength > 0
+            ? ScaleBarPhysicalLength
+            : ChooseReadablePhysicalLength(Math.Max(1, SourceRect.Width * Math.Max(PhysicalUnitsPerSourcePixel, 1) * 0.15));
+        var scaleBar = new FigureAdditionalScaleBarViewModel(
+            length,
+            string.IsNullOrWhiteSpace(ScaleBarUnit) ? CalibrationUnit : ScaleBarUnit,
+            ScaleBarAnchor.BottomRight);
+        AdditionalScaleBars.Add(scaleBar);
+        return scaleBar;
+    }
+
+    public bool RemoveAdditionalScaleBar(FigureAdditionalScaleBarViewModel scaleBar) =>
+        AdditionalScaleBars.Remove(scaleBar);
+
+    public void RestoreAdditionalScaleBars(IEnumerable<FigureAdditionalScaleBarViewModel>? scaleBars)
+    {
+        AdditionalScaleBars.Clear();
+        foreach (FigureAdditionalScaleBarViewModel scaleBar in scaleBars ?? [])
+        {
+            AdditionalScaleBars.Add(scaleBar);
+        }
+    }
+
+    private FigureScaleBarExportSpec CreatePrimaryScaleBarSpec() => new(
+        PhysicalUnitsPerSourcePixel,
+        ScaleBarPhysicalLength,
+        ScaleBarUnit,
+        ScaleBarShowLabel,
+        CalibrationUnit,
+        PrimaryScaleBarAnchor,
+        Id);
+
+    private bool TryGetPrimaryScaleBarSourcePixels(out double sourcePixels)
+    {
+        sourcePixels = 0;
+        if (!ShowScaleBar)
+        {
+            return false;
+        }
+
+        try
+        {
+            sourcePixels = CreatePrimaryScaleBarSpec().SourcePixelLength;
+            return double.IsFinite(sourcePixels) && sourcePixels > 0;
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private bool TryGetPrimaryScaleBarLabel(out string label)
+    {
+        label = string.Empty;
+        try
+        {
+            label = CreatePrimaryScaleBarSpec().Label;
+            return true;
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+    private bool TryValidateScaleBar(FigureScaleBarExportSpec specification)
+    {
+        try
+        {
+            specification.EnsureValid(SourceRect);
+            return true;
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
     public void ApplySpatialCalibration(SpatialCalibration calibration)
     {
         ArgumentNullException.ThrowIfNull(calibration);
@@ -755,6 +906,7 @@ public sealed class FigurePanelViewModel : ObservableObject
         }
 
         PhysicalUnitsPerSourcePixel = calibration.UnitsPerPixelX;
+        CalibrationUnit = calibration.Unit;
         ScaleBarUnit = calibration.Unit;
         if (!double.IsFinite(ScaleBarPhysicalLength) || ScaleBarPhysicalLength <= 0 ||
             ScaleBarSourcePixelLength > SourceRect.Width * 0.8)
@@ -965,8 +1117,36 @@ public sealed class FigurePanelViewModel : ObservableObject
         }
     }
 
+    private void OnAdditionalScaleBarsChanged(object? sender, NotifyCollectionChangedEventArgs eventArgs)
+    {
+        if (eventArgs.OldItems is not null)
+        {
+            foreach (FigureAdditionalScaleBarViewModel scaleBar in eventArgs.OldItems.OfType<FigureAdditionalScaleBarViewModel>())
+            {
+                scaleBar.Changed -= OnAdditionalScaleBarChanged;
+            }
+        }
+
+        if (eventArgs.NewItems is not null)
+        {
+            foreach (FigureAdditionalScaleBarViewModel scaleBar in eventArgs.NewItems.OfType<FigureAdditionalScaleBarViewModel>())
+            {
+                scaleBar.Attach(this);
+                scaleBar.Changed += OnAdditionalScaleBarChanged;
+            }
+        }
+
+        NotifyScaleBarGeometryChanged();
+    }
+
+    private void OnAdditionalScaleBarChanged(object? sender, EventArgs eventArgs) =>
+        NotifyScaleBarGeometryChanged();
+
     private void NotifyScaleBarGeometryChanged()
     {
+        OnPropertyChanged(nameof(AdditionalScaleBars));
+        OnPropertyChanged(nameof(HasScaleBars));
+        OnPropertyChanged(nameof(IsPrimaryScaleBarValid));
         OnPropertyChanged(nameof(IsScaleBarValid));
         OnPropertyChanged(nameof(ScaleBarSourcePixelLength));
         OnPropertyChanged(nameof(ScaleBarPreviewWidth));
@@ -976,6 +1156,10 @@ public sealed class FigurePanelViewModel : ObservableObject
         OnPropertyChanged(nameof(HasRenderableScaleBar));
         OnPropertyChanged(nameof(ScaleBarLabel));
         OnPropertyChanged(nameof(ScaleBarStatusText));
+        foreach (FigureAdditionalScaleBarViewModel scaleBar in AdditionalScaleBars)
+        {
+            scaleBar.RefreshLayout();
+        }
     }
 
     private void NotifyEffectiveStyleChanged()

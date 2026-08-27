@@ -1,5 +1,6 @@
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
+using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
 using SciCanvas.Core.Workspace;
 
@@ -9,7 +10,36 @@ public sealed record FigureScaleBarExportSpec(
     double PhysicalUnitsPerSourcePixel,
     double PhysicalLength,
     string Unit,
-    bool ShowLabel);
+    bool ShowLabel,
+    string? CalibrationUnit = null,
+    ScaleBarAnchor Anchor = ScaleBarAnchor.BottomRight,
+    Guid Id = default)
+{
+    public string EffectiveCalibrationUnit => string.IsNullOrWhiteSpace(CalibrationUnit)
+        ? Unit
+        : CalibrationUnit;
+
+    public ScientificLength DisplayLength => new(PhysicalLength, Unit);
+
+    public ScientificScaleCalibration Calibration => new(
+        PhysicalUnitsPerSourcePixel,
+        EffectiveCalibrationUnit);
+
+    public double SourcePixelLength => Calibration.SourcePixelsFor(DisplayLength);
+
+    public string Label => DisplayLength.DisplayText;
+
+    public void EnsureValid(PixelRect64 sourceRect, double maximumWidthFraction = 0.8)
+    {
+        Calibration.EnsureValid();
+        DisplayLength.EnsureValid();
+        if (!Enum.IsDefined(Anchor) || !double.IsFinite(SourcePixelLength) ||
+            SourcePixelLength > sourceRect.Width * maximumWidthFraction)
+        {
+            throw new InvalidOperationException("比例尺长度或位置无效。");
+        }
+    }
+}
 
 public sealed record FigurePanelExportItem(
     SourceAsset Source,
@@ -21,7 +51,14 @@ public sealed record FigurePanelExportItem(
     ImageAdjustmentParameters? Adjustments = null,
     int FrameIndex = 0,
     bool IsInset = false,
-    StyleOverride? StyleOverride = null);
+    StyleOverride? StyleOverride = null,
+    Guid PanelId = default,
+    IReadOnlyList<FigureScaleBarExportSpec>? ScaleBars = null)
+{
+    public IReadOnlyList<FigureScaleBarExportSpec> EffectiveScaleBars => ScaleBars is { Count: > 0 }
+        ? ScaleBars
+        : ScaleBar is null ? [] : [ScaleBar];
+}
 
 public sealed record FigureAnnotationExportItem
 {
@@ -242,7 +279,9 @@ public sealed record FigureExportDocument
         IReadOnlyList<FigureAnnotationExportItem>? annotations = null,
         string backgroundColor = "#FFFFFFFF",
         int bitDepth = 8,
-        FigureGlobalStyle? globalStyle = null)
+        FigureGlobalStyle? globalStyle = null,
+        IReadOnlyList<FigureMeasurementOverlayExportItem>? measurementOverlays = null,
+        IReadOnlyList<FigureScientificObjectExportItem>? scientificObjects = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(widthPixels);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(heightPixels);
@@ -261,6 +300,8 @@ public sealed record FigureExportDocument
         BackgroundColor = backgroundColor;
         BitDepth = bitDepth;
         GlobalStyle = globalStyle ?? FigureGlobalStyle.Default;
+        MeasurementOverlays = measurementOverlays ?? [];
+        ScientificObjects = scientificObjects ?? [];
         GlobalStyle.EnsureValid();
     }
 
@@ -273,6 +314,10 @@ public sealed record FigureExportDocument
     public IReadOnlyList<FigurePanelExportItem> Panels { get; }
 
     public IReadOnlyList<FigureAnnotationExportItem> Annotations { get; }
+
+    public IReadOnlyList<FigureMeasurementOverlayExportItem> MeasurementOverlays { get; }
+
+    public IReadOnlyList<FigureScientificObjectExportItem> ScientificObjects { get; }
 
     public string BackgroundColor { get; }
 

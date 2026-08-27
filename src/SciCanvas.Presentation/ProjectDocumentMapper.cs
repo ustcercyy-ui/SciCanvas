@@ -1,4 +1,5 @@
 using System.IO;
+using SciCanvas.Core.Channels;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
@@ -24,7 +25,8 @@ internal static class ProjectDocumentMapper
         bool cropOverlayVisible,
         IReadOnlyList<ProjectAuditEntrySnapshot>? auditTrail = null,
         IReadOnlyList<FigureExportProfile>? exportProfiles = null,
-        int minimumEffectiveDpi = 300)
+        int minimumEffectiveDpi = 300,
+        IReadOnlyList<MultiChannelAssetGroup>? multiChannelGroups = null)
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
         ProjectPixelRectSnapshot? activeCrop = crop.TryGetCrop(out PixelRect64 cropRect)
@@ -40,9 +42,20 @@ internal static class ProjectDocumentMapper
             {
                 Enabled = panel.ShowScaleBar,
                 PhysicalUnitsPerSourcePixel = panel.PhysicalUnitsPerSourcePixel,
+                CalibrationUnit = panel.CalibrationUnit,
                 PhysicalLength = panel.ScaleBarPhysicalLength,
                 Unit = panel.ScaleBarUnit,
+                Anchor = ToScaleBarAnchorKey(panel.PrimaryScaleBarAnchor),
                 ShowLabel = panel.ScaleBarShowLabel,
+                AdditionalBars = panel.AdditionalScaleBars.Select(scaleBar => new ProjectAdditionalScaleBarSnapshot
+                {
+                    Id = scaleBar.Id,
+                    PhysicalLength = scaleBar.PhysicalLength,
+                    Unit = scaleBar.Unit,
+                    Anchor = ToScaleBarAnchorKey(scaleBar.Anchor),
+                    ShowLabel = scaleBar.ShowLabel,
+                    IsVisible = scaleBar.IsVisible,
+                }).ToArray(),
             });
 
         return new SciCanvasProjectDocument
@@ -165,6 +178,9 @@ internal static class ProjectDocumentMapper
                 .SelectMany(source => source.AnalysisResults)
                 .Select(ToSnapshot)
                 .ToArray(),
+            MultiChannelGroups = (multiChannelGroups ?? [])
+                .Select(ToSnapshot)
+                .ToArray(),
             TemplateSnapshot = new ProjectTemplateSnapshot
             {
                 TemplateId = figure.Template.Id,
@@ -206,6 +222,35 @@ internal static class ProjectDocumentMapper
                         ZIndex = annotation.ZIndex,
                     })
                     .ToArray(),
+                ScientificObjects = figure.ScientificObjects
+                    .OrderBy(scientificObject => scientificObject.ZIndex)
+                    .Select(scientificObject => new ProjectFigureScientificObjectSnapshot
+                    {
+                        Id = scientificObject.Id,
+                        Kind = scientificObject.Kind.ToString(),
+                        Points = scientificObject.PointsText,
+                        Label = scientificObject.Label,
+                        StrokeColor = scientificObject.StrokeColor,
+                        FillColor = scientificObject.FillColor,
+                        FillOpacityPercent = scientificObject.FillOpacityPercent,
+                        TextColor = scientificObject.TextColor,
+                        FontFamily = scientificObject.FontFamily,
+                        FontSizePt = scientificObject.FontSizePt,
+                        StrokeWidthPt = scientificObject.StrokeWidthPt,
+                        IsBold = scientificObject.IsBold,
+                        Visible = scientificObject.IsVisible,
+                        Locked = scientificObject.IsLocked,
+                        ZIndex = scientificObject.ZIndex,
+                        Minimum = scientificObject.Minimum,
+                        Maximum = scientificObject.Maximum,
+                        Unit = scientificObject.Unit,
+                        Colormap = scientificObject.Colormap,
+                        ChannelEntries = scientificObject.ChannelEntriesText,
+                    })
+                    .ToArray(),                MeasurementOverlays = figure.MeasurementOverlays
+                    .OrderBy(overlay => overlay.ZIndex)
+                    .Select(ToSnapshot)
+                    .ToArray(),
                 GlobalStyle = new ProjectGlobalStyleSnapshot
                 {
                     FontFamily = figure.GlobalFontFamily,
@@ -246,6 +291,8 @@ internal static class ProjectDocumentMapper
                             ["sourceCount"] = sources.Count,
                             ["layerCount"] = figure.Panels.Count,
                             ["annotationCount"] = figure.Annotations.Count,
+                            ["scientificObjectCount"] = figure.ScientificObjects.Count,
+                            ["multiChannelGroupCount"] = multiChannelGroups?.Count ?? 0,
                             ["calibrationCount"] = sources.Count(source => source.Calibration.IsCalibrated),
                             ["measurementCount"] = sources.Sum(source => source.Measurements.Count),
                             ["analysisCount"] = sources.Sum(source => source.AnalysisResults.Count),
@@ -320,6 +367,139 @@ internal static class ProjectDocumentMapper
         PathPoints: snapshot.Points.Select(point => new MeasurementPoint(point.X, point.Y)).ToArray(),
         SourceRevision: snapshot.SourceRevision);
 
+    public static MeasurementOverlayObject ToMeasurementOverlay(
+        ProjectMeasurementOverlaySnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(snapshot.SourceGeometry);
+        ScientificMeasurement geometry = ToMeasurement(snapshot.SourceGeometry);
+        if (snapshot.Id == Guid.Empty || snapshot.MeasurementId == Guid.Empty ||
+            snapshot.PanelId == Guid.Empty || geometry.Id != snapshot.MeasurementId ||
+            geometry.SourceAssetId == Guid.Empty || geometry.SourceRevision < 1)
+        {
+            throw new InvalidDataException("Measurement Overlay 快照缺少有效的对象、测量、面板或源修订标识。");
+        }
+
+        ProjectMeasurementOverlayStyleSnapshot style = snapshot.Style ??
+            throw new InvalidDataException("Measurement Overlay 快照缺少样式。");
+        var visualStyle = new FigureMeasurementOverlayStyle(
+            style.StrokeColor,
+            style.StrokeWidthPixels,
+            style.LineStyle,
+            style.FillColor,
+            style.FillOpacityPercent,
+            style.MarkerStrokeColor,
+            style.MarkerFillColor,
+            style.MarkerSizePixels,
+            style.ShowMarkers,
+            style.LabelColor,
+            style.LabelFontFamily,
+            style.LabelFontSizePt,
+            style.LabelIsBold,
+            style.ShowLabel);
+        visualStyle.EnsureValid();
+        FigureMeasurementCalibrationRelationship? calibration = snapshot.CalibrationRelationship is { } savedCalibration
+            ? new FigureMeasurementCalibrationRelationship(
+                savedCalibration.SourceAssetId,
+                savedCalibration.SourceRevision,
+                savedCalibration.UnitsPerPixelX,
+                savedCalibration.UnitsPerPixelY,
+                savedCalibration.Unit)
+            : null;
+        return new MeasurementOverlayObject
+        {
+            Id = snapshot.Id,
+            AssetId = geometry.SourceAssetId,
+            PanelId = snapshot.PanelId,
+            SourceRevision = geometry.SourceRevision,
+            MeasurementId = snapshot.MeasurementId,
+            SourceGeometry = geometry,
+            CalibrationRelationship = calibration,
+            Style = visualStyle,
+            StyleOverride = CreateMeasurementStyleOverride(visualStyle),
+            LabelOverride = snapshot.LabelOverride,
+            IsVisible = snapshot.IsVisible,
+            ZIndex = snapshot.ZIndex,
+        };
+    }
+
+    private static ProjectMeasurementOverlaySnapshot ToSnapshot(
+        FigureMeasurementOverlayViewModel overlay)
+    {
+        MeasurementOverlayObject scientificObject = overlay.ScientificObject;
+        ScientificMeasurement geometry = scientificObject.SourceGeometry;
+        FigureMeasurementOverlayStyle style = scientificObject.Style;
+        return new ProjectMeasurementOverlaySnapshot
+        {
+            Id = scientificObject.Id,
+            MeasurementId = scientificObject.MeasurementId,
+            PanelId = scientificObject.PanelId ?? Guid.Empty,
+            SourceGeometry = new ProjectMeasurementSnapshot
+            {
+                Id = geometry.Id,
+                SourceAssetId = geometry.SourceAssetId,
+                SourceRevision = geometry.SourceRevision,
+                Kind = ToMeasurementKindKey(geometry.Kind),
+                X1 = geometry.PointA.X,
+                Y1 = geometry.PointA.Y,
+                X2 = geometry.PointB.X,
+                Y2 = geometry.PointB.Y,
+                X3 = geometry.PointC?.X,
+                Y3 = geometry.PointC?.Y,
+                Points = geometry.Kind == ScientificMeasurementKind.Polyline
+                    ? geometry.EffectivePathPoints.Select(point => new ProjectMeasurementPointSnapshot
+                    {
+                        X = point.X,
+                        Y = point.Y,
+                    }).ToArray()
+                    : [],
+            },
+            CalibrationRelationship = scientificObject.CalibrationRelationship is { } calibration
+                ? new ProjectMeasurementOverlayCalibrationSnapshot
+                {
+                    SourceAssetId = calibration.SourceAssetId,
+                    SourceRevision = calibration.SourceRevision,
+                    UnitsPerPixelX = calibration.UnitsPerPixelX,
+                    UnitsPerPixelY = calibration.UnitsPerPixelY,
+                    Unit = calibration.Unit,
+                }
+                : null,
+            Style = new ProjectMeasurementOverlayStyleSnapshot
+            {
+                StrokeColor = style.StrokeColor,
+                StrokeWidthPixels = style.StrokeWidthPixels,
+                LineStyle = style.LineStyle,
+                FillColor = style.FillColor,
+                FillOpacityPercent = style.FillOpacityPercent,
+                MarkerStrokeColor = style.MarkerStrokeColor,
+                MarkerFillColor = style.MarkerFillColor,
+                MarkerSizePixels = style.MarkerSizePixels,
+                ShowMarkers = style.ShowMarkers,
+                LabelColor = style.LabelColor,
+                LabelFontFamily = style.LabelFontFamily,
+                LabelFontSizePt = style.LabelFontSizePt,
+                LabelIsBold = style.LabelIsBold,
+                ShowLabel = style.ShowLabel,
+            },
+            LabelOverride = scientificObject.LabelOverride,
+            IsVisible = scientificObject.IsVisible,
+            ZIndex = scientificObject.ZIndex,
+        };
+    }
+
+    private static StyleOverride CreateMeasurementStyleOverride(
+        FigureMeasurementOverlayStyle style) => new(
+        Measurement: new MeasurementStyle(
+            new ShapeStyle(
+                style.StrokeColor,
+                style.FillColor,
+                style.FillOpacityPercent,
+                Math.Clamp(style.StrokeWidthPixels * 72.0 / 96.0, 0.25, 10)),
+            new MarkerStyle(style.MarkerStrokeColor, style.MarkerFillColor, style.MarkerSizePixels),
+            new TextStyle(style.LabelFontFamily, style.LabelFontSizePt, style.LabelIsBold, style.LabelColor),
+            style.LineStyle,
+            style.ShowMarkers,
+            style.ShowLabel));
     public static ScientificImageAnalysisResult ToAnalysis(ProjectScientificAnalysisSnapshot snapshot) =>
         snapshot.Kind.ToLowerInvariant() switch
         {
@@ -722,6 +902,23 @@ internal static class ProjectDocumentMapper
         };
     }
 
+    public static string ToScaleBarAnchorKey(ScaleBarAnchor anchor) => anchor switch
+    {
+        ScaleBarAnchor.BottomLeft => "bottomLeft",
+        ScaleBarAnchor.TopLeft => "topLeft",
+        ScaleBarAnchor.TopRight => "topRight",
+        ScaleBarAnchor.Custom => "custom",
+        _ => "bottomRight",
+    };
+
+    public static ScaleBarAnchor ParseScaleBarAnchor(string? anchor) => anchor?.ToLowerInvariant() switch
+    {
+        "bottomleft" => ScaleBarAnchor.BottomLeft,
+        "topleft" => ScaleBarAnchor.TopLeft,
+        "topright" => ScaleBarAnchor.TopRight,
+        "custom" => ScaleBarAnchor.Custom,
+        _ => ScaleBarAnchor.BottomRight,
+    };
     public static PanelFitMode ParsePanelFitMode(string? fitMode) => fitMode?.ToLowerInvariant() switch
     {
         "fit" => PanelFitMode.Fit,
@@ -849,6 +1046,79 @@ internal static class ProjectDocumentMapper
         _ => SourceLinkState.Unverified,
     };
 
+    internal static ProjectMultiChannelAssetGroupSnapshot ToSnapshot(MultiChannelAssetGroup group)
+    {
+        group.EnsureValid();
+        return new ProjectMultiChannelAssetGroupSnapshot
+        {
+            Id = group.Id,
+            Name = group.Name,
+            ReferenceAssetId = group.ReferenceAssetId,
+            SameFieldOfViewConfirmed = group.SameFieldOfViewConfirmed,
+            Members = group.Members.Select(member => new ProjectChannelGroupMemberSnapshot
+            {
+                ChannelId = member.ChannelId,
+                AssetId = member.AssetId,
+                FrameIndex = member.FrameIndex,
+                Name = member.Name,
+                Role = member.Role,
+                Color = member.Color,
+                NameOrigin = member.NameOrigin switch
+                {
+                    ChannelNameOrigin.User => "user",
+                    ChannelNameOrigin.FilenameSuggestion => "filenameSuggestion",
+                    ChannelNameOrigin.OmeMetadata => "omeMetadata",
+                    _ => throw new InvalidDataException("未知通道名称来源。"),
+                },
+                IsNameConfirmed = member.IsNameConfirmed,
+                Visible = member.DisplaySettings.Visible,
+                Opacity = member.DisplaySettings.Opacity,
+                DisplayMinimum = member.DisplaySettings.DisplayMinimum,
+                DisplayMaximum = member.DisplaySettings.DisplayMaximum,
+                Gamma = member.DisplaySettings.Gamma,
+                Invert = member.DisplaySettings.Invert,
+            }).ToArray(),
+        };
+    }
+
+    internal static MultiChannelAssetGroup ToMultiChannelAssetGroup(
+        ProjectMultiChannelAssetGroupSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        return new MultiChannelAssetGroup(
+            snapshot.Id,
+            snapshot.Name,
+            snapshot.ReferenceAssetId,
+            snapshot.Members.Select(member =>
+            {
+                var display = new ChannelDisplaySettings(
+                    member.ChannelId,
+                    member.Visible,
+                    member.Color,
+                    member.Opacity,
+                    member.DisplayMinimum,
+                    member.DisplayMaximum,
+                    member.Gamma,
+                    member.Invert);
+                return new ChannelGroupMember(
+                    member.ChannelId,
+                    member.AssetId,
+                    member.FrameIndex,
+                    member.Name,
+                    member.Role,
+                    member.Color,
+                    member.NameOrigin?.ToLowerInvariant() switch
+                    {
+                        "user" => ChannelNameOrigin.User,
+                        "filenamesuggestion" => ChannelNameOrigin.FilenameSuggestion,
+                        "omemetadata" => ChannelNameOrigin.OmeMetadata,
+                        _ => throw new InvalidDataException("工程包含未知的通道名称来源。"),
+                    },
+                    member.IsNameConfirmed,
+                    display);
+            }).ToArray(),
+            snapshot.SameFieldOfViewConfirmed).EnsureValid();
+    }
     private static string ToCalibrationOriginKey(CalibrationOrigin origin) => origin switch
     {
         CalibrationOrigin.Metadata => "metadata",

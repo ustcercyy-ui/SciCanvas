@@ -71,6 +71,27 @@ public sealed class SubmissionPackageBuilderTests
     }
 
     [Fact]
+    public async Task BuildAsync_SecondExporterFailureLeavesNoPartialTargetOrStagingDirectory()
+    {
+        using var workspace = new TestWorkspace();
+        string target = Path.Combine(workspace.Root, "SubmissionPackage");
+        var builder = new SubmissionPackageBuilder(new FailingSecondFigureExporter());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => builder.BuildAsync(new SubmissionPackageRequest(
+            target,
+            new FigureExportDocument(100, 80, 300, []),
+            [CreateSource()],
+            new FigurePreflightResult([]),
+            [],
+            "2.3.0-alpha")));
+
+        Assert.False(Directory.Exists(target));
+        Assert.Empty(Directory.EnumerateDirectories(
+            workspace.Root,
+            ".SubmissionPackage.scicanvas-staging-*",
+            SearchOption.TopDirectoryOnly));
+    }
+    [Fact]
     public async Task BuildAsync_RejectsExistingNonEmptyDirectoryWithoutOverwrite()
     {
         using var workspace = new TestWorkspace();
@@ -139,6 +160,27 @@ public sealed class SubmissionPackageBuilderTests
         return new SourceAssetItemViewModel(asset, preview);
     }
 
+    private sealed class FailingSecondFigureExporter : IFigureExporter
+    {
+        private int _callCount;
+
+        public Task ExportAsync(
+            FigureExportDocument document,
+            string targetPath,
+            CancellationToken cancellationToken = default)
+        {
+            _callCount++;
+            if (_callCount == 2)
+            {
+                throw new InvalidOperationException("Simulated SVG exporter failure.");
+            }
+
+            using var stream = new FileStream(targetPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            stream.WriteByte(0x01);
+            stream.Flush(flushToDisk: true);
+            return Task.CompletedTask;
+        }
+    }
     private sealed class RecordingFigureExporter : IFigureExporter
     {
         public List<string> Targets { get; } = [];

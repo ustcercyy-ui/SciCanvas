@@ -1,3 +1,4 @@
+using SciCanvas.Core.Export;
 using SciCanvas.Core.Science;
 
 namespace SciCanvas.Core.Workspace;
@@ -13,6 +14,7 @@ public enum ScientificObjectKind
     PanelLabel,
     DirectionMarker,
     Annotation,
+    MeasurementOverlay,
 }
 
 public abstract record ScientificObject
@@ -61,6 +63,29 @@ public sealed record MeasurementObject : ScientificObject
     public (double Value, string Unit)? CachedValue { get; init; }
 }
 
+
+/// <summary>
+/// A figure-level scientific object which pins a source measurement to one panel
+/// without turning the measurement into a presentation-only annotation.
+/// </summary>
+public sealed record MeasurementOverlayObject : ScientificObject
+{
+    public override ScientificObjectKind Kind => ScientificObjectKind.MeasurementOverlay;
+
+    public required Guid MeasurementId { get; init; }
+
+    public required ScientificMeasurement SourceGeometry { get; init; }
+
+    public FigureMeasurementCalibrationRelationship? CalibrationRelationship { get; init; }
+
+    public required FigureMeasurementOverlayStyle Style { get; init; }
+
+    public string? LabelOverride { get; init; }
+
+    public bool IsVisible { get; init; } = true;
+
+    public int ZIndex { get; init; }
+}
 public sealed record AnalysisResultObject : ScientificObject
 {
     public override ScientificObjectKind Kind => ScientificObjectKind.AnalysisResult;

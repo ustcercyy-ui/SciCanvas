@@ -1,3 +1,4 @@
+using SciCanvas.Core.Channels;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
 using SciCanvas.Core.Science;
@@ -25,6 +26,7 @@ internal sealed record EditorHistorySnapshot(
     Guid? SelectedPanelId,
     IReadOnlyList<Guid> SelectedPanelIds,
     Guid? SelectedAnnotationId,
+    Guid? SelectedScientificObjectId,
     Guid? SelectedGuideId,
     bool SnappingEnabled,
     double SnapTolerancePixels,
@@ -32,10 +34,12 @@ internal sealed record EditorHistorySnapshot(
     int FigureQcMinimumDpi,
     IReadOnlyList<PanelHistorySnapshot> Panels,
     IReadOnlyList<AnnotationHistorySnapshot> Annotations,
+    IReadOnlyList<ScientificObjectHistorySnapshot> ScientificObjects,
     IReadOnlyList<GuideHistorySnapshot> Guides,
     IReadOnlyList<CalibrationHistorySnapshot> Calibrations,
     IReadOnlyList<MeasurementHistorySnapshot> Measurements,
-    IReadOnlyList<AnalysisHistorySnapshot> Analyses);
+    IReadOnlyList<AnalysisHistorySnapshot> Analyses,
+    IReadOnlyList<MultiChannelAssetGroup> MultiChannelGroups);
 
 internal sealed record PanelHistorySnapshot(
     Guid Id,
@@ -51,6 +55,9 @@ internal sealed record PanelHistorySnapshot(
     double PhysicalUnitsPerSourcePixel,
     double ScaleBarPhysicalLength,
     string ScaleBarUnit,
+    string CalibrationUnit,
+    ScaleBarAnchor PrimaryScaleBarAnchor,
+    IReadOnlyList<AdditionalScaleBarHistorySnapshot> AdditionalScaleBars,
     bool ScaleBarShowLabel,
     int FrameIndex,
     ImageAdjustmentParameters Adjustments,
@@ -61,6 +68,13 @@ internal sealed record PanelHistorySnapshot(
     ScientificValidity ReplacementValidity,
     StyleOverride? StyleOverride);
 
+internal sealed record AdditionalScaleBarHistorySnapshot(
+    Guid Id,
+    double PhysicalLength,
+    string Unit,
+    ScaleBarAnchor Anchor,
+    bool ShowLabel,
+    bool IsVisible);
 internal sealed record AnnotationHistorySnapshot(
     Guid Id,
     FigureAnnotationKind Kind,
@@ -81,6 +95,27 @@ internal sealed record AnnotationHistorySnapshot(
     bool IsLocked,
     int ZIndex);
 
+internal sealed record ScientificObjectHistorySnapshot(
+    Guid Id,
+    FigureScientificObjectKind Kind,
+    string PointsText,
+    string Label,
+    string StrokeColor,
+    string FillColor,
+    double FillOpacityPercent,
+    string TextColor,
+    string FontFamily,
+    double FontSizePt,
+    double StrokeWidthPt,
+    bool IsBold,
+    bool IsVisible,
+    bool IsLocked,
+    int ZIndex,
+    double Minimum,
+    double Maximum,
+    string Unit,
+    string Colormap,
+    string ChannelEntriesText);
 internal sealed record GuideHistorySnapshot(
     Guid Id,
     FigureGuideOrientation Orientation,

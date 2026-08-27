@@ -109,6 +109,11 @@ internal static class WpfHighBitDepthFigureExporter
             throw new InvalidOperationException(adjustment.ValidationMessage);
         }
 
+        if (adjustment.Channel == "alpha")
+        {
+            throw new InvalidOperationException("16-bit RGB TIFF cannot represent the selected alpha-channel view.");
+        }
+
         for (int y = top; y < bottom; y++)
         {
             double sourceY = ((y + 0.5 - contained.Top) / contained.Height) * converted.PixelHeight - 0.5;
@@ -233,6 +238,20 @@ internal static class WpfHighBitDepthFigureExporter
                 WpfFigureExporter.DrawAnnotation(drawing, annotation, document.Dpi, document.GlobalStyle);
             }
 
+            foreach (FigureMeasurementOverlayExportItem measurementOverlay in
+                     document.MeasurementOverlays.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                WpfFigureExporter.DrawMeasurementOverlay(drawing, measurementOverlay, document, document.Dpi);
+            }
+
+            foreach (FigureScientificObjectExportItem scientificObject in
+                     document.ScientificObjects.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                WpfFigureExporter.ValidateScientificObject(scientificObject, document);
+                WpfFigureExporter.DrawScientificObject(drawing, scientificObject, document.Dpi);
+            }
             drawing.Pop();
         }
 

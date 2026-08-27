@@ -71,6 +71,8 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
 
     public string SourceName { get; }
 
+    public SpatialCalibration? Calibration => _calibration;
+
     public ScientificMeasurementKind Kind { get; }
 
     public int Number

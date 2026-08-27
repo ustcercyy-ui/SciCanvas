@@ -21,10 +21,10 @@ $excludedNames = @(
     "README.txt"
 )
 
-Get-ChildItem -LiteralPath $sourceRoot -File |
+Get-ChildItem -LiteralPath $sourceRoot -Force |
     Where-Object { $excludedNames -notcontains $_.Name } |
     ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $installRoot $_.Name) -Force
+        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $installRoot $_.Name) -Recurse -Force
     }
 
 $shell = New-Object -ComObject WScript.Shell

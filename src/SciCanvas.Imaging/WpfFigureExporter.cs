@@ -5,6 +5,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
+using SciCanvas.Core.Science;
 
 namespace SciCanvas.Imaging;
 
@@ -85,6 +86,20 @@ public sealed class WpfFigureExporter : IFigureExporter
                 DrawAnnotation(drawing, annotation, document.Dpi, document.GlobalStyle);
             }
 
+            foreach (FigureMeasurementOverlayExportItem overlay in
+                     document.MeasurementOverlays.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                DrawMeasurementOverlay(drawing, overlay, document, document.Dpi);
+            }
+
+            foreach (FigureScientificObjectExportItem scientificObject in
+                     document.ScientificObjects.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ValidateScientificObject(scientificObject, document);
+                DrawScientificObject(drawing, scientificObject, document.Dpi);
+            }
             drawing.Pop();
         }
 
@@ -247,8 +262,8 @@ public sealed class WpfFigureExporter : IFigureExporter
         int dpi,
         FigureGlobalStyle? globalStyle = null)
     {
-        FigureScaleBarExportSpec? scaleBar = panel.ScaleBar;
-        if (scaleBar is null)
+        IReadOnlyList<FigureScaleBarExportSpec> scaleBars = panel.EffectiveScaleBars;
+        if (scaleBars.Count == 0)
         {
             return;
         }
@@ -256,15 +271,15 @@ public sealed class WpfFigureExporter : IFigureExporter
         FigureGlobalStyle style = globalStyle ?? FigureGlobalStyle.Default;
         var scaleBarBrush = new SolidColorBrush(ParseColor(style.ScaleBarColor));
         scaleBarBrush.Freeze();
-        double sourcePixels = scaleBar.PhysicalLength / scaleBar.PhysicalUnitsPerSourcePixel;
-        double outputPixelsPerSourcePixel = imageRect.Width / panel.SourceRect.Width;
-        double barWidth = sourcePixels * outputPixelsPerSourcePixel;
-        double margin = Math.Max(10, Math.Min(imageRect.Width, imageRect.Height) * 0.035);
         double thickness = Math.Max(2, style.EffectiveScaleBarThicknessPt / 72.0 * dpi);
-        double right = imageRect.Right - margin;
-        double y = imageRect.Bottom - margin - thickness / 2.0;
-        double left = right - barWidth;
-
+        double fontSize = Math.Max(12, style.EffectiveScaleBarFontSizePt / 72.0 * dpi);
+        IReadOnlyList<FigureScaleBarGeometry> geometries = FigureScaleBarLayout.Calculate(
+            scaleBars,
+            panel.SourceRect,
+            new FigureImageRect(imageRect.X, imageRect.Y, imageRect.Width, imageRect.Height),
+            dpi,
+            thickness,
+            fontSize);
         var outlinePen = new Pen(Brushes.Black, thickness + Math.Max(3, dpi / 100.0))
         {
             StartLineCap = PenLineCap.Square,
@@ -275,40 +290,40 @@ public sealed class WpfFigureExporter : IFigureExporter
             StartLineCap = PenLineCap.Square,
             EndLineCap = PenLineCap.Square,
         };
-        Point start = new(left, y);
-        Point end = new(right, y);
-        drawing.DrawLine(outlinePen, start, end);
-        drawing.DrawLine(linePen, start, end);
-
-        if (!scaleBar.ShowLabel)
-        {
-            return;
-        }
-
         var labelBrush = new SolidColorBrush(ParseColor(style.EffectiveScaleBarLabelColor));
         labelBrush.Freeze();
-        double fontSize = Math.Max(12, style.EffectiveScaleBarFontSizePt / 72.0 * dpi);
-        var text = new FormattedText(
-            $"{scaleBar.PhysicalLength:0.###} {scaleBar.Unit}",
-            CultureInfo.InvariantCulture,
-            FlowDirection.LeftToRight,
-            new Typeface(
-                new FontFamily(style.EffectiveScaleBarFontFamily),
-                FontStyles.Normal,
-                style.ScaleBarLabelIsBold ? FontWeights.Bold : FontWeights.Normal,
-                FontStretches.Normal),
-            fontSize,
-            labelBrush,
-            pixelsPerDip: 1.0);
-        double textX = right - text.Width;
-        double textY = y - thickness - text.Height - Math.Max(3, dpi / 100.0);
-        Geometry geometry = text.BuildGeometry(new Point(textX, textY));
-        drawing.DrawGeometry(
-            labelBrush,
-            new Pen(Brushes.Black, Math.Max(2, dpi / 150.0)),
-            geometry);
-    }
 
+        foreach (FigureScaleBarGeometry geometry in geometries)
+        {
+            Point start = new(geometry.Left, geometry.Y);
+            Point end = new(geometry.Right, geometry.Y);
+            drawing.DrawLine(outlinePen, start, end);
+            drawing.DrawLine(linePen, start, end);
+            if (!geometry.Spec.ShowLabel)
+            {
+                continue;
+            }
+
+            var text = new FormattedText(
+                geometry.Spec.Label,
+                CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight,
+                new Typeface(
+                    new FontFamily(style.EffectiveScaleBarFontFamily),
+                    FontStyles.Normal,
+                    style.ScaleBarLabelIsBold ? FontWeights.Bold : FontWeights.Normal,
+                    FontStretches.Normal),
+                fontSize,
+                labelBrush,
+                pixelsPerDip: 1.0);
+            double textX = geometry.Right - text.Width;
+            Geometry labelGeometry = text.BuildGeometry(new Point(textX, geometry.LabelTop));
+            drawing.DrawGeometry(
+                labelBrush,
+                new Pen(Brushes.Black, Math.Max(2, dpi / 150.0)),
+                labelGeometry);
+        }
+    }
     internal static void DrawAnnotation(
         DrawingContext drawing,
         FigureAnnotationExportItem annotation,
@@ -419,6 +434,386 @@ public sealed class WpfFigureExporter : IFigureExporter
         drawing.DrawGeometry(strokeBrush, null, head);
     }
 
+    internal static void ValidateScientificObject(
+        FigureScientificObjectExportItem scientificObject,
+        FigureExportDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(scientificObject);
+        ArgumentNullException.ThrowIfNull(document);
+        scientificObject.EnsureValid(document.WidthPixels, document.HeightPixels);
+    }
+
+    internal static void DrawScientificObject(
+        DrawingContext drawing,
+        FigureScientificObjectExportItem scientificObject,
+        int dpi)
+    {
+        ArgumentNullException.ThrowIfNull(drawing);
+        ArgumentNullException.ThrowIfNull(scientificObject);
+        Color stroke = ParseColor(scientificObject.StrokeColor);
+        Color fill = ParseColor(scientificObject.FillColor);
+        fill.A = (byte)Math.Round(fill.A * scientificObject.FillOpacityPercent / 100.0);
+        var strokeBrush = new SolidColorBrush(stroke);
+        strokeBrush.Freeze();
+        var fillBrush = new SolidColorBrush(fill);
+        fillBrush.Freeze();
+        var textBrush = new SolidColorBrush(ParseColor(scientificObject.TextColor));
+        textBrush.Freeze();
+        double strokeWidth = scientificObject.StrokeWidthPt / 72.0 * dpi;
+        var pen = new Pen(strokeBrush, strokeWidth)
+        {
+            StartLineCap = PenLineCap.Round,
+            EndLineCap = PenLineCap.Round,
+            LineJoin = PenLineJoin.Round,
+        };
+
+        switch (scientificObject.Kind)
+        {
+            case FigureScientificObjectKind.PolygonAnnotation:
+            case FigureScientificObjectKind.Roi:
+                var polygon = new StreamGeometry();
+                using (StreamGeometryContext context = polygon.Open())
+                {
+                    context.BeginFigure(ToPoint(scientificObject.Points[0]), true, true);
+                    context.PolyLineTo(scientificObject.Points.Skip(1).Select(ToPoint).ToArray(), true, true);
+                }
+                polygon.Freeze();
+                drawing.DrawGeometry(fillBrush, pen, polygon);
+                DrawScientificObjectText(drawing, scientificObject.Label, scientificObject.Points[0], textBrush, scientificObject, dpi);
+                break;
+            case FigureScientificObjectKind.DirectionMarker:
+                DrawDirectionMarker(drawing, scientificObject, pen, strokeBrush, textBrush, dpi);
+                break;
+            case FigureScientificObjectKind.Colorbar:
+                DrawColorbar(drawing, scientificObject, pen, textBrush, dpi);
+                break;
+            case FigureScientificObjectKind.ChannelLegend:
+                DrawChannelLegend(drawing, scientificObject, pen, textBrush, dpi);
+                break;
+            default:
+                throw new InvalidOperationException("不支持的科研对象类型。");
+        }
+    }
+
+    private static void DrawDirectionMarker(
+        DrawingContext drawing,
+        FigureScientificObjectExportItem scientificObject,
+        Pen pen,
+        Brush strokeBrush,
+        Brush textBrush,
+        int dpi)
+    {
+        Point start = ToPoint(scientificObject.Points[0]);
+        Point end = ToPoint(scientificObject.Points[1]);
+        double dx = end.X - start.X;
+        double dy = end.Y - start.Y;
+        double length = Math.Sqrt(dx * dx + dy * dy);
+        double unitX = dx / length;
+        double unitY = dy / length;
+        double headLength = Math.Max(pen.Thickness * 4, 10.0 / 72.0 * dpi);
+        double halfWidth = headLength * 0.52;
+        Point baseCenter = new(end.X - unitX * headLength, end.Y - unitY * headLength);
+        Point left = new(baseCenter.X - unitY * halfWidth, baseCenter.Y + unitX * halfWidth);
+        Point right = new(baseCenter.X + unitY * halfWidth, baseCenter.Y - unitX * halfWidth);
+        drawing.DrawLine(pen, start, baseCenter);
+        var head = new StreamGeometry();
+        using (StreamGeometryContext context = head.Open())
+        {
+            context.BeginFigure(end, true, true);
+            context.LineTo(left, true, false);
+            context.LineTo(right, true, false);
+        }
+        head.Freeze();
+        drawing.DrawGeometry(strokeBrush, null, head);
+        DrawScientificObjectText(drawing, scientificObject.Label, scientificObject.Points[1], textBrush, scientificObject, dpi, 5, -22);
+    }
+
+    private static void DrawColorbar(
+        DrawingContext drawing,
+        FigureScientificObjectExportItem scientificObject,
+        Pen pen,
+        Brush textBrush,
+        int dpi)
+    {
+        Rect bounds = CreateBounds(scientificObject.Points);
+        drawing.DrawRectangle(CreateColormapBrush(scientificObject.Colormap), pen, bounds);
+        DrawScientificObjectText(drawing, $"{scientificObject.Maximum:0.###} {scientificObject.Unit}",
+            new FigureScientificPoint(bounds.Right + 5, bounds.Top), textBrush, scientificObject, dpi);
+        DrawScientificObjectText(drawing, $"{scientificObject.Minimum:0.###} {scientificObject.Unit}",
+            new FigureScientificPoint(bounds.Right + 5, bounds.Bottom - scientificObject.FontSizePt / 72.0 * dpi), textBrush, scientificObject, dpi);
+        if (!string.IsNullOrWhiteSpace(scientificObject.Label))
+        {
+            DrawScientificObjectText(drawing, scientificObject.Label,
+                new FigureScientificPoint(bounds.X, Math.Max(0, bounds.Y - scientificObject.FontSizePt / 72.0 * dpi - 4)), textBrush, scientificObject, dpi);
+        }
+    }
+
+    private static void DrawChannelLegend(
+        DrawingContext drawing,
+        FigureScientificObjectExportItem scientificObject,
+        Pen pen,
+        Brush textBrush,
+        int dpi)
+    {
+        Rect bounds = CreateBounds(scientificObject.Points);
+        drawing.DrawRectangle(new SolidColorBrush(Color.FromArgb(185, 12, 18, 25)), pen, bounds);
+        double fontSize = scientificObject.FontSizePt / 72.0 * dpi;
+        int count = scientificObject.EffectiveChannelLegendEntries.Count;
+        double rowHeight = bounds.Height / Math.Max(1, count);
+        for (int index = 0; index < count; index++)
+        {
+            FigureChannelLegendEntry entry = scientificObject.EffectiveChannelLegendEntries[index];
+            var swatch = new SolidColorBrush(ParseColor(entry.Color));
+            swatch.Freeze();
+            double y = bounds.Y + index * rowHeight;
+            drawing.DrawRectangle(swatch, null, new Rect(bounds.X + 5, y + Math.Max(2, (rowHeight - fontSize) / 2), Math.Min(16, bounds.Width * 0.18), Math.Max(4, fontSize)));
+            DrawScientificObjectText(drawing, entry.Label,
+                new FigureScientificPoint(bounds.X + Math.Min(24, bounds.Width * 0.25), y + Math.Max(0, (rowHeight - fontSize) / 2)), textBrush, scientificObject, dpi);
+        }
+    }
+
+    private static void DrawScientificObjectText(
+        DrawingContext drawing,
+        string text,
+        FigureScientificPoint point,
+        Brush brush,
+        FigureScientificObjectExportItem scientificObject,
+        int dpi,
+        double offsetX = 0,
+        double offsetY = 0)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+        var formatted = new FormattedText(
+            text,
+            CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight,
+            new Typeface(new FontFamily(scientificObject.FontFamily), FontStyles.Normal,
+                scientificObject.IsBold ? FontWeights.Bold : FontWeights.Normal, FontStretches.Normal),
+            scientificObject.FontSizePt / 72.0 * dpi,
+            brush,
+            pixelsPerDip: 1.0);
+        drawing.DrawText(formatted, new Point(point.X + offsetX, point.Y + offsetY));
+    }
+
+    private static Rect CreateBounds(IReadOnlyList<FigureScientificPoint> points) => new(
+        Math.Min(points[0].X, points[1].X),
+        Math.Min(points[0].Y, points[1].Y),
+        Math.Abs(points[1].X - points[0].X),
+        Math.Abs(points[1].Y - points[0].Y));
+
+    private static Point ToPoint(FigureScientificPoint point) => new(point.X, point.Y);
+
+    internal static IReadOnlyList<Color> GetColormapColors(string colormap) => colormap.ToLowerInvariant() switch
+    {
+        "magma" => [Color.FromRgb(0, 0, 4), Color.FromRgb(115, 20, 117), Color.FromRgb(252, 136, 97), Color.FromRgb(252, 253, 191)],
+        "grayscale" => [Colors.Black, Colors.White],
+        _ => [Color.FromRgb(68, 1, 84), Color.FromRgb(59, 82, 139), Color.FromRgb(33, 145, 140), Color.FromRgb(94, 201, 98), Color.FromRgb(253, 231, 37)],
+    };
+    internal static LinearGradientBrush CreateColormapBrush(string colormap)
+    {
+        IReadOnlyList<Color> colors = GetColormapColors(colormap);
+
+        var brush = new LinearGradientBrush { StartPoint = new Point(0, 1), EndPoint = new Point(0, 0) };
+        for (int index = 0; index < colors.Count; index++)
+        {
+            brush.GradientStops.Add(new GradientStop(colors[index], index / (double)Math.Max(1, colors.Count - 1)));
+        }
+        brush.Freeze();
+        return brush;
+    }
+    internal static void DrawMeasurementOverlay(
+        DrawingContext drawing,
+        FigureMeasurementOverlayExportItem overlay,
+        FigureExportDocument document,
+        int dpi)
+    {
+        ArgumentNullException.ThrowIfNull(drawing);
+        ArgumentNullException.ThrowIfNull(overlay);
+        ArgumentNullException.ThrowIfNull(document);
+        FigurePanelExportItem panel = ResolveMeasurementOverlayPanel(overlay, document);
+        FigureMeasurementOverlayGeometry geometry = FigureMeasurementOverlayMapper.Map(
+            overlay.ScientificObject,
+            panel);
+        FigureMeasurementOverlayStyle style = overlay.Style;
+        var strokeBrush = new SolidColorBrush(ParseColor(style.StrokeColor));
+        strokeBrush.Freeze();
+        var pen = new Pen(strokeBrush, Math.Max(0.25, geometry.StrokeWidthPixels))
+        {
+            StartLineCap = PenLineCap.Round,
+            EndLineCap = PenLineCap.Round,
+            LineJoin = PenLineJoin.Round,
+            DashStyle = CreateDashStyle(style.LineStyle),
+        };
+        pen.Freeze();
+
+        switch (overlay.MeasurementKind)
+        {
+            case ScientificMeasurementKind.Length:
+                drawing.DrawLine(pen, ToPoint(geometry.PointA), ToPoint(geometry.PointB));
+                break;
+            case ScientificMeasurementKind.Angle:
+                drawing.DrawLine(pen, ToPoint(geometry.PointA), ToPoint(geometry.PointB));
+                drawing.DrawLine(pen, ToPoint(geometry.PointB), ToPoint(geometry.PointC ?? geometry.PointB));
+                break;
+            case ScientificMeasurementKind.RectangleRoi:
+                drawing.DrawRectangle(
+                    CreateMeasurementFill(style),
+                    pen,
+                    CreateBounds(geometry.PointA, geometry.PointB));
+                break;
+            case ScientificMeasurementKind.CircleRoi:
+                Rect bounds = CreateBounds(geometry.PointA, geometry.PointB);
+                drawing.DrawEllipse(
+                    CreateMeasurementFill(style),
+                    pen,
+                    new Point(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2),
+                    bounds.Width / 2,
+                    bounds.Height / 2);
+                break;
+            case ScientificMeasurementKind.Polyline:
+                DrawPolyline(drawing, pen, geometry.PathPoints);
+                break;
+            default:
+                throw new InvalidOperationException("不支持的 Measurement Overlay 类型。");
+        }
+
+        if (style.ShowMarkers)
+        {
+            DrawMeasurementMarkers(drawing, overlay.MeasurementKind, geometry, style);
+        }
+
+        if (style.ShowLabel)
+        {
+            DrawMeasurementLabel(drawing, overlay, geometry, dpi);
+        }
+    }
+
+    internal static void ValidateMeasurementOverlay(
+        FigureMeasurementOverlayExportItem overlay,
+        FigureExportDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(overlay);
+        ArgumentNullException.ThrowIfNull(document);
+        _ = FigureMeasurementOverlayMapper.Map(
+            overlay.ScientificObject,
+            ResolveMeasurementOverlayPanel(overlay, document));
+    }
+
+    internal static FigurePanelExportItem ResolveMeasurementOverlayPanel(
+        FigureMeasurementOverlayExportItem overlay,
+        FigureExportDocument document)
+    {
+        FigurePanelExportItem[] matches = document.Panels
+            .Where(panel => panel.IsVisible && panel.PanelId == overlay.PanelId)
+            .ToArray();
+        if (matches.Length != 1)
+        {
+            throw new InvalidOperationException("Measurement Overlay 必须绑定到一个可见的 Figure Panel。");
+        }
+
+        FigureMeasurementOverlayMapper.ValidateRelationship(overlay.ScientificObject, matches[0]);
+        return matches[0];
+    }
+
+    private static void DrawPolyline(
+        DrawingContext drawing,
+        Pen pen,
+        IReadOnlyList<MeasurementPoint> points)
+    {
+        if (points.Count < 2)
+        {
+            throw new InvalidOperationException("Polyline Measurement Overlay 至少需要两个点。");
+        }
+
+        var path = new StreamGeometry();
+        using (StreamGeometryContext context = path.Open())
+        {
+            context.BeginFigure(ToPoint(points[0]), isFilled: false, isClosed: false);
+            context.PolyLineTo(points.Skip(1).Select(ToPoint).ToArray(), isStroked: true, isSmoothJoin: true);
+        }
+
+        path.Freeze();
+        drawing.DrawGeometry(null, pen, path);
+    }
+
+    private static void DrawMeasurementMarkers(
+        DrawingContext drawing,
+        ScientificMeasurementKind kind,
+        FigureMeasurementOverlayGeometry geometry,
+        FigureMeasurementOverlayStyle style)
+    {
+        var fill = new SolidColorBrush(ParseColor(style.MarkerFillColor));
+        fill.Freeze();
+        var stroke = new SolidColorBrush(ParseColor(style.MarkerStrokeColor));
+        stroke.Freeze();
+        var pen = new Pen(stroke, Math.Max(0.25, geometry.StrokeWidthPixels * 0.75));
+        pen.Freeze();
+        double radius = Math.Max(1, geometry.MarkerSizePixels / 2);
+        IReadOnlyList<MeasurementPoint> points = kind switch
+        {
+            ScientificMeasurementKind.Angle => geometry.PointC is MeasurementPoint pointC
+                ? [geometry.PointA, geometry.PointB, pointC]
+                : [geometry.PointA, geometry.PointB],
+            ScientificMeasurementKind.Polyline => geometry.PathPoints,
+            _ => [geometry.PointA, geometry.PointB],
+        };
+        foreach (MeasurementPoint point in points)
+        {
+            drawing.DrawEllipse(fill, pen, ToPoint(point), radius, radius);
+        }
+    }
+
+    private static void DrawMeasurementLabel(
+        DrawingContext drawing,
+        FigureMeasurementOverlayExportItem overlay,
+        FigureMeasurementOverlayGeometry geometry,
+        int dpi)
+    {
+        FigureMeasurementOverlayStyle style = overlay.Style;
+        var brush = new SolidColorBrush(ParseColor(style.LabelColor));
+        brush.Freeze();
+        var text = new FormattedText(
+            FigureMeasurementOverlayMapper.CreateLabel(overlay.ScientificObject),
+            CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight,
+            new Typeface(
+                new FontFamily(style.LabelFontFamily),
+                FontStyles.Normal,
+                style.LabelIsBold ? FontWeights.Bold : FontWeights.Normal,
+                FontStretches.Normal),
+            style.LabelFontSizePt / 72.0 * dpi,
+            brush,
+            pixelsPerDip: 1.0);
+        drawing.DrawText(text, ToPoint(geometry.LabelAnchor));
+    }
+
+    private static Brush CreateMeasurementFill(FigureMeasurementOverlayStyle style)
+    {
+        Color color = ParseColor(style.FillColor);
+        color.A = (byte)Math.Round(color.A * style.FillOpacityPercent / 100.0);
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
+
+    private static DashStyle CreateDashStyle(string lineStyle) => lineStyle switch
+    {
+        "dash" => DashStyles.Dash,
+        "dot" => DashStyles.Dot,
+        "dash-dot" => DashStyles.DashDot,
+        _ => DashStyles.Solid,
+    };
+
+    private static Point ToPoint(MeasurementPoint point) => new(point.X, point.Y);
+
+    private static Rect CreateBounds(MeasurementPoint first, MeasurementPoint second) => new(
+        Math.Min(first.X, second.X),
+        Math.Min(first.Y, second.Y),
+        Math.Abs(second.X - first.X),
+        Math.Abs(second.Y - first.Y));
     internal static void ValidatePanel(FigurePanelExportItem panel, FigureExportDocument document)
     {
         if (panel.DestinationRect.Right > document.WidthPixels ||
@@ -428,15 +823,16 @@ public sealed class WpfFigureExporter : IFigureExporter
         }
 
 
-        if (panel.ScaleBar is { } scaleBar &&
-            (!double.IsFinite(scaleBar.PhysicalUnitsPerSourcePixel) ||
-             scaleBar.PhysicalUnitsPerSourcePixel <= 0 ||
-             !double.IsFinite(scaleBar.PhysicalLength) ||
-             scaleBar.PhysicalLength <= 0 ||
-             string.IsNullOrWhiteSpace(scaleBar.Unit) ||
-             scaleBar.PhysicalLength / scaleBar.PhysicalUnitsPerSourcePixel > panel.SourceRect.Width * 0.8))
+        foreach (FigureScaleBarExportSpec scaleBar in panel.EffectiveScaleBars)
         {
-            throw new InvalidOperationException($"面板 {panel.Label} 的比例尺校准参数无效。");
+            try
+            {
+                scaleBar.EnsureValid(panel.SourceRect);
+            }
+            catch (Exception exception) when (exception is ArgumentException or NotSupportedException or InvalidOperationException)
+            {
+                throw new InvalidOperationException($"面板 {panel.Label} 的比例尺参数无效。", exception);
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 <Window x:Class="SciCanvas.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:app="clr-namespace:SciCanvas.App"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
@@ -220,6 +221,7 @@
                         <Separator />
                         <MenuItem Header="复制测量表" Command="{Binding CopyMeasurementsCommand}" />
                         <MenuItem Header="导出测量 CSV / Excel" Command="{Binding ExportMeasurementsCommand}" />
+                        <MenuItem Header="Pin 所选测量到 Figure" Command="{Binding PinSelectedMeasurementToFigureCommand}" />
                     </MenuItem>
                     <MenuItem Header="裁剪(C)">
                         <MenuItem Header="加入当前裁剪到拼版" Command="{Binding AddCurrentCropToFigureCommand}" />
@@ -862,7 +864,36 @@
                                                             BorderBrush="Black"
                                                             BorderThickness="2" />
                                                 </Canvas>
-                                                <Border HorizontalAlignment="Left"
+                                                <Canvas IsHitTestVisible="False">
+                                                    <ItemsControl ItemsSource="{Binding AdditionalScaleBars}">
+                                                        <ItemsControl.ItemsPanel>
+                                                            <ItemsPanelTemplate><Canvas /></ItemsPanelTemplate>
+                                                        </ItemsControl.ItemsPanel>
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <Canvas Visibility="{Binding HasRenderablePreview, Converter={StaticResource BooleanToVisibility}}">
+                                                                    <TextBlock Canvas.Left="{Binding PreviewX}"
+                                                                               Canvas.Top="{Binding LabelPreviewY}"
+                                                                               Padding="5,2"
+                                                                               Text="{Binding Label}"
+                                                                               Visibility="{Binding ShowLabel, Converter={StaticResource BooleanToVisibility}}"
+                                                                               Foreground="{Binding EffectiveLabelBrush}"
+                                                                               Background="#B0000000"
+                                                                               FontFamily="{Binding EffectiveFontFamily}"
+                                                                               FontSize="{Binding EffectiveFontSizePixels}"
+                                                                               FontWeight="{Binding EffectiveFontWeight}" />
+                                                                    <Border Canvas.Left="{Binding PreviewX}"
+                                                                            Canvas.Top="{Binding PreviewY}"
+                                                                            Width="{Binding PreviewWidth}"
+                                                                            Height="{Binding EffectiveThicknessPixels}"
+                                                                            Background="{Binding EffectiveBrush}"
+                                                                            BorderBrush="Black"
+                                                                            BorderThickness="2" />
+                                                                </Canvas>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </Canvas>                                                <Border HorizontalAlignment="Left"
                                                         VerticalAlignment="Top"
                                                         Margin="8"
                                                         Padding="7,3"
@@ -1032,7 +1063,123 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-                        </Grid>
+                            <ItemsControl Width="{Binding Figure.CanvasWidth}"
+                                          Height="{Binding Figure.CanvasHeight}"
+                                          ItemsSource="{Binding Figure.ScientificObjects}"
+                                          Panel.ZIndex="105"
+                                          IsHitTestVisible="False">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><Canvas /></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Canvas Width="{Binding DataContext.Figure.CanvasWidth, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Height="{Binding DataContext.Figure.CanvasHeight, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Visibility="{Binding IsVisible, Converter={StaticResource BooleanToVisibility}}">
+                                            <Polygon Points="{Binding PolygonPoints}"
+                                                     Stroke="{Binding StrokeBrush}"
+                                                     StrokeThickness="{Binding StrokeWidthPixels}"
+                                                     Fill="{Binding FillBrush}"
+                                                     Visibility="{Binding PolygonVisibility}" />
+                                            <Path Data="{Binding DirectionGeometry}"
+                                                  Stroke="{Binding StrokeBrush}"
+                                                  StrokeThickness="{Binding StrokeWidthPixels}"
+                                                  Fill="{Binding StrokeBrush}"
+                                                  Visibility="{Binding DirectionVisibility}" />
+                                            <Border Canvas.Left="{Binding Bounds.X}"
+                                                    Canvas.Top="{Binding Bounds.Y}"
+                                                    Width="{Binding Bounds.Width}"
+                                                    Height="{Binding Bounds.Height}"
+                                                    Background="{Binding ColorbarBrush}"
+                                                    BorderBrush="{Binding StrokeBrush}"
+                                                    BorderThickness="{Binding StrokeWidthPixels}"
+                                                    Visibility="{Binding ColorbarVisibility}">
+                                                <TextBlock Margin="3" VerticalAlignment="Top" Text="{Binding Label}" Foreground="{Binding TextBrush}" FontSize="{Binding FontSizePixels}" />
+                                            </Border>
+                                            <Border Canvas.Left="{Binding Bounds.X}"
+                                                    Canvas.Top="{Binding Bounds.Y}"
+                                                    Width="{Binding Bounds.Width}"
+                                                    Height="{Binding Bounds.Height}"
+                                                    Padding="5"
+                                                    Background="#CC0C1219"
+                                                    BorderBrush="{Binding StrokeBrush}"
+                                                    BorderThickness="{Binding StrokeWidthPixels}"
+                                                    Visibility="{Binding ChannelLegendVisibility}">
+                                                <TextBlock Text="{Binding ChannelEntriesText}" Foreground="{Binding TextBrush}" FontFamily="{Binding FontFamily}" FontSize="{Binding FontSizePixels}" TextWrapping="Wrap" />
+                                            </Border>
+                                        </Canvas>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>                            <ItemsControl Width="{Binding Figure.CanvasWidth}"
+                                          Height="{Binding Figure.CanvasHeight}"
+                                          ItemsSource="{Binding Figure.MeasurementOverlays}"
+                                          Panel.ZIndex="95"
+                                          IsHitTestVisible="False">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <Canvas />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Canvas Width="{Binding DataContext.Figure.CanvasWidth, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Height="{Binding DataContext.Figure.CanvasHeight, RelativeSource={RelativeSource AncestorType=Window}}">
+                                            <Line X1="{Binding PointAX}" Y1="{Binding PointAY}"
+                                                  X2="{Binding PointBX}" Y2="{Binding PointBY}"
+                                                  Stroke="{Binding StrokeBrush}" StrokeThickness="{Binding StrokeWidthPixels}"
+                                                  StrokeDashArray="{Binding StrokeDashArray}"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  Visibility="{Binding LengthVisibility}" />
+                                            <Polyline Points="{Binding AnglePoints}" Stroke="{Binding StrokeBrush}"
+                                                      StrokeThickness="{Binding StrokeWidthPixels}"
+                                                      StrokeDashArray="{Binding StrokeDashArray}"
+                                                      StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                      Visibility="{Binding AngleVisibility}" />
+                                            <Polyline Points="{Binding PolylinePoints}" Stroke="{Binding StrokeBrush}"
+                                                      StrokeThickness="{Binding StrokeWidthPixels}"
+                                                      StrokeDashArray="{Binding StrokeDashArray}"
+                                                      StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                      Visibility="{Binding PolylineVisibility}" />
+                                            <Rectangle Canvas.Left="{Binding RectangleX}" Canvas.Top="{Binding RectangleY}"
+                                                       Width="{Binding RectangleWidth}" Height="{Binding RectangleHeight}"
+                                                       Stroke="{Binding StrokeBrush}" StrokeThickness="{Binding StrokeWidthPixels}"
+                                                       StrokeDashArray="{Binding StrokeDashArray}" Fill="{Binding FillBrush}"
+                                                       Visibility="{Binding RectangleVisibility}" />
+                                            <Ellipse Canvas.Left="{Binding RectangleX}" Canvas.Top="{Binding RectangleY}"
+                                                     Width="{Binding RectangleWidth}" Height="{Binding RectangleHeight}"
+                                                     Stroke="{Binding StrokeBrush}" StrokeThickness="{Binding StrokeWidthPixels}"
+                                                     StrokeDashArray="{Binding StrokeDashArray}" Fill="{Binding FillBrush}"
+                                                     Visibility="{Binding CircleVisibility}" />
+                                            <ItemsControl ItemsSource="{Binding Markers}" Visibility="{Binding MarkerVisibility}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <Canvas />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemContainerStyle>
+                                                    <Style TargetType="ContentPresenter">
+                                                        <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                                        <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                                    </Style>
+                                                </ItemsControl.ItemContainerStyle>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Ellipse Width="{Binding DataContext.MarkerSizePixels, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                 Height="{Binding DataContext.MarkerSizePixels, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                 Stroke="{Binding DataContext.MarkerStrokeBrush, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                 StrokeThickness="{Binding DataContext.StrokeWidthPixels, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                 Fill="{Binding DataContext.MarkerFillBrush, RelativeSource={RelativeSource AncestorType=ItemsControl}}" />
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                            <TextBlock Canvas.Left="{Binding LabelX}" Canvas.Top="{Binding LabelY}"
+                                                       Text="{Binding Label}" Foreground="{Binding LabelBrush}"
+                                                       FontFamily="{Binding LabelFontFamily}" FontSize="{Binding LabelFontSizePixels}"
+                                                       FontWeight="{Binding LabelFontWeight}" Visibility="{Binding LabelVisibility}" />
+                                        </Canvas>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>                        </Grid>
                     </ScrollViewer>
 
                     <StackPanel Visibility="{Binding Figure.EmptyVisibility}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
@@ -1125,6 +1272,7 @@
                                 </ItemsControl>
                             </Border>
                             <Button Margin="0,7,0,0" Command="{Binding DeleteSelectedMeasurementCommand}" Content="删除所选测量" />
+                            <Button Margin="0,6,0,0" Command="{Binding PinSelectedMeasurementToFigureCommand}" Content="Pin 到 Figure" ToolTip="将所选测量以保持 MeasurementId、源修订和标定关系的科学 Overlay 添加到同源 Panel" />
                             <Button Margin="0,6,0,0" Command="{Binding CopyMeasurementsCommand}" Content="复制表格" />
                             <Button Margin="0,6,0,0" Command="{Binding ExportMeasurementsCommand}" Style="{StaticResource AccentButtonStyle}" Content="导出 CSV / Excel" />
                         </StackPanel>
@@ -1144,17 +1292,17 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <Button Grid.Column="0" Command="{Binding ShowInspectorTabCommand}" Content="检查器" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="16,0">
+                        <Button Grid.Column="0" Command="{Binding ShowInspectorTabCommand}" Content="检查器" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="8,0">
                             <Button.Style>
                                 <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                     <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
                                     <Setter Property="Background" Value="#171E27" />
                                     <Setter Property="BorderBrush" Value="Transparent" />
                                     <Setter Property="BorderThickness" Value="0,0,0,2" />
-                                    <Setter Property="Padding" Value="16,0" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsLayersTabActive}" Value="False">
+                                        <DataTrigger Binding="{Binding IsInspectorTabActive}" Value="True">
                                             <Setter Property="Foreground" Value="#F5FBFF" />
                                             <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
                                         </DataTrigger>
@@ -1162,14 +1310,13 @@
                                 </Style>
                             </Button.Style>
                         </Button>
-                        <Button Grid.Column="1" Command="{Binding ShowLayersTabCommand}" Content="图层" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="16,0">
+                        <Button Grid.Column="1" Command="{Binding ShowLayersTabCommand}" Content="图层" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="8,0">
                             <Button.Style>
                                 <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                     <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
                                     <Setter Property="Background" Value="#171E27" />
                                     <Setter Property="BorderBrush" Value="Transparent" />
                                     <Setter Property="BorderThickness" Value="0,0,0,2" />
-                                    <Setter Property="Padding" Value="16,0" />
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding IsLayersTabActive}" Value="True">
                                             <Setter Property="Foreground" Value="#F5FBFF" />
@@ -1179,8 +1326,23 @@
                                 </Style>
                             </Button.Style>
                         </Button>
-                    </Grid>
-                    <ScrollViewer x:Name="InspectorScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False" Visibility="{Binding InspectorTabVisibility}">
+                        <Button Grid.Column="2" Command="{Binding ShowChannelsTabCommand}" Content="通道" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="8,0">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                                    <Setter Property="Background" Value="#171E27" />
+                                    <Setter Property="BorderBrush" Value="Transparent" />
+                                    <Setter Property="BorderThickness" Value="0,0,0,2" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsChannelsTabActive}" Value="True">
+                                            <Setter Property="Foreground" Value="#F5FBFF" />
+                                            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>                    <ScrollViewer x:Name="InspectorScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False" Visibility="{Binding InspectorTabVisibility}">
                     <Grid>
                     <StackPanel Margin="16,16,16,24"
                                 IsEnabled="{Binding HasSelection}"
@@ -2323,12 +2485,12 @@
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
                                             <StackPanel>
-                                                <TextBlock Text="物理尺寸 / 像素" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                                <TextBlock Text="校准值 / 源像素" Foreground="{StaticResource MutedBrush}" FontSize="9" />
                                                 <TextBox Margin="0,4,0,0"
                                                          Text="{Binding Figure.SelectedPanel.PhysicalUnitsPerSourcePixel, UpdateSourceTrigger=PropertyChanged}" />
                                             </StackPanel>
                                             <StackPanel Grid.Column="2">
-                                                <TextBlock Text="比例尺长度" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                                <TextBlock Text="主比例尺长度" Foreground="{StaticResource MutedBrush}" FontSize="9" />
                                                 <TextBox Margin="0,4,0,0"
                                                          Text="{Binding Figure.SelectedPanel.ScaleBarPhysicalLength, UpdateSourceTrigger=PropertyChanged}" />
                                             </StackPanel>
@@ -2340,7 +2502,7 @@
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
                                             <StackPanel>
-                                                <TextBlock Text="单位" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                                <TextBlock Text="主比例尺显示单位" Foreground="{StaticResource MutedBrush}" FontSize="9" />
                                                 <ComboBox Margin="0,4,0,0"
                                                           IsEditable="True"
                                                           Text="{Binding Figure.SelectedPanel.ScaleBarUnit, UpdateSourceTrigger=PropertyChanged}">
@@ -2355,7 +2517,49 @@
                                                       IsChecked="{Binding Figure.SelectedPanel.ScaleBarShowLabel}"
                                                       Content="显示数值标签" />
                                         </Grid>
-                                        <TextBlock Margin="0,8,0,0"
+                                        <StackPanel Margin="0,7,0,0">
+                                            <TextBlock Text="校准单位（校准值 / 源像素）" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                            <ComboBox Margin="0,4,0,0"
+                                                      IsEditable="True"
+                                                      Text="{Binding Figure.SelectedPanel.CalibrationUnit, UpdateSourceTrigger=PropertyChanged}">
+                                                <ComboBoxItem Content="nm" />
+                                                <ComboBoxItem Content="µm" />
+                                                <ComboBoxItem Content="mm" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <Border Margin="0,10,0,0" Padding="7" Background="#0D151D" BorderBrush="#2D3E4D" BorderThickness="1" CornerRadius="3">
+                                            <StackPanel>
+                                                <DockPanel LastChildFill="False">
+                                                    <TextBlock DockPanel.Dock="Left" Text="额外比例尺" Foreground="{StaticResource AccentBrush}" FontSize="9" FontWeight="SemiBold" />
+                                                    <Button DockPanel.Dock="Right" Padding="7,2" Command="{Binding Figure.AddAdditionalScaleBarCommand}" Content="+ 新增" />
+                                                </DockPanel>
+                                                <TextBlock Margin="0,4,0,0" Text="与当前 Panel 共享校准值；显示单位可独立换算。" Foreground="{StaticResource MutedBrush}" FontSize="8" TextWrapping="Wrap" />
+                                                <ItemsControl Margin="0,6,0,0" ItemsSource="{Binding Figure.SelectedPanel.AdditionalScaleBars}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Border Margin="0,3,0,0" Padding="6" Background="#111E28" BorderBrush="#304657" BorderThickness="1" CornerRadius="2">
+                                                                <StackPanel>
+                                                                    <Grid>
+                                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                                        <TextBox Text="{Binding PhysicalLength, UpdateSourceTrigger=PropertyChanged}" />
+                                                                        <ComboBox Grid.Column="2" ItemsSource="{Binding AvailableUnits}" SelectedItem="{Binding Unit, UpdateSourceTrigger=PropertyChanged}" />
+                                                                    </Grid>
+                                                                    <Grid Margin="0,5,0,0">
+                                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                                        <ComboBox ItemsSource="{Binding AvailableAnchors}" SelectedItem="{Binding Anchor, UpdateSourceTrigger=PropertyChanged}" />
+                                                                        <Button Grid.Column="2" Margin="8,0,0,0" Padding="7,2" Command="{Binding RemoveCommand}" Content="删除" />
+                                                                    </Grid>
+                                                                    <StackPanel Margin="0,5,0,0" Orientation="Horizontal">
+                                                                        <CheckBox IsChecked="{Binding ShowLabel}" Content="显示标签" />
+                                                                        <CheckBox Margin="12,0,0,0" IsChecked="{Binding IsVisible}" Content="显示" />
+                                                                    </StackPanel>
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                        </Border>                                        <TextBlock Margin="0,8,0,0"
                                                    Text="{Binding Figure.SelectedPanel.ScaleBarStatusText}"
                                                    Foreground="#80DDEA"
                                                    FontSize="9"
@@ -2734,6 +2938,53 @@
                             </StackPanel>
                         </Border>
 
+                        <Grid Margin="0,20,0,8">
+                            <TextBlock Style="{StaticResource SectionTitleStyle}" Text="科研对象（PR 3）" />
+                            <TextBlock HorizontalAlignment="Right" Text="{Binding Figure.ScientificObjectCountText}" Foreground="{StaticResource MutedBrush}" FontSize="10" />
+                        </Grid>
+                        <UniformGrid Columns="2" Rows="3">
+                            <Button Margin="0,0,5,5" Command="{Binding Figure.AddPolygonScientificObjectCommand}" Content="＋ 多边形" />
+                            <Button Margin="0,0,0,5" Command="{Binding Figure.AddRoiScientificObjectCommand}" Content="＋ ROI" />
+                            <Button Margin="0,0,5,5" Command="{Binding Figure.AddDirectionMarkerCommand}" Content="＋ 方向" />
+                            <Button Margin="0,0,0,5" Command="{Binding Figure.AddColorbarCommand}" Content="＋ 色条" />
+                            <Button Margin="0,0,5,0" Command="{Binding Figure.AddChannelLegendCommand}" Content="＋ 通道图例" />
+                        </UniformGrid>
+                        <ListBox Margin="0,8,0,0" MinHeight="70" MaxHeight="150"
+                                 Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                 ItemsSource="{Binding Figure.ScientificObjects}" SelectedItem="{Binding Figure.SelectedScientificObject}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="7,5">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <CheckBox IsChecked="{Binding IsVisible}" ToolTip="显示/隐藏" />
+                                        <StackPanel Grid.Column="1" Margin="8,0"><TextBlock Text="{Binding Summary}" FontSize="10" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding PointsText}" Foreground="{StaticResource MutedBrush}" FontSize="8" TextTrimming="CharacterEllipsis" /></StackPanel>
+                                        <CheckBox Grid.Column="2" IsChecked="{Binding IsLocked}" Content="锁" FontSize="9" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <Button Margin="0,7,0,0" Command="{Binding Figure.RemoveSelectedScientificObjectCommand}" Content="移除选中科研对象" />
+                        <Border Margin="0,8,0,0" Padding="9" Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4"
+                                Visibility="{Binding Figure.SelectedScientificObjectVisibility}">
+                            <StackPanel>
+                                <TextBlock Text="{Binding Figure.SelectedScientificObject.KindDisplayName, FallbackValue=未选择科研对象}" FontWeight="SemiBold" />
+                                <TextBlock Margin="0,7,0,0" Text="标签" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedScientificObject.Label, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Margin="0,7,0,0" Text="几何点 / 画布 px（x,y; x,y）" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedScientificObject.PointsText, UpdateSourceTrigger=PropertyChanged}" />
+                                <Grid Margin="0,7,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <StackPanel><TextBlock Text="描边" Foreground="{StaticResource MutedBrush}" FontSize="9" /><TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedScientificObject.StrokeColor, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <StackPanel Grid.Column="2"><TextBlock Text="填充 / 透明度 %" Foreground="{StaticResource MutedBrush}" FontSize="9" /><Grid Margin="0,4,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="6" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBox Text="{Binding Figure.SelectedScientificObject.FillColor, UpdateSourceTrigger=PropertyChanged}" /><TextBox Grid.Column="2" Text="{Binding Figure.SelectedScientificObject.FillOpacityPercent, UpdateSourceTrigger=PropertyChanged}" /></Grid></StackPanel>
+                                </Grid>
+                                <Grid Margin="0,7,0,0" Visibility="{Binding Figure.SelectedScientificObject.RangeVisibility}"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <StackPanel><TextBlock Text="最小值" Foreground="{StaticResource MutedBrush}" FontSize="9" /><TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedScientificObject.Minimum, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <StackPanel Grid.Column="2"><TextBlock Text="最大值 / 单位" Foreground="{StaticResource MutedBrush}" FontSize="9" /><Grid Margin="0,4,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="6" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBox Text="{Binding Figure.SelectedScientificObject.Maximum, UpdateSourceTrigger=PropertyChanged}" /><TextBox Grid.Column="2" Text="{Binding Figure.SelectedScientificObject.Unit, UpdateSourceTrigger=PropertyChanged}" /></Grid></StackPanel>
+                                </Grid>
+                                <StackPanel Margin="0,7,0,0" Visibility="{Binding Figure.SelectedScientificObject.RangeVisibility}"><TextBlock Text="Colormap" Foreground="{StaticResource MutedBrush}" FontSize="9" /><ComboBox Margin="0,4,0,0" ItemsSource="{Binding Figure.SelectedScientificObject.ColormapChoices}" SelectedItem="{Binding Figure.SelectedScientificObject.Colormap, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                <StackPanel Margin="0,7,0,0" Visibility="{Binding Figure.SelectedScientificObject.ChannelEntriesVisibility}"><TextBlock Text="通道（标签|#AARRGGBB；分号分隔）" Foreground="{StaticResource MutedBrush}" FontSize="9" /><TextBox Margin="0,4,0,0" Text="{Binding Figure.SelectedScientificObject.ChannelEntriesText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                <TextBlock Margin="0,8,0,0" Text="{Binding Figure.SelectedScientificObject.ValidationMessage}" Foreground="#80DDEA" FontSize="9" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
                         <Grid Margin="0,20,0,8">
                             <TextBlock Style="{StaticResource SectionTitleStyle}" Text="投稿导出预设" />
                             <TextBlock HorizontalAlignment="Right" Text="{Binding ExportProfileSummary}" Foreground="{StaticResource MutedBrush}" FontSize="10" />
@@ -3116,6 +3367,9 @@
                             </Border>
                         </StackPanel>
                     </ScrollViewer>
+                    <app:ChannelsInspector Grid.Row="1"
+                                           DataContext="{Binding MultiChannelWorkspace}"
+                                           Visibility="{Binding ChannelsTabVisibility}" />
                 </Grid>
             </Border>
 

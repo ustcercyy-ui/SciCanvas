@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Media;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
+using SciCanvas.Core.Science;
 using SciCanvas.Core.Workspace;
 using SciCanvas.Imaging;
 using SciCanvas.Templates;
@@ -26,6 +27,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
     private readonly TemplateCanvasLayout _layout;
     private FigurePanelViewModel? _selectedPanel;
     private FigureAnnotationViewModel? _selectedAnnotation;
+    private FigureScientificObjectViewModel? _selectedScientificObject;
     private FigureGuideViewModel? _selectedGuide;
     private bool _isUpdatingPanelSelection;
     private bool _isSnappingEnabled = true;
@@ -173,6 +175,9 @@ public sealed class FigureCanvasViewModel : ObservableObject
             ApplySelectedScientificColor,
             () => SelectedScientificColor?.Definition.IsValid == true);
         CreateInsetCommand = new RelayCommand(CreateInsetFromSelectedPanel, () => SelectedPanel is not null);
+        AddAdditionalScaleBarCommand = new RelayCommand(
+            () => _ = AddAdditionalScaleBar(),
+            () => SelectedPanel is { IsLocked: false });
         LinkSelectedPanelCropsCommand = new RelayCommand(LinkSelectedPanelCrops, CanLinkSelectedPanelCrops);
         UnlinkSelectedPanelCropsCommand = new RelayCommand(
             UnlinkSelectedPanelCrops,
@@ -182,6 +187,12 @@ public sealed class FigureCanvasViewModel : ObservableObject
         AddLineAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Line));
         AddRectangleAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Rectangle));
         AddEllipseAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Ellipse));
+        AddPolygonScientificObjectCommand = new RelayCommand(() => AddScientificObject(FigureScientificObjectKind.PolygonAnnotation));
+        AddRoiScientificObjectCommand = new RelayCommand(() => AddScientificObject(FigureScientificObjectKind.Roi));
+        AddDirectionMarkerCommand = new RelayCommand(() => AddScientificObject(FigureScientificObjectKind.DirectionMarker));
+        AddColorbarCommand = new RelayCommand(() => AddScientificObject(FigureScientificObjectKind.Colorbar));
+        AddChannelLegendCommand = new RelayCommand(() => AddScientificObject(FigureScientificObjectKind.ChannelLegend));
+        RemoveSelectedScientificObjectCommand = new RelayCommand(RemoveSelectedScientificObject, () => SelectedScientificObject is { IsLocked: false });
         RemoveSelectedAnnotationCommand = new RelayCommand(
             RemoveSelectedAnnotation,
             () => SelectedAnnotation is { IsLocked: false });
@@ -211,6 +222,10 @@ public sealed class FigureCanvasViewModel : ObservableObject
     public ObservableCollection<FigurePanelViewModel> Panels { get; } = [];
 
     public ObservableCollection<FigureAnnotationViewModel> Annotations { get; } = [];
+
+    public ObservableCollection<FigureScientificObjectViewModel> ScientificObjects { get; } = [];
+
+    public ObservableCollection<FigureMeasurementOverlayViewModel> MeasurementOverlays { get; } = [];
 
     public ObservableCollection<FigureGuideViewModel> Guides { get; } = [];
 
@@ -282,6 +297,18 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
     public RelayCommand AddEllipseAnnotationCommand { get; }
 
+    public RelayCommand AddPolygonScientificObjectCommand { get; }
+
+    public RelayCommand AddRoiScientificObjectCommand { get; }
+
+    public RelayCommand AddDirectionMarkerCommand { get; }
+
+    public RelayCommand AddColorbarCommand { get; }
+
+    public RelayCommand AddChannelLegendCommand { get; }
+
+    public RelayCommand RemoveSelectedScientificObjectCommand { get; }
+
     public RelayCommand RemoveSelectedAnnotationCommand { get; }
 
     public RelayCommand MoveAnnotationUpCommand { get; }
@@ -311,6 +338,8 @@ public sealed class FigureCanvasViewModel : ObservableObject
     public RelayCommand RemoveSelectedScientificColorCommand { get; }
 
     public RelayCommand ApplySelectedScientificColorCommand { get; }
+
+    public RelayCommand AddAdditionalScaleBarCommand { get; }
 
     public RelayCommand CreateInsetCommand { get; }
 
@@ -899,6 +928,8 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
     public string AnnotationCountText => $"{Annotations.Count} 个标注";
 
+    public string ScientificObjectCountText => $"{ScientificObjects.Count} 个科研对象";
+
     public string GuideCountText => $"{Guides.Count} 条";
 
     public bool IsSnappingEnabled
@@ -961,7 +992,11 @@ public sealed class FigureCanvasViewModel : ObservableObject
         ? Visibility.Collapsed
         : Visibility.Visible;
 
-    public Visibility EmptyVisibility => Panels.Count == 0 && Annotations.Count == 0
+    public Visibility SelectedScientificObjectVisibility => SelectedScientificObject is null
+        ? Visibility.Collapsed
+        : Visibility.Visible;
+
+    public Visibility EmptyVisibility => Panels.Count == 0 && Annotations.Count == 0 && ScientificObjects.Count == 0
         ? Visibility.Visible
         : Visibility.Collapsed;
 
@@ -973,6 +1008,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
             if (value is not null)
             {
                 SelectedAnnotation = null;
+                SelectedScientificObject = null;
                 SelectedGuide = null;
             }
 
@@ -999,6 +1035,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
             if (_selectedAnnotation is not null)
             {
                 SelectOnlyPanel(null);
+                SelectedScientificObject = null;
                 SelectedGuide = null;
                 _selectedAnnotation.IsSelected = true;
             }
@@ -1012,6 +1049,29 @@ public sealed class FigureCanvasViewModel : ObservableObject
             CopySelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
             PasteSelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
             ApplyAnnotationStyleToSameTypeCommand.NotifyCanExecuteChanged();
+        }
+    }
+    public FigureScientificObjectViewModel? SelectedScientificObject
+    {
+        get => _selectedScientificObject;
+        set
+        {
+            if (ReferenceEquals(_selectedScientificObject, value))
+            {
+                return;
+            }
+
+            _selectedScientificObject = value;
+            if (_selectedScientificObject is not null)
+            {
+                SelectOnlyPanel(null);
+                SelectedAnnotation = null;
+                SelectedGuide = null;
+            }
+
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SelectedScientificObjectVisibility));
+            RemoveSelectedScientificObjectCommand.NotifyCanExecuteChanged();
         }
     }
 
@@ -1035,6 +1095,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
             {
                 SelectOnlyPanel(null);
                 SelectedAnnotation = null;
+                SelectedScientificObject = null;
                 _selectedGuide.IsSelected = true;
             }
 
@@ -1328,6 +1389,13 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
         Annotations.Clear();
         SelectedAnnotation = null;
+        foreach (FigureScientificObjectViewModel scientificObject in ScientificObjects)
+        {
+            scientificObject.PropertyChanged -= OnScientificObjectPropertyChanged;
+        }
+        ScientificObjects.Clear();
+        SelectedScientificObject = null;
+        MeasurementOverlays.Clear();
         foreach (FigureGuideViewModel guide in Guides)
         {
             guide.PropertyChanged -= OnGuidePropertyChanged;
@@ -1337,6 +1405,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
         SelectedGuide = null;
         NotifyPanelCollectionChanged();
         NotifyAnnotationCollectionChanged();
+        NotifyScientificObjectCollectionChanged();
         NotifyGuideCollectionChanged();
     }
 
@@ -1366,11 +1435,17 @@ public sealed class FigureCanvasViewModel : ObservableObject
                 panel.Adjustments,
                 panel.FrameIndex,
                 panel.IsInset,
-                panel.StyleOverride))
+                panel.StyleOverride,
+                panel.Id,
+                panel.CreateScaleBarExportSpecs()))
             .ToArray();
         FigureAnnotationExportItem[] annotations = Annotations
             .OrderBy(annotation => annotation.ZIndex)
             .Select(annotation => annotation.CreateExportItem())
+            .ToArray();
+        FigureScientificObjectExportItem[] scientificObjects = ScientificObjects
+            .OrderBy(scientificObject => scientificObject.ZIndex)
+            .Select(scientificObject => scientificObject.CreateExportItem())
             .ToArray();
         return new FigureExportDocument(
             CanvasWidth,
@@ -1379,9 +1454,106 @@ public sealed class FigureCanvasViewModel : ObservableObject
             panels,
             annotations,
             NormalizedBackgroundColor,
-            globalStyle: GlobalStyle);
+            globalStyle: GlobalStyle,
+            measurementOverlays: MeasurementOverlays.Select(overlay => overlay.CreateExportItem()).ToArray(),
+            scientificObjects: scientificObjects);
     }
 
+    public FigureAdditionalScaleBarViewModel AddAdditionalScaleBar()
+    {
+        if (SelectedPanel is not { IsLocked: false } panel)
+        {
+            throw new InvalidOperationException("请先选择一个未锁定的 Panel，再新增比例尺。");
+        }
+
+        return panel.AddAdditionalScaleBar();
+    }
+    public FigureMeasurementOverlayViewModel PinMeasurement(
+        ScientificMeasurementViewModel measurement,
+        FigurePanelViewModel panel)
+    {
+        ArgumentNullException.ThrowIfNull(measurement);
+        ArgumentNullException.ThrowIfNull(panel);
+        if (!measurement.IsValid || measurement.SourceAssetId != panel.Source.Asset.Id ||
+            measurement.SourceRevision != panel.Source.SourceRevision)
+        {
+            throw new InvalidOperationException("只有当前源修订上的有效测量才能 Pin 到引用同一源图的 Figure Panel。");
+        }
+
+        FigureMeasurementOverlayViewModel? existing = MeasurementOverlays.FirstOrDefault(overlay =>
+            overlay.MeasurementId == measurement.Id && overlay.PanelId == panel.Id);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        ScientificMeasurementVisualStyle style = measurement.VisualStyle;
+        SpatialCalibration? calibration = measurement.Calibration is { IsValid: true } currentCalibration
+            ? currentCalibration
+            : null;
+        var scientificObject = new MeasurementOverlayObject
+        {
+            Id = Guid.NewGuid(),
+            AssetId = measurement.SourceAssetId,
+            PanelId = panel.Id,
+            SourceRevision = measurement.SourceRevision,
+            MeasurementId = measurement.Id,
+            SourceGeometry = measurement.Measurement,
+            CalibrationRelationship = calibration is null
+                ? null
+                : new FigureMeasurementCalibrationRelationship(
+                    measurement.SourceAssetId,
+                    measurement.SourceRevision,
+                    calibration.UnitsPerPixelX,
+                    calibration.UnitsPerPixelY,
+                    calibration.Unit),
+            Style = new FigureMeasurementOverlayStyle(
+                style.StrokeColor,
+                style.StrokeWidthPixels,
+                style.LineStyle,
+                style.FillColor,
+                style.FillOpacityPercent,
+                style.MarkerStrokeColor,
+                style.MarkerFillColor,
+                style.MarkerSizePixels,
+                style.ShowMarkers,
+                style.LabelColor,
+                style.LabelFontFamily,
+                style.LabelFontSizePt,
+                style.LabelIsBold,
+                style.ShowLabel),
+            StyleOverride = new StyleOverride(
+                Measurement: new MeasurementStyle(
+                    new ShapeStyle(
+                        style.StrokeColor,
+                        style.FillColor,
+                        style.FillOpacityPercent,
+                        Math.Clamp(style.StrokeWidthPixels * 72.0 / 96.0, 0.25, 10)),
+                    new MarkerStyle(style.MarkerStrokeColor, style.MarkerFillColor, style.MarkerSizePixels),
+                    new TextStyle(style.LabelFontFamily, style.LabelFontSizePt, style.LabelIsBold, style.LabelColor),
+                    style.LineStyle,
+                    style.ShowMarkers,
+                    style.ShowLabel)),
+            IsVisible = style.IsVisible,
+            ZIndex = MeasurementOverlays.Count,
+        };
+        var overlay = new FigureMeasurementOverlayViewModel(scientificObject, panel);
+        MeasurementOverlays.Add(overlay);
+        NotifyMeasurementOverlayCollectionChanged();
+        return overlay;
+    }
+
+    public FigureMeasurementOverlayViewModel RestoreMeasurementOverlay(
+        MeasurementOverlayObject scientificObject)
+    {
+        ArgumentNullException.ThrowIfNull(scientificObject);
+        FigurePanelViewModel panel = Panels.SingleOrDefault(candidate => candidate.Id == scientificObject.PanelId)
+            ?? throw new InvalidOperationException("Measurement Overlay 引用了不存在的 Figure Panel。");
+        var overlay = new FigureMeasurementOverlayViewModel(scientificObject, panel);
+        MeasurementOverlays.Add(overlay);
+        NotifyMeasurementOverlayCollectionChanged();
+        return overlay;
+    }
     public int ResetRegularPanelsToTemplateLayout()
     {
         int updated = 0;
@@ -1537,6 +1709,78 @@ public sealed class FigureCanvasViewModel : ObservableObject
         SelectedAnnotation = annotation;
         NotifyAnnotationCollectionChanged();
         return annotation;
+    }
+    public FigureScientificObjectViewModel RestoreScientificObject(
+        Guid id,
+        FigureScientificObjectKind kind,
+        string pointsText,
+        string label,
+        string strokeColor,
+        string fillColor,
+        double fillOpacityPercent,
+        string textColor,
+        string fontFamily,
+        double fontSizePt,
+        double strokeWidthPt,
+        bool isBold,
+        bool isVisible,
+        bool isLocked,
+        int zIndex,
+        double minimum,
+        double maximum,
+        string unit,
+        string colormap,
+        string channelEntriesText)
+    {
+        var scientificObject = new FigureScientificObjectViewModel(kind, CanvasWidth, CanvasHeight, Dpi, zIndex, id);
+        scientificObject.Restore(pointsText, label, strokeColor, fillColor, fillOpacityPercent, textColor,
+            fontFamily, fontSizePt, strokeWidthPt, isBold, isVisible, isLocked, minimum, maximum, unit,
+            colormap, channelEntriesText);
+        scientificObject.PropertyChanged += OnScientificObjectPropertyChanged;
+        ScientificObjects.Add(scientificObject);
+        SelectedScientificObject = scientificObject;
+        NotifyScientificObjectCollectionChanged();
+        return scientificObject;
+    }
+
+    private void AddScientificObject(FigureScientificObjectKind kind)
+    {
+        FigureScientificObjectViewModel? previous = ScientificObjects.LastOrDefault();
+        var scientificObject = new FigureScientificObjectViewModel(kind, CanvasWidth, CanvasHeight, Dpi, ScientificObjects.Count)
+        {
+            StrokeColor = previous?.StrokeColor ?? GlobalShapeColor,
+            FillColor = previous?.FillColor ?? GlobalShapeColor,
+            TextColor = previous?.TextColor ?? GlobalTextColor,
+            FontFamily = previous?.FontFamily ?? GlobalFontFamily,
+            FontSizePt = previous?.FontSizePt ?? GlobalFontSizePt,
+            StrokeWidthPt = previous?.StrokeWidthPt ?? GlobalStrokeWidthPt,
+        };
+        scientificObject.PropertyChanged += OnScientificObjectPropertyChanged;
+        ScientificObjects.Add(scientificObject);
+        SelectedScientificObject = scientificObject;
+        NotifyScientificObjectCollectionChanged();
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void RemoveSelectedScientificObject()
+    {
+        if (SelectedScientificObject is not { IsLocked: false } scientificObject)
+        {
+            return;
+        }
+
+        int index = ScientificObjects.IndexOf(scientificObject);
+        scientificObject.PropertyChanged -= OnScientificObjectPropertyChanged;
+        ScientificObjects.Remove(scientificObject);
+        SelectedScientificObject = ScientificObjects.Count == 0
+            ? null
+            : ScientificObjects[Math.Clamp(index, 0, ScientificObjects.Count - 1)];
+        for (int objectIndex = 0; objectIndex < ScientificObjects.Count; objectIndex++)
+        {
+            ScientificObjects[objectIndex].ZIndex = objectIndex;
+        }
+        NotifyScientificObjectCollectionChanged();
+        EditCompleted?.Invoke(this, EventArgs.Empty);
     }
 
     public void MoveAnnotation(FigureAnnotationViewModel annotation, double deltaX, double deltaY)
@@ -2465,10 +2709,20 @@ public sealed class FigureCanvasViewModel : ObservableObject
         DocumentChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    private void NotifyMeasurementOverlayCollectionChanged()
+    {
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+    }
     private void NotifyAnnotationCollectionChanged()
     {
         OnPropertyChanged(nameof(AnnotationCountText));
         OnPropertyChanged(nameof(GlobalStyleStatusText));
+        OnPropertyChanged(nameof(EmptyVisibility));
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+    }
+    private void NotifyScientificObjectCollectionChanged()
+    {
+        OnPropertyChanged(nameof(ScientificObjectCountText));
         OnPropertyChanged(nameof(EmptyVisibility));
         DocumentChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -2495,6 +2749,10 @@ public sealed class FigureCanvasViewModel : ObservableObject
             nameof(FigurePanelViewModel.PhysicalUnitsPerSourcePixel) or
             nameof(FigurePanelViewModel.ScaleBarPhysicalLength) or
             nameof(FigurePanelViewModel.ScaleBarUnit) or
+            nameof(FigurePanelViewModel.CalibrationUnit) or
+            nameof(FigurePanelViewModel.PrimaryScaleBarAnchor) or
+            nameof(FigurePanelViewModel.AdditionalScaleBars) or
+            nameof(FigurePanelViewModel.HasScaleBars) or
             nameof(FigurePanelViewModel.ScaleBarShowLabel) or
             nameof(FigurePanelViewModel.StyleOverride) or
             nameof(FigurePanelViewModel.Adjustments) or
@@ -2512,6 +2770,19 @@ public sealed class FigureCanvasViewModel : ObservableObject
             DocumentChanged?.Invoke(this, EventArgs.Empty);
         }
 
+        if (sender is FigurePanelViewModel overlayPanel &&
+            e.PropertyName is nameof(FigurePanelViewModel.SourceRect) or
+                nameof(FigurePanelViewModel.X) or
+                nameof(FigurePanelViewModel.Y) or
+                nameof(FigurePanelViewModel.Width) or
+                nameof(FigurePanelViewModel.Height) or
+                nameof(FigurePanelViewModel.IsVisible))
+        {
+            foreach (FigureMeasurementOverlayViewModel overlay in MeasurementOverlays)
+            {
+                overlay.RefreshLayout(overlayPanel);
+            }
+        }
         if (e.PropertyName == nameof(FigurePanelViewModel.StyleOverride) &&
             ReferenceEquals(sender, SelectedPanel))
         {
@@ -2568,6 +2839,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
             if (panel.IsSelected)
             {
                 SelectedAnnotation = null;
+                SelectedScientificObject = null;
                 SelectedGuide = null;
             }
 
@@ -2613,6 +2885,17 @@ public sealed class FigureCanvasViewModel : ObservableObject
             PasteSelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
         }
     }
+    private void OnScientificObjectPropertyChanged(
+        object? sender,
+        System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(FigureScientificObjectViewModel.IsLocked))
+        {
+            RemoveSelectedScientificObjectCommand.NotifyCanExecuteChanged();
+        }
+
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     private void OnGuidePropertyChanged(
         object? sender,
@@ -2652,6 +2935,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
         MatchSelectionHeightCommand.NotifyCanExecuteChanged();
         MatchSelectionFrameCommand.NotifyCanExecuteChanged();
         MatchSelectionAspectRatioCommand.NotifyCanExecuteChanged();
+        AddAdditionalScaleBarCommand.NotifyCanExecuteChanged();
         CreateInsetCommand.NotifyCanExecuteChanged();
         LinkSelectedPanelCropsCommand.NotifyCanExecuteChanged();
         UnlinkSelectedPanelCropsCommand.NotifyCanExecuteChanged();

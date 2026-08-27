@@ -87,6 +87,7 @@ public sealed class EditorHistoryManagerTests
         [],
         null,
         null,
+        null,
         true,
         12,
         24,
@@ -96,5 +97,7 @@ public sealed class EditorHistoryManagerTests
         [],
         [],
         [],
-        analyses ?? []);
+        [],
+        analyses ?? [],
+        []);
 }

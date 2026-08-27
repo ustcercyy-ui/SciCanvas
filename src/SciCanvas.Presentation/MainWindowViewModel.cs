@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using SciCanvas.Core.Channels;
 using SciCanvas.Core.Cropping;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
@@ -69,6 +70,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private bool _lockCropSizeAcrossSources = true;
     private WorkspaceMode _workspaceMode = WorkspaceMode.Crop;
     private bool _isLayersTabActive;
+    private bool _isChannelsTabActive;
     private Guid _projectId = Guid.NewGuid();
     private DateTimeOffset _projectCreatedAt = DateTimeOffset.UtcNow;
     private string? _projectPath;
@@ -169,6 +171,8 @@ public sealed class MainWindowViewModel : ObservableObject
         _customCanvasWidth = _figure.CanvasWidth;
         _customCanvasHeight = _figure.CanvasHeight;
         Sources.CollectionChanged += OnSourcesCollectionChanged;
+        MultiChannelWorkspace = new MultiChannelWorkspaceViewModel(Sources);
+        MultiChannelWorkspace.Changed += OnMultiChannelWorkspaceChanged;
         foreach (FigureExportProfile profile in FigureExportProfile.BuiltIns)
         {
             var editor = new ExportProfileEditorViewModel(profile);
@@ -247,8 +251,13 @@ public sealed class MainWindowViewModel : ObservableObject
             () => ResetExportProfilesToBuiltIns(markDirty: true), () => !IsBusy);
         ShowCropWorkspaceCommand = new RelayCommand(() => WorkspaceMode = WorkspaceMode.Crop);
         ShowFigureWorkspaceCommand = new RelayCommand(() => WorkspaceMode = WorkspaceMode.Figure);
-        ShowInspectorTabCommand = new RelayCommand(() => IsLayersTabActive = false);
+        ShowInspectorTabCommand = new RelayCommand(() =>
+        {
+            IsChannelsTabActive = false;
+            IsLayersTabActive = false;
+        });
         ShowLayersTabCommand = new RelayCommand(() => IsLayersTabActive = true);
+        ShowChannelsTabCommand = new RelayCommand(() => IsChannelsTabActive = true);
         SelectCropToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Crop);
         SelectCalibrationToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Calibration);
         SelectLengthToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Length);
@@ -264,6 +273,11 @@ public sealed class MainWindowViewModel : ObservableObject
         PasteSelectedMeasurementStyleCommand = new RelayCommand(PasteSelectedMeasurementStyle);
         ApplyMeasurementStyleToSameTypeCommand = new RelayCommand(ApplyMeasurementStyleToSameType);
         ApplyScientificColorToMeasurementCommand = new RelayCommand(ApplyScientificColorToMeasurement);
+        PinSelectedMeasurementToFigureCommand = new RelayCommand(
+            PinSelectedMeasurementToFigure,
+            () => SelectedSource?.SelectedMeasurement is { IsValid: true } measurement &&
+                  Figure.Panels.Any(panel => panel.Source.Asset.Id == measurement.SourceAssetId) &&
+                  !IsBusy);
         DeleteSelectionCommand = new RelayCommand(DeleteCurrentSelection, () => !IsBusy);
         CopyMeasurementsCommand = new RelayCommand(
             CopyMeasurements,
@@ -363,6 +377,8 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public ObservableCollection<SourceAssetItemViewModel> Sources { get; } = [];
 
+    public MultiChannelWorkspaceViewModel MultiChannelWorkspace { get; }
+
     public ObservableCollection<SourceAssetItemViewModel> AssetsView { get; } = [];
 
     public string AssetSearchText
@@ -432,7 +448,7 @@ public sealed class MainWindowViewModel : ObservableObject
             [
                 SubmissionCheckLine("Sources verified", Sources.All(source => source.Asset.LinkState == SourceLinkState.Verified),
                     "SOURCE_UNVERIFIED", "SOURCE_NOT_IN_PROJECT"),
-                SubmissionCheckLine("Calibration valid", Figure.Panels.Where(panel => panel.ShowScaleBar).All(panel => panel.IsScaleBarValid),
+                SubmissionCheckLine("Calibration valid", Figure.Panels.Where(panel => panel.HasScaleBars).All(panel => panel.IsScaleBarValid),
                     "INVALID_SCALE_BAR", "SCALE_BAR_TOO_LONG"),
                 SubmissionCheckLine("Effective DPI", Figure.Panels.Where(panel => panel.IsVisible).All(panel => panel.EffectiveDpi >= FigureQcMinimumDpi),
                     "LOW_EFFECTIVE_DPI"),
@@ -440,6 +456,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 SubmissionCheckLine("Panel labels", true, "MISSING_LABEL", "DUPLICATE_LABEL", "LABEL_SEQUENCE"),
                 SubmissionCheckLine("Scale bars", true, "INVALID_SCALE_BAR", "SCALE_BAR_TOO_LONG"),
                 SubmissionCheckLine("Analysis / measurement revision", true, "STALE_ANALYSIS_REVISION", "STALE_MEASUREMENT_REVISION"),
+                SubmissionCheckLine("Scientific objects", true, "INVALID_SCIENTIFIC_OBJECT"),
                 SelectedExportProfile?.IsValid == true ? "✓ Export format" : "✗ Export format",
                 FigureQcIssues.Any(issue => issue.Severity == FigurePreflightSeverity.Warning)
                     ? $"⚠ Warnings: {FigureQcIssues.Count(issue => issue.Severity == FigurePreflightSeverity.Warning)}"
@@ -714,6 +731,8 @@ public sealed class MainWindowViewModel : ObservableObject
     public RelayCommand ShowInspectorTabCommand { get; }
 
     public RelayCommand ShowLayersTabCommand { get; }
+
+    public RelayCommand ShowChannelsTabCommand { get; }
     public RelayCommand SelectCropToolCommand { get; }
     public RelayCommand SelectCalibrationToolCommand { get; }
     public RelayCommand SelectLengthToolCommand { get; }
@@ -732,6 +751,8 @@ public sealed class MainWindowViewModel : ObservableObject
     public RelayCommand ApplyMeasurementStyleToSameTypeCommand { get; }
 
     public RelayCommand ApplyScientificColorToMeasurementCommand { get; }
+
+    public RelayCommand PinSelectedMeasurementToFigureCommand { get; }
 
     public IReadOnlyList<MeasurementScientificColorTarget> MeasurementScientificColorTargets { get; } =
         Enum.GetValues<MeasurementScientificColorTarget>();
@@ -1004,20 +1025,61 @@ public sealed class MainWindowViewModel : ObservableObject
         get => _isLayersTabActive;
         set
         {
+            if (!value && !_isLayersTabActive && _isChannelsTabActive)
+            {
+                IsChannelsTabActive = false;
+                return;
+            }
+
             if (SetProperty(ref _isLayersTabActive, value))
             {
-                OnPropertyChanged(nameof(InspectorTabVisibility));
-                OnPropertyChanged(nameof(LayersTabVisibility));
+                if (value && _isChannelsTabActive)
+                {
+                    _isChannelsTabActive = false;
+                    OnPropertyChanged(nameof(IsChannelsTabActive));
+                }
+
+                NotifyInspectorTabStateChanged();
             }
         }
     }
 
+    public bool IsChannelsTabActive
+    {
+        get => _isChannelsTabActive;
+        set
+        {
+            if (SetProperty(ref _isChannelsTabActive, value))
+            {
+                if (value && _isLayersTabActive)
+                {
+                    _isLayersTabActive = false;
+                    OnPropertyChanged(nameof(IsLayersTabActive));
+                }
+
+                NotifyInspectorTabStateChanged();
+            }
+        }
+    }
+
+    public bool IsInspectorTabActive => !IsLayersTabActive && !IsChannelsTabActive;
+
     public Visibility InspectorTabVisibility =>
-        IsLayersTabActive ? Visibility.Collapsed : Visibility.Visible;
+        IsLayersTabActive || IsChannelsTabActive ? Visibility.Collapsed : Visibility.Visible;
 
     public Visibility LayersTabVisibility =>
         IsLayersTabActive ? Visibility.Visible : Visibility.Collapsed;
 
+    public Visibility ChannelsTabVisibility =>
+        IsChannelsTabActive ? Visibility.Visible : Visibility.Collapsed;
+
+    private void NotifyInspectorTabStateChanged()
+    {
+        OnPropertyChanged(nameof(IsInspectorTabActive));
+        OnPropertyChanged(nameof(InspectorTabVisibility));
+        OnPropertyChanged(nameof(LayersTabVisibility));
+        OnPropertyChanged(nameof(ChannelsTabVisibility));
+    }
     public string WorkspaceModeText => WorkspaceMode == WorkspaceMode.Crop ? "裁剪视图" : "拼版视图";
 
     public string? ProjectPath => _projectPath;
@@ -1282,6 +1344,30 @@ public sealed class MainWindowViewModel : ObservableObject
         CompleteHistoryGesture();
     }
 
+    private void PinSelectedMeasurementToFigure()
+    {
+        if (SelectedSource?.SelectedMeasurement is not { IsValid: true } measurement)
+        {
+            StatusMessage = "请先选择一个有效测量对象";
+            return;
+        }
+
+        FigurePanelViewModel? panel = Figure.SelectedPanel is { } selected &&
+                                      selected.Source.Asset.Id == measurement.SourceAssetId
+            ? selected
+            : Figure.Panels.FirstOrDefault(candidate =>
+                candidate.Source.Asset.Id == measurement.SourceAssetId);
+        if (panel is null)
+        {
+            StatusMessage = "请先把同一源图的裁剪加入 Figure，再 Pin 测量";
+            return;
+        }
+
+        FigureMeasurementOverlayViewModel overlay = Figure.PinMeasurement(measurement, panel);
+        WorkspaceMode = WorkspaceMode.Figure;
+        StatusMessage = $"已将 {measurement.TypeText} {measurement.Number} Pin 到 Panel {panel.Label} · Overlay {overlay.Id:D}";
+        PinSelectedMeasurementToFigureCommand.NotifyCanExecuteChanged();
+    }
     private void DeleteSelectedMeasurement()
     {
         if (SelectedSource?.SelectedMeasurement is not ScientificMeasurementViewModel measurement)
@@ -2912,7 +2998,7 @@ public sealed class MainWindowViewModel : ObservableObject
                     ["warningCount"] = qc.Issues.Count(issue => issue.Severity == FigurePreflightSeverity.Warning),
                 },
             };
-            string version = typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "2.3.0-alpha";
+            string version = typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "2.4.0-alpha.1";
             SubmissionPackageResult result = await _submissionPackageBuilder.BuildAsync(
                 new SubmissionPackageRequest(
                     targetDirectory,
@@ -3224,6 +3310,7 @@ public sealed class MainWindowViewModel : ObservableObject
         try
         {
             Sources.Clear();
+            MultiChannelWorkspace.Restore([]);
             BatchCropQueue.Clear();
             SelectedBatchCrop = null;
             OnPropertyChanged(nameof(BatchCropQueueSummary));
@@ -3302,7 +3389,8 @@ public sealed class MainWindowViewModel : ObservableObject
                 IsCropOverlayVisible,
                 _auditTrail,
                 CreateValidatedExportProfiles(),
-                FigureQcMinimumDpi);
+                FigureQcMinimumDpi,
+                MultiChannelWorkspace.CreateModels());
 
             string? previousProjectPath = _projectPath;
             await _projectStore.SaveAsync(normalizedPath, document);
@@ -3616,6 +3704,10 @@ public sealed class MainWindowViewModel : ObservableObject
                 Sources.Add(source);
             }
 
+            MultiChannelWorkspace.SynchronizeSources();
+            MultiChannelWorkspace.Restore(document.MultiChannelGroups.Select(
+                ProjectDocumentMapper.ToMultiChannelAssetGroup));
+
             foreach (SourceAssetItemViewModel source in restoredSources)
             {
                 ProjectCalibrationSnapshot? calibrationSnapshot = document.Calibrations
@@ -3733,9 +3825,21 @@ public sealed class MainWindowViewModel : ObservableObject
                 if (scaleBars.TryGetValue(layer.Id, out ProjectScaleBarSnapshot? scaleBar))
                 {
                     restored.PhysicalUnitsPerSourcePixel = scaleBar.PhysicalUnitsPerSourcePixel;
+                    restored.CalibrationUnit = string.IsNullOrWhiteSpace(scaleBar.CalibrationUnit)
+                        ? scaleBar.Unit
+                        : scaleBar.CalibrationUnit;
                     restored.ScaleBarPhysicalLength = scaleBar.PhysicalLength;
                     restored.ScaleBarUnit = scaleBar.Unit;
+                    restored.PrimaryScaleBarAnchor = ProjectDocumentMapper.ParseScaleBarAnchor(scaleBar.Anchor);
                     restored.ScaleBarShowLabel = scaleBar.ShowLabel;
+                    restored.RestoreAdditionalScaleBars((scaleBar.AdditionalBars ?? []).Select(additional =>
+                        new FigureAdditionalScaleBarViewModel(
+                            additional.PhysicalLength,
+                            additional.Unit,
+                            ProjectDocumentMapper.ParseScaleBarAnchor(additional.Anchor),
+                            additional.ShowLabel,
+                            additional.IsVisible,
+                            additional.Id)));
                     restored.ShowScaleBar = scaleBar.Enabled;
                 }
 
@@ -3789,7 +3893,38 @@ public sealed class MainWindowViewModel : ObservableObject
                     annotation.ZIndex);
             }
 
-            foreach (ProjectGuideSnapshot guide in document.Guides)
+            foreach (ProjectFigureScientificObjectSnapshot scientificObject in
+                     (editor?.ScientificObjects ?? []).OrderBy(item => item.ZIndex))
+            {
+                Figure.RestoreScientificObject(
+                    scientificObject.Id,
+                    ParseScientificObjectKind(scientificObject.Kind),
+                    scientificObject.Points,
+                    scientificObject.Label,
+                    scientificObject.StrokeColor,
+                    scientificObject.FillColor,
+                    scientificObject.FillOpacityPercent,
+                    scientificObject.TextColor,
+                    scientificObject.FontFamily,
+                    scientificObject.FontSizePt,
+                    scientificObject.StrokeWidthPt,
+                    scientificObject.IsBold,
+                    scientificObject.Visible,
+                    scientificObject.Locked,
+                    scientificObject.ZIndex,
+                    scientificObject.Minimum,
+                    scientificObject.Maximum,
+                    scientificObject.Unit,
+                    scientificObject.Colormap,
+                    scientificObject.ChannelEntries);
+            }
+            foreach (ProjectMeasurementOverlaySnapshot overlaySnapshot in
+                     (editor?.MeasurementOverlays ?? []).OrderBy(item => item.ZIndex))
+            {
+                MeasurementOverlayObject overlay = ProjectDocumentMapper.ToMeasurementOverlay(overlaySnapshot);
+                Figure.RestoreMeasurementOverlay(overlay);
+            }
+        foreach (ProjectGuideSnapshot guide in document.Guides)
             {
                 Figure.RestoreGuide(
                     Guid.NewGuid(),
@@ -3898,6 +4033,24 @@ public sealed class MainWindowViewModel : ObservableObject
             layerIndex++;
         }
 
+        foreach (ProjectMeasurementOverlaySnapshot overlaySnapshot in
+                 (document.TemplateSnapshot?.MeasurementOverlays ?? []))
+        {
+            MeasurementOverlayObject overlay = ProjectDocumentMapper.ToMeasurementOverlay(overlaySnapshot);
+            Guid sourceId = overlay.AssetId ?? Guid.Empty;
+            Guid panelId = overlay.PanelId ?? Guid.Empty;
+            if (!sourceMap.ContainsKey(sourceId) ||
+                !document.Measurements.Any(measurement =>
+                    measurement.Id == overlay.MeasurementId &&
+                    measurement.SourceAssetId == sourceId &&
+                    measurement.SourceRevision == overlay.SourceRevision) ||
+                document.Layers.FirstOrDefault(layer => layer.Id == panelId) is not { } panel ||
+                panel.SourceAssetId != sourceId)
+            {
+                throw new InvalidDataException("Measurement Overlay 的源测量、源修订或目标 Panel 不存在或不匹配。");
+            }
+        }
+
         IReadOnlyDictionary<Guid, ProjectScaleBarSnapshot> scaleBars =
             document.TemplateSnapshot?.ScaleBars ?? new Dictionary<Guid, ProjectScaleBarSnapshot>();
         foreach ((Guid layerId, ProjectScaleBarSnapshot scaleBar) in scaleBars)
@@ -3908,6 +4061,17 @@ public sealed class MainWindowViewModel : ObservableObject
                 throw new InvalidDataException("工程包含没有对应图层的比例尺参数。");
             }
 
+            HashSet<Guid> additionalScaleBarIds = [];
+            foreach (ProjectAdditionalScaleBarSnapshot additional in scaleBar.AdditionalBars ?? [])
+            {
+                bool knownAnchor = additional.Anchor is "bottomLeft" or "bottomRight" or "topLeft" or "topRight";
+                if (additional.Id == Guid.Empty || !additionalScaleBarIds.Add(additional.Id) ||
+                    !double.IsFinite(additional.PhysicalLength) || additional.PhysicalLength <= 0 ||
+                    string.IsNullOrWhiteSpace(additional.Unit) || !knownAnchor)
+                {
+                    throw new InvalidDataException("工程包含无效或重复的额外比例尺参数。");
+                }
+            }
         }
 
         HashSet<Guid> annotationIds = [];
@@ -3921,6 +4085,50 @@ public sealed class MainWindowViewModel : ObservableObject
             _ = ParseAnnotationKind(annotation.Kind);
         }
 
+        HashSet<Guid> scientificObjectIds = [];
+        foreach (ProjectFigureScientificObjectSnapshot scientificObject in
+                 document.TemplateSnapshot?.ScientificObjects ?? [])
+        {
+            if (scientificObject.Id == Guid.Empty || !scientificObjectIds.Add(scientificObject.Id))
+            {
+                throw new InvalidDataException("工程包含无效或重复的科研对象 ID。");
+            }
+
+            FigureScientificObjectKind kind = ParseScientificObjectKind(scientificObject.Kind);
+            var candidate = new FigureScientificObjectViewModel(
+                kind,
+                layout.WidthPixels,
+                layout.HeightPixels,
+                dpi: 300,
+                zIndex: scientificObject.ZIndex,
+                id: scientificObject.Id);
+            candidate.Restore(
+                scientificObject.Points,
+                scientificObject.Label,
+                scientificObject.StrokeColor,
+                scientificObject.FillColor,
+                scientificObject.FillOpacityPercent,
+                scientificObject.TextColor,
+                scientificObject.FontFamily,
+                scientificObject.FontSizePt,
+                scientificObject.StrokeWidthPt,
+                scientificObject.IsBold,
+                scientificObject.Visible,
+                scientificObject.Locked,
+                scientificObject.Minimum,
+                scientificObject.Maximum,
+                scientificObject.Unit,
+                scientificObject.Colormap,
+                scientificObject.ChannelEntries);
+            try
+            {
+                _ = candidate.CreateExportItem();
+            }
+            catch (InvalidOperationException exception)
+            {
+                throw new InvalidDataException("工程包含无效的科研对象几何、样式或科学语义。", exception);
+            }
+        }
         foreach (ProjectGuideSnapshot guide in document.Guides)
         {
             FigureGuideOrientation orientation = ParseGuideOrientation(guide.Orientation);
@@ -4022,6 +4230,7 @@ public sealed class MainWindowViewModel : ObservableObject
         BuildSubmissionPackageCommand.NotifyCanExecuteChanged();
         AddCurrentCropToFigureCommand.NotifyCanExecuteChanged();
         ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
+        PinSelectedMeasurementToFigureCommand.NotifyCanExecuteChanged();
         RefreshAssetUsageCounts();
         MarkFigureQcStale();
         MarkDirty();
@@ -4042,8 +4251,13 @@ public sealed class MainWindowViewModel : ObservableObject
                source.LinkStateText.Contains(query, StringComparison.OrdinalIgnoreCase);
     }
 
-    private void OnSourcesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
+    private void OnSourcesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
         RefreshAssetLibrary();
+        MultiChannelWorkspace.SynchronizeSources();
+    }
+
+    private void OnMultiChannelWorkspaceChanged(object? sender, EventArgs e) => MarkDirty();
 
     private void RefreshAssetLibrary()
     {
@@ -4470,6 +4684,16 @@ public sealed class MainWindowViewModel : ObservableObject
             _ => throw new InvalidDataException($"不支持的标注类型：{kind ?? "<空>"}"),
         };
 
+    private static FigureScientificObjectKind ParseScientificObjectKind(string? kind) =>
+        kind?.ToLowerInvariant() switch
+        {
+            "polygonannotation" or "polygon" => FigureScientificObjectKind.PolygonAnnotation,
+            "roi" => FigureScientificObjectKind.Roi,
+            "directionmarker" or "direction" => FigureScientificObjectKind.DirectionMarker,
+            "colorbar" or "colourbar" => FigureScientificObjectKind.Colorbar,
+            "channellegend" or "legend" => FigureScientificObjectKind.ChannelLegend,
+            _ => throw new InvalidDataException($"不支持的科研对象类型：{kind ?? "<空>"}"),
+        };
     private static FigureGuideOrientation ParseGuideOrientation(string? orientation) =>
         orientation?.ToLowerInvariant() switch
         {
@@ -4573,6 +4797,7 @@ public sealed class MainWindowViewModel : ObservableObject
             Figure.SelectedPanel?.Id,
             Figure.SelectedPanels.Select(panel => panel.Id).ToArray(),
             Figure.SelectedAnnotation?.Id,
+            Figure.SelectedScientificObject?.Id,
             Figure.SelectedGuide?.Id,
             Figure.IsSnappingEnabled,
             Figure.SnapTolerancePixels,
@@ -4594,6 +4819,15 @@ public sealed class MainWindowViewModel : ObservableObject
                     panel.PhysicalUnitsPerSourcePixel,
                     panel.ScaleBarPhysicalLength,
                     panel.ScaleBarUnit,
+                    panel.CalibrationUnit,
+                    panel.PrimaryScaleBarAnchor,
+                    panel.AdditionalScaleBars.Select(scaleBar => new AdditionalScaleBarHistorySnapshot(
+                        scaleBar.Id,
+                        scaleBar.PhysicalLength,
+                        scaleBar.Unit,
+                        scaleBar.Anchor,
+                        scaleBar.ShowLabel,
+                        scaleBar.IsVisible)).ToArray(),
                     panel.ScaleBarShowLabel,
                     panel.FrameIndex,
                     panel.Adjustments,
@@ -4625,6 +4859,30 @@ public sealed class MainWindowViewModel : ObservableObject
                     annotation.IsVisible,
                     annotation.IsLocked,
                     annotation.ZIndex))
+                .ToArray(),
+            Figure.ScientificObjects
+                .OrderBy(scientificObject => scientificObject.ZIndex)
+                .Select(scientificObject => new ScientificObjectHistorySnapshot(
+                    scientificObject.Id,
+                    scientificObject.Kind,
+                    scientificObject.PointsText,
+                    scientificObject.Label,
+                    scientificObject.StrokeColor,
+                    scientificObject.FillColor,
+                    scientificObject.FillOpacityPercent,
+                    scientificObject.TextColor,
+                    scientificObject.FontFamily,
+                    scientificObject.FontSizePt,
+                    scientificObject.StrokeWidthPt,
+                    scientificObject.IsBold,
+                    scientificObject.IsVisible,
+                    scientificObject.IsLocked,
+                    scientificObject.ZIndex,
+                    scientificObject.Minimum,
+                    scientificObject.Maximum,
+                    scientificObject.Unit,
+                    scientificObject.Colormap,
+                    scientificObject.ChannelEntriesText))
                 .ToArray(),
             Figure.Guides
                 .Select(guide => new GuideHistorySnapshot(
@@ -4670,7 +4928,8 @@ public sealed class MainWindowViewModel : ObservableObject
                 .ToArray(),
             Sources.SelectMany(source => source.AnalysisResults.Select(result =>
                     new AnalysisHistorySnapshot(source.Asset.Id, result)))
-                .ToArray());
+                .ToArray(),
+            MultiChannelWorkspace.CreateModels());
     }
 
     private void RestoreHistorySnapshot(EditorHistorySnapshot snapshot)
@@ -4720,6 +4979,16 @@ public sealed class MainWindowViewModel : ObservableObject
                 restored.Label = panelSnapshot.Label;
                 restored.ScaleBarPhysicalLength = panelSnapshot.ScaleBarPhysicalLength;
                 restored.ScaleBarUnit = panelSnapshot.ScaleBarUnit;
+                restored.CalibrationUnit = panelSnapshot.CalibrationUnit;
+                restored.PrimaryScaleBarAnchor = panelSnapshot.PrimaryScaleBarAnchor;
+                restored.RestoreAdditionalScaleBars(panelSnapshot.AdditionalScaleBars.Select(scaleBar =>
+                    new FigureAdditionalScaleBarViewModel(
+                        scaleBar.PhysicalLength,
+                        scaleBar.Unit,
+                        scaleBar.Anchor,
+                        scaleBar.ShowLabel,
+                        scaleBar.IsVisible,
+                        scaleBar.Id)));
                 restored.ScaleBarShowLabel = panelSnapshot.ScaleBarShowLabel;
                 restored.ShowScaleBar = panelSnapshot.ShowScaleBar;
                 restored.CropLinkGroupId = panelSnapshot.CropLinkGroupId;
@@ -4754,6 +5023,31 @@ public sealed class MainWindowViewModel : ObservableObject
                     annotation.ZIndex);
             }
 
+            foreach (ScientificObjectHistorySnapshot scientificObject in
+                     snapshot.ScientificObjects.OrderBy(item => item.ZIndex))
+            {
+                Figure.RestoreScientificObject(
+                    scientificObject.Id,
+                    scientificObject.Kind,
+                    scientificObject.PointsText,
+                    scientificObject.Label,
+                    scientificObject.StrokeColor,
+                    scientificObject.FillColor,
+                    scientificObject.FillOpacityPercent,
+                    scientificObject.TextColor,
+                    scientificObject.FontFamily,
+                    scientificObject.FontSizePt,
+                    scientificObject.StrokeWidthPt,
+                    scientificObject.IsBold,
+                    scientificObject.IsVisible,
+                    scientificObject.IsLocked,
+                    scientificObject.ZIndex,
+                    scientificObject.Minimum,
+                    scientificObject.Maximum,
+                    scientificObject.Unit,
+                    scientificObject.Colormap,
+                    scientificObject.ChannelEntriesText);
+            }
             foreach (GuideHistorySnapshot guide in snapshot.Guides)
             {
                 Figure.RestoreGuide(
@@ -4762,6 +5056,8 @@ public sealed class MainWindowViewModel : ObservableObject
                     guide.Position,
                     guide.IsLocked);
             }
+
+            MultiChannelWorkspace.Restore(snapshot.MultiChannelGroups);
 
             foreach (SourceAssetItemViewModel source in Sources)
             {
@@ -4848,6 +5144,9 @@ public sealed class MainWindowViewModel : ObservableObject
             Figure.SelectedAnnotation = snapshot.SelectedAnnotationId is Guid annotationId
                 ? Figure.Annotations.FirstOrDefault(annotation => annotation.Id == annotationId)
                 : null;
+            Figure.SelectedScientificObject = snapshot.SelectedScientificObjectId is Guid scientificObjectId
+                ? Figure.ScientificObjects.FirstOrDefault(item => item.Id == scientificObjectId)
+                : null;
             Figure.SelectedGuide = snapshot.SelectedGuideId is Guid guideId
                 ? Figure.Guides.FirstOrDefault(guide => guide.Id == guideId)
                 : null;
@@ -4873,6 +5172,8 @@ public sealed class MainWindowViewModel : ObservableObject
         before.Panels.Select(panel => panel.Id).SequenceEqual(after.Panels.Select(panel => panel.Id)) &&
         before.Annotations.Select(annotation => annotation.Id)
             .SequenceEqual(after.Annotations.Select(annotation => annotation.Id)) &&
+        before.ScientificObjects.Select(item => item.Id)
+            .SequenceEqual(after.ScientificObjects.Select(item => item.Id)) &&
         before.Guides.Select(guide => guide.Id)
             .SequenceEqual(after.Guides.Select(guide => guide.Id)) &&
         before.Measurements.Select(measurement => measurement.Id)
@@ -4932,7 +5233,8 @@ public sealed class MainWindowViewModel : ObservableObject
                 IsCropOverlayVisible,
                 _auditTrail,
                 CreateValidatedExportProfiles(),
-                FigureQcMinimumDpi);
+                FigureQcMinimumDpi,
+                MultiChannelWorkspace.CreateModels());
 
             await _projectRecoveryStore.SaveAsync(_projectId, _projectPath, document);
             AutosaveStatusText = $"自动保存 {DateTime.Now:HH:mm:ss}";
@@ -5015,7 +5317,7 @@ public sealed class MainWindowViewModel : ObservableObject
         }
 
         FigureCanvasViewModel previous = Figure;
-        if (previous.Panels.Count == 0 && previous.Annotations.Count == 0 && previous.Guides.Count == 0)
+        if (previous.Panels.Count == 0 && previous.Annotations.Count == 0 && previous.ScientificObjects.Count == 0 && previous.Guides.Count == 0)
         {
             ReplaceFigure(template);
             StatusMessage = $"已切换模板 · {template.Name}";
@@ -5083,6 +5385,16 @@ public sealed class MainWindowViewModel : ObservableObject
             restored.PhysicalUnitsPerSourcePixel = panel.PhysicalUnitsPerSourcePixel;
             restored.ScaleBarPhysicalLength = panel.ScaleBarPhysicalLength;
             restored.ScaleBarUnit = panel.ScaleBarUnit;
+            restored.CalibrationUnit = panel.CalibrationUnit;
+            restored.PrimaryScaleBarAnchor = panel.PrimaryScaleBarAnchor;
+            restored.RestoreAdditionalScaleBars(panel.AdditionalScaleBars.Select(scaleBar =>
+                new FigureAdditionalScaleBarViewModel(
+                    scaleBar.PhysicalLength,
+                    scaleBar.Unit,
+                    scaleBar.Anchor,
+                    scaleBar.ShowLabel,
+                    scaleBar.IsVisible,
+                    scaleBar.Id)));
             restored.ScaleBarShowLabel = panel.ScaleBarShowLabel;
             restored.ShowScaleBar = panel.ShowScaleBar;
             restored.RestoreStyleOverride(panel.StyleOverride);
@@ -5116,6 +5428,40 @@ public sealed class MainWindowViewModel : ObservableObject
             ? migrated.Annotations.FirstOrDefault(annotation => annotation.Id == annotationId)
             : null;
 
+        Guid? selectedScientificObjectId = previous.SelectedScientificObject?.Id;
+        foreach (FigureScientificObjectViewModel scientificObject in previous.ScientificObjects.OrderBy(item => item.ZIndex))
+        {
+            string scaledPoints = FigureScientificObjectViewModel.ScalePointsText(
+                scientificObject.PointsText,
+                scaleX,
+                scaleY,
+                migrated.CanvasWidth,
+                migrated.CanvasHeight);
+            migrated.RestoreScientificObject(
+                scientificObject.Id,
+                scientificObject.Kind,
+                scaledPoints,
+                scientificObject.Label,
+                scientificObject.StrokeColor,
+                scientificObject.FillColor,
+                scientificObject.FillOpacityPercent,
+                scientificObject.TextColor,
+                scientificObject.FontFamily,
+                scientificObject.FontSizePt,
+                scientificObject.StrokeWidthPt,
+                scientificObject.IsBold,
+                scientificObject.IsVisible,
+                scientificObject.IsLocked,
+                scientificObject.ZIndex,
+                scientificObject.Minimum,
+                scientificObject.Maximum,
+                scientificObject.Unit,
+                scientificObject.Colormap,
+                scientificObject.ChannelEntriesText);
+        }
+        migrated.SelectedScientificObject = selectedScientificObjectId is Guid scientificObjectId
+            ? migrated.ScientificObjects.FirstOrDefault(item => item.Id == scientificObjectId)
+            : null;
         Guid? selectedGuideId = previous.SelectedGuide?.Id;
         foreach (FigureGuideViewModel guide in previous.Guides)
         {

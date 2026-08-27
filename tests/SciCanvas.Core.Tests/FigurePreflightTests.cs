@@ -192,6 +192,35 @@ public sealed class FigurePreflightTests
                 issue.Severity == FigurePreflightSeverity.Error));
     }
 
+    [Fact]
+    public void Check_SixteenBitTiffBlocksAlphaChannelView()
+    {
+        SourceAsset source = CreateSource(SourceLinkState.Verified);
+        var document = new FigureExportDocument(
+            100,
+            100,
+            300,
+            [new FigurePanelExportItem(
+                source,
+                new PixelRect64(0, 0, 100, 100),
+                new PixelRect64(0, 0, 100, 100),
+                "a",
+                true,
+                Adjustments: new ImageAdjustmentParameters { Channel = "alpha" })],
+            bitDepth: 16);
+
+        FigurePreflightResult result = FigurePreflight.Check(
+            new FigurePreflightContext(document, "tiff"),
+            [source]);
+
+        FigurePreflightIssue issue = Assert.Single(
+            result.Issues,
+            item => item.Code == "ALPHA_CHANNEL_UNSUPPORTED_16BIT");
+        Assert.Equal(FigurePreflightSeverity.Error, issue.Severity);
+        Assert.Equal(
+            "16-bit RGB TIFF cannot represent the selected alpha-channel view.",
+            issue.Message);
+    }
     [Theory]
     [InlineData(PanelLabelScheme.Numeric, "1", "2")]
     [InlineData(PanelLabelScheme.None, "", "")]

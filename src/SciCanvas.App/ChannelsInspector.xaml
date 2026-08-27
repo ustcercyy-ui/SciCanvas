@@ -1,0 +1,279 @@
+<UserControl x:Class="SciCanvas.App.ChannelsInspector"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="Transparent">
+    <Grid>
+        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="14,14,14,24">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Scientific Channels" FontSize="15" FontWeight="SemiBold" />
+                        <TextBlock Margin="0,3,0,0"
+                                   Text="多文件 EDS · Raw / Display 分离"
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   FontSize="9" />
+                    </StackPanel>
+                    <Button Grid.Column="1"
+                            Padding="8,4"
+                            Command="{Binding StartEdsGroupWizardCommand}"
+                            Content="＋ EDS 组" />
+                </Grid>
+
+                <Border Margin="0,12,0,0"
+                        Padding="9"
+                        Background="#10251E"
+                        BorderBrush="#28664F"
+                        BorderThickness="1"
+                        CornerRadius="4">
+                    <StackPanel>
+                        <TextBlock Text="科研约束" Foreground="#7DE0AF" FontSize="10" FontWeight="SemiBold" />
+                        <TextBlock Margin="0,3,0,0"
+                                   Text="源文件保持只读；颜色、Gamma、范围和 Composite 仅用于显示，科学分析始终读取 raw plane。"
+                                   Foreground="#91B8A6"
+                                   FontSize="9"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Margin="0,10,0,0"
+                           Text="{Binding WorkflowStatus}"
+                           Foreground="#8CE5F4"
+                           FontSize="9"
+                           TextWrapping="Wrap" />
+
+                <StackPanel Margin="0,14,0,0" Visibility="{Binding GroupListVisibility}">
+                    <Grid>
+                        <TextBlock Text="MULTICHANNEL GROUPS" FontSize="10" FontWeight="SemiBold" />
+                        <TextBlock HorizontalAlignment="Right"
+                                   Text="{Binding GroupCountText}"
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   FontSize="9" />
+                    </Grid>
+                    <ListBox Margin="0,7,0,0"
+                             MinHeight="72"
+                             ItemsSource="{Binding Groups}"
+                             SelectedItem="{Binding SelectedGroup}"
+                             Background="#101820"
+                             BorderBrush="{DynamicResource BorderBrush}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="5,4">
+                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="10" />
+                                    <TextBlock Margin="0,2,0,0"
+                                               Text="{Binding Summary}"
+                                               Foreground="{DynamicResource MutedBrush}"
+                                               FontSize="8" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <StackPanel Margin="0,10,0,0" Visibility="{Binding SelectedGroupVisibility}">
+                        <TextBlock Text="组名称" Foreground="{DynamicResource MutedBrush}" FontSize="9" />
+                        <TextBox Margin="0,3,0,0"
+                                 Text="{Binding SelectedGroup.Name, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <ItemsControl Margin="0,10,0,0" ItemsSource="{Binding SelectedGroup.Members}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Margin="0,0,0,8"
+                                            Padding="8"
+                                            Background="#111B23"
+                                            BorderBrush="#284455"
+                                            BorderThickness="1"
+                                            CornerRadius="4">
+                                        <StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <CheckBox IsChecked="{Binding Visible}"
+                                                          VerticalAlignment="Center"
+                                                          ToolTip="显示此通道" />
+                                                <TextBlock Grid.Column="1"
+                                                           Margin="6,0"
+                                                           Text="{Binding SourceDisplayName}"
+                                                           FontSize="9"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <Border Grid.Column="2"
+                                                        Width="14"
+                                                        Height="14"
+                                                        Background="{Binding Color}"
+                                                        BorderBrush="#88FFFFFF"
+                                                        BorderThickness="1" />
+                                            </Grid>
+                                            <Grid Margin="0,7,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="7" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="Channel name" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                                    <TextBox Margin="0,2,0,0" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="2">
+                                                    <TextBlock Text="Role" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                                    <TextBox Margin="0,2,0,0" Text="{Binding Role, UpdateSourceTrigger=PropertyChanged}" />
+                                                </StackPanel>
+                                            </Grid>
+                                            <TextBlock Margin="0,3,0,0"
+                                                       Text="{Binding NameOriginText}"
+                                                       Foreground="#88A9B8C7"
+                                                       FontSize="8" />
+                                            <Grid Margin="0,7,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="7" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="Color (#AARRGGBB)" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                                    <TextBox Margin="0,2,0,0" Text="{Binding Color, UpdateSourceTrigger=PropertyChanged}" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="2">
+                                                    <TextBlock Text="Opacity 0–1" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                                    <TextBox Margin="0,2,0,0" Text="{Binding Opacity, UpdateSourceTrigger=PropertyChanged}" />
+                                                </StackPanel>
+                                            </Grid>
+                                            <Grid Margin="0,7,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="5" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="5" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="Display min" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                                    <TextBox Margin="0,2,0,0" Text="{Binding DisplayMinimum, UpdateSourceTrigger=PropertyChanged}" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="2">
+                                                    <TextBlock Text="Display max" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                                    <TextBox Margin="0,2,0,0" Text="{Binding DisplayMaximum, UpdateSourceTrigger=PropertyChanged}" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="4">
+                                                    <TextBlock Text="Gamma" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                                    <TextBox Margin="0,2,0,0" Text="{Binding Gamma, UpdateSourceTrigger=PropertyChanged}" />
+                                                </StackPanel>
+                                            </Grid>
+                                            <CheckBox Margin="0,6,0,0" IsChecked="{Binding Invert}" Content="Invert display" FontSize="9" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <Button Command="{Binding RemoveSelectedGroupCommand}" Content="删除所选组" />
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel Margin="0,14,0,0" Visibility="{Binding WizardVisibility}">
+                    <Grid>
+                        <TextBlock Text="{Binding WizardStepText}" Foreground="#8CE5F4" FontSize="9" />
+                        <TextBlock HorizontalAlignment="Right" Text="EDS WORKFLOW" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                    </Grid>
+                    <TextBlock Margin="0,4,0,10" Text="{Binding WizardStepTitle}" FontSize="12" FontWeight="SemiBold" />
+
+                    <StackPanel Visibility="{Binding WizardStep1Visibility}">
+                        <TextBlock Text="Reference source" Foreground="{DynamicResource MutedBrush}" FontSize="9" />
+                        <ComboBox Margin="0,5,0,0"
+                                  ItemsSource="{Binding AvailableSources}"
+                                  SelectedItem="{Binding SelectedReferenceSource}"
+                                  DisplayMemberPath="DisplayName" />
+                        <TextBlock Margin="0,8,0,0"
+                                   Text="参考图通常是 HAADF、SEM 或 BSE；选择不会修改源文件。"
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   FontSize="9"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <ItemsControl Visibility="{Binding WizardStep2Visibility}" ItemsSource="{Binding EdsCandidates}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,3">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox IsChecked="{Binding IsIncluded}" IsEnabled="{Binding CanExclude}" />
+                                    <TextBlock Grid.Column="1" Margin="7,0" Text="{Binding SourceDisplayName}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="2" Text="{Binding ReferenceText}" Foreground="#8CE5F4" FontSize="8" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <StackPanel Visibility="{Binding WizardStep3Visibility}">
+                        <TextBlock Text="Filename 只提供建议，不会自动成为科研事实。" Foreground="#F0C674" FontSize="9" TextWrapping="Wrap" />
+                        <ItemsControl Margin="0,7,0,0" ItemsSource="{Binding EdsCandidates}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,3">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="65" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsIncluded}" />
+                                        <TextBlock Grid.Column="1" Margin="5,0,0,0" Text="{Binding NameOriginText}" Foreground="{DynamicResource MutedBrush}" FontSize="7" TextWrapping="Wrap" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <Button Margin="0,8,0,0" Command="{Binding ConfirmSuggestedNamesCommand}" Content="明确确认当前建议名称" />
+                    </StackPanel>
+
+                    <StackPanel Visibility="{Binding WizardStep4Visibility}">
+                        <TextBlock Text="默认颜色按通道顺序提供，不绑定元素名称。" Foreground="{DynamicResource MutedBrush}" FontSize="9" TextWrapping="Wrap" />
+                        <ItemsControl Margin="0,7,0,0" ItemsSource="{Binding EdsCandidates}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,3" IsEnabled="{Binding IsIncluded}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="105" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                                        <TextBox Grid.Column="1" Text="{Binding Color, UpdateSourceTrigger=PropertyChanged}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <StackPanel Visibility="{Binding WizardStep5Visibility}">
+                        <RadioButton Margin="0,3" GroupName="Fov" IsChecked="{Binding SameFieldOfViewConfirmed}" Content="我确认这些图像来自同一视场" />
+                        <RadioButton Margin="0,8,0,3" GroupName="Fov" IsChecked="{Binding RegistrationRequired}" Content="视场有偏移，需要 Registration" />
+                        <TextBlock Margin="0,8,0,0" Text="待配准组可以保存，但在 PR6/PR7 建立 SpatialMapping 前不会启用跨源联动。" Foreground="#F0C674" FontSize="9" TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <StackPanel Visibility="{Binding WizardStep6Visibility}">
+                        <TextBlock Text="Group name" Foreground="{DynamicResource MutedBrush}" FontSize="9" />
+                        <TextBox Margin="0,4,0,0" Text="{Binding GroupName, UpdateSourceTrigger=PropertyChanged}" />
+                        <TextBlock Margin="0,8,0,0" Text="组将保存 AssetId、ChannelId、FrameIndex、名称来源、颜色和完整显示参数。" Foreground="{DynamicResource MutedBrush}" FontSize="9" TextWrapping="Wrap" />
+                        <Button Margin="0,10,0,0" Command="{Binding CreateGroupCommand}" Style="{DynamicResource AccentButtonStyle}" Content="创建 EDS Map Group" />
+                    </StackPanel>
+
+                    <Grid Margin="0,14,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Button Command="{Binding CancelWizardCommand}" Content="取消" />
+                        <Button Grid.Column="2" Margin="0,0,5,0" Command="{Binding PreviousWizardStepCommand}" Content="上一步" />
+                        <Button Grid.Column="3" Command="{Binding NextWizardStepCommand}" Content="下一步" />
+                    </Grid>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

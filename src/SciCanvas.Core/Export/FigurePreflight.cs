@@ -177,25 +177,48 @@ public static class FigurePreflight
                     panel.Label));
             }
 
-            if (panel.ScaleBar is { } scaleBar &&
-                (!double.IsFinite(scaleBar.PhysicalUnitsPerSourcePixel) ||
-                 scaleBar.PhysicalUnitsPerSourcePixel <= 0 ||
-                 !double.IsFinite(scaleBar.PhysicalLength) ||
-                 scaleBar.PhysicalLength <= 0 ||
-                 string.IsNullOrWhiteSpace(scaleBar.Unit)))
+            foreach (FigureScaleBarExportSpec scaleBar in panel.EffectiveScaleBars)
             {
-                issues.Add(new(FigurePreflightSeverity.Error, "INVALID_SCALE_BAR", $"面板 {panel.Label} 的比例尺校准参数无效。", panel.Label));
-            }
-            else if (panel.ScaleBar is { } validScaleBar &&
-                     validScaleBar.PhysicalLength / validScaleBar.PhysicalUnitsPerSourcePixel >
-                     panel.SourceRect.Width * configuration.MaximumScaleBarWidthFraction)
-            {
-                issues.Add(new(FigurePreflightSeverity.Error, "SCALE_BAR_TOO_LONG", $"面板 {panel.Label} 的比例尺超过图像宽度 80%。", panel.Label));
+                double sourcePixels;
+                try
+                {
+                    scaleBar.Calibration.EnsureValid();
+                    scaleBar.DisplayLength.EnsureValid();
+                    sourcePixels = scaleBar.SourcePixelLength;
+                }
+                catch (Exception exception) when (exception is ArgumentException or NotSupportedException or InvalidOperationException)
+                {
+                    issues.Add(new(
+                        FigurePreflightSeverity.Error,
+                        "INVALID_SCALE_BAR",
+                        $"面板 {panel.Label} 的比例尺显示单位无法换算到校准单位。",
+                        panel.Label));
+                    continue;
+                }
+
+                if (!double.IsFinite(sourcePixels) || sourcePixels <= 0)
+                {
+                    issues.Add(new(FigurePreflightSeverity.Error, "INVALID_SCALE_BAR", $"面板 {panel.Label} 的比例尺校准参数无效。", panel.Label));
+                }
+                else if (sourcePixels > panel.SourceRect.Width * configuration.MaximumScaleBarWidthFraction)
+                {
+                    issues.Add(new(FigurePreflightSeverity.Error, "SCALE_BAR_TOO_LONG", $"面板 {panel.Label} 的比例尺超过图像宽度 80%。", panel.Label));
+                }
             }
 
             if (panel.Adjustments is { IsValid: false })
             {
                 issues.Add(new(FigurePreflightSeverity.Error, "INVALID_ADJUSTMENT", $"面板 {panel.Label} 的图像处理参数无效。", panel.Label));
+            }
+            if (context.IsSixteenBitTiff &&
+                string.Equals((panel.Adjustments ?? new()).Normalize().Channel, "alpha", StringComparison.Ordinal))
+            {
+                issues.Add(new(
+                    FigurePreflightSeverity.Error,
+                    "ALPHA_CHANNEL_UNSUPPORTED_16BIT",
+                    "16-bit RGB TIFF cannot represent the selected alpha-channel view.",
+                    panel.Label,
+                    panel.Source.Id));
             }
 
             try
@@ -268,6 +291,44 @@ public static class FigurePreflight
             }
         }
 
+        foreach (FigureMeasurementOverlayExportItem overlay in document.MeasurementOverlays.Where(item => item.IsVisible))
+        {
+            FigurePanelExportItem[] matchingPanels = document.Panels
+                .Where(panel => panel.IsVisible && panel.PanelId == overlay.PanelId)
+                .ToArray();
+            try
+            {
+                if (matchingPanels.Length != 1)
+                {
+                    throw new InvalidOperationException("Measurement Overlay 必须绑定到一个可见的 Figure Panel。");
+                }
+
+                _ = FigureMeasurementOverlayMapper.Map(overlay.ScientificObject, matchingPanels[0]);
+            }
+            catch (InvalidOperationException exception)
+            {
+                issues.Add(new(
+                    FigurePreflightSeverity.Error,
+                    "INVALID_MEASUREMENT_OVERLAY",
+                    exception.Message,
+                    matchingPanels.FirstOrDefault()?.Label,
+                    overlay.SourceAssetId,
+                    overlay.Id));
+                continue;
+            }
+
+            if (context.FontCatalog is not null &&
+                !context.FontCatalog.IsInstalled(overlay.Style.LabelFontFamily))
+            {
+                issues.Add(new(
+                    FigurePreflightSeverity.Warning,
+                    "FONT_MISSING",
+                    $"Measurement Overlay font “{overlay.Style.LabelFontFamily}” is not installed on this system. Export will use a fallback font.",
+                    matchingPanels[0].Label,
+                    overlay.SourceAssetId,
+                    overlay.Id));
+            }
+        }
         foreach (FigureAnnotationExportItem annotation in document.Annotations.Where(item => item.IsVisible))
         {
             if (string.IsNullOrWhiteSpace(annotation.Text) && annotation.Kind == "text")
@@ -312,6 +373,21 @@ public static class FigurePreflight
             }
         }
 
+        foreach (FigureScientificObjectExportItem scientificObject in document.ScientificObjects.Where(item => item.IsVisible))
+        {
+            try
+            {
+                scientificObject.EnsureValid(document.WidthPixels, document.HeightPixels);
+            }
+            catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+            {
+                issues.Add(new(
+                    FigurePreflightSeverity.Error,
+                    "INVALID_SCIENTIFIC_OBJECT",
+                    exception.Message,
+                    ObjectId: scientificObject.Id));
+            }
+        }
         if (context.FontCatalog is not null)
         {
             IEnumerable<(string Role, string FontFamily)> globalFonts =
@@ -331,8 +407,12 @@ public static class FigurePreflight
                         ($"Panel {panel.Label} scale bar", resolved.EffectiveScaleBarFontFamily),
                     };
                 });
+            IEnumerable<(string Role, string FontFamily)> scientificObjectFonts = document.ScientificObjects
+                .Where(item => item.IsVisible)
+                .Select(item => ($"{item.Kind} object", item.FontFamily));
             foreach ((string Role, string FontFamily) font in globalFonts
                      .Concat(panelFonts)
+                     .Concat(scientificObjectFonts)
                      .DistinctBy(item => item.FontFamily, StringComparer.OrdinalIgnoreCase))
             {
                 if (!context.FontCatalog.IsInstalled(font.FontFamily))

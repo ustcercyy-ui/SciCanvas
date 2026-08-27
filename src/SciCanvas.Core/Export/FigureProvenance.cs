@@ -34,6 +34,18 @@ public sealed record FigureProvenancePanel(
     bool Visible,
     ImageAdjustmentParameters Adjustments);
 
+public sealed record FigureProvenanceMeasurementOverlay(
+    Guid OverlayId,
+    Guid MeasurementId,
+    Guid SourceAssetId,
+    long SourceRevision,
+    Guid PanelId,
+    string MeasurementKind,
+    ScientificMeasurement SourceGeometry,
+    FigureMeasurementCalibrationRelationship? CalibrationRelationship,
+    FigureMeasurementOverlayStyle Style,
+    bool Visible,
+    int ZIndex);
 public sealed record FigureProvenanceAnalysis(
     Guid AnalysisId,
     string Kind,
@@ -63,7 +75,8 @@ public sealed record FigureProvenanceDocument(
     IReadOnlyList<FigurePreflightIssue> PreflightIssues,
     string? ExportProfileId = null,
     string? ExportProfileName = null,
-    IReadOnlyList<FigureProvenanceAnalysis>? Analyses = null);
+    IReadOnlyList<FigureProvenanceAnalysis>? Analyses = null,
+    IReadOnlyList<FigureProvenanceMeasurementOverlay>? MeasurementOverlays = null);
 
 public static class FigureProvenanceWriter
 {
@@ -143,7 +156,19 @@ public static class FigureProvenanceWriter
             preflight.Issues,
             exportProfileId,
             exportProfileName,
-            (analyses ?? []).Select(CreateAnalysisProvenance).ToArray());
+            (analyses ?? []).Select(CreateAnalysisProvenance).ToArray(),
+            document.MeasurementOverlays.Select(overlay => new FigureProvenanceMeasurementOverlay(
+                overlay.Id,
+                overlay.MeasurementId,
+                overlay.SourceAssetId,
+                overlay.SourceRevision,
+                overlay.PanelId,
+                overlay.MeasurementKind.ToString(),
+                overlay.SourceGeometry,
+                overlay.CalibrationRelationship,
+                overlay.Style,
+                overlay.IsVisible,
+                overlay.ZIndex)).ToArray());
     }
 
     private static FigureProvenanceAnalysis CreateAnalysisProvenance(

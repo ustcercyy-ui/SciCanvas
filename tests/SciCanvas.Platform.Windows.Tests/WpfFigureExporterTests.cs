@@ -6,6 +6,7 @@ using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
 using SciCanvas.Core.Sources;
+using SciCanvas.Core.Science;
 using SciCanvas.Core.Workspace;
 using SciCanvas.Imaging;
 using CoreImageMetadata = SciCanvas.Core.Images.ImageMetadata;
@@ -415,6 +416,37 @@ public sealed class WpfFigureExporterTests
     }
 
     [Fact]
+    public async Task ExportAsync_SvgRendersMultipleUnitConvertedScaleBars()
+    {
+        using var workspace = new TestWorkspace();
+        string sourcePath = Path.Combine(workspace.Root, "multi-scale.png");
+        string targetPath = Path.Combine(workspace.Root, "multi-scale.svg");
+        CreateSolidPng(sourcePath, 100, 60, Colors.Black);
+        FigureScaleBarExportSpec primary = new(0.01, 0.5, "µm", true, "µm", ScaleBarAnchor.BottomRight, Guid.NewGuid());
+        FigureScaleBarExportSpec secondary = new(0.01, 250, "nm", true, "µm", ScaleBarAnchor.BottomRight, Guid.NewGuid());
+        FigureExportDocument document = new(
+            300,
+            180,
+            300,
+            [
+                new FigurePanelExportItem(
+                    CreateAsset(sourcePath, 100, 60),
+                    new PixelRect64(0, 0, 100, 60),
+                    new PixelRect64(0, 0, 240, 144),
+                    "a",
+                    true,
+                    ScaleBar: primary,
+                    ScaleBars: [primary, secondary]),
+            ]);
+
+        await new WpfFigureExporter().ExportAsync(document, targetPath);
+
+        string svg = await File.ReadAllTextAsync(targetPath);
+        Assert.Contains(">0.5 µm</text>", svg, StringComparison.Ordinal);
+        Assert.Contains(">250 nm</text>", svg, StringComparison.Ordinal);
+        Assert.True(svg.Split("stroke-linecap=\"square\"", StringSplitOptions.None).Length - 1 >= 4);
+    }
+    [Fact]
     public async Task ExportAsync_PngCompositesIndependentRectangleFillOpacity()
     {
         using var workspace = new TestWorkspace();
@@ -530,6 +562,172 @@ public sealed class WpfFigureExporterTests
         Assert.Equal("%PDF-1.7", header);
         Assert.Contains("/Subtype /Image", body, StringComparison.Ordinal);
         Assert.Contains("xref", body, StringComparison.Ordinal);
+    }
+    [Fact]
+    public async Task ExportAsync_RendersScientificMeasurementOverlayAcrossRasterAndVectorFormats()
+    {
+        using var workspace = new TestWorkspace();
+        string sourcePath = Path.Combine(workspace.Root, "source.png");
+        string pngPath = Path.Combine(workspace.Root, "overlay.png");
+        string svgPath = Path.Combine(workspace.Root, "overlay.svg");
+        string pdfPath = Path.Combine(workspace.Root, "overlay.pdf");
+        string tiffPath = Path.Combine(workspace.Root, "overlay-16.tif");
+        CreateSolidPng(sourcePath, 100, 100, Colors.Black);
+        SourceAsset source = CreateAsset(sourcePath, 100, 100);
+        Guid panelId = Guid.NewGuid();
+        Guid measurementId = Guid.NewGuid();
+        var scientificObject = new MeasurementOverlayObject
+        {
+            Id = Guid.NewGuid(),
+            AssetId = source.Id,
+            PanelId = panelId,
+            SourceRevision = 1,
+            MeasurementId = measurementId,
+            SourceGeometry = new ScientificMeasurement(
+                measurementId,
+                source.Id,
+                ScientificMeasurementKind.Length,
+                new MeasurementPoint(10, 50),
+                new MeasurementPoint(90, 50),
+                SourceRevision: 1),
+            Style = new FigureMeasurementOverlayStyle(
+                "#FFFFFF00",
+                2,
+                "solid",
+                "#FFFFFF00",
+                0,
+                "#FF000000",
+                "#FFFFFFFF",
+                6,
+                true,
+                "#FFFFFFFF",
+                "Times New Roman",
+                9,
+                true,
+                true),
+        };
+        var panel = new FigurePanelExportItem(
+            source,
+            new PixelRect64(0, 0, 100, 100),
+            new PixelRect64(0, 0, 200, 200),
+            "a",
+            true,
+            PanelId: panelId);
+        var document = new FigureExportDocument(
+            200,
+            200,
+            96,
+            [panel],
+            measurementOverlays: [new FigureMeasurementOverlayExportItem(scientificObject)]);
+        var exporter = new WpfFigureExporter();
+
+        await exporter.ExportAsync(document, pngPath);
+        await exporter.ExportAsync(document, svgPath);
+        await exporter.ExportAsync(document, pdfPath);
+        await exporter.ExportAsync(
+            new FigureExportDocument(
+                200,
+                200,
+                96,
+                [panel],
+                bitDepth: 16,
+                measurementOverlays: [new FigureMeasurementOverlayExportItem(scientificObject)]),
+            tiffPath);
+
+        BitmapSource png = new FormatConvertedBitmap(
+            LoadFirstFrame(pngPath),
+            PixelFormats.Bgra32,
+            destinationPalette: null,
+            alphaThreshold: 0);
+        AssertPixelIsPredominantly(png, 100, 100, Colors.Yellow);
+        string svg = await File.ReadAllTextAsync(svgPath);
+        Assert.Contains("data-scientific-object=\"measurement-overlay\"", svg, StringComparison.Ordinal);
+        Assert.Contains(measurementId.ToString("D"), svg, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("font-family=\"Times New Roman\"", svg, StringComparison.Ordinal);
+        Assert.Equal("%PDF-1.7", Encoding.ASCII.GetString(await File.ReadAllBytesAsync(pdfPath), 0, 8));
+        Assert.True(File.Exists(tiffPath));
+    }
+    [Fact]
+    public async Task ExportAsync_RendersCanonicalScientificObjectsAcrossRasterAndVectorFormats()
+    {
+        using var workspace = new TestWorkspace();
+        string pngPath = Path.Combine(workspace.Root, "scientific-objects.png");
+        string svgPath = Path.Combine(workspace.Root, "scientific-objects.svg");
+        string pdfPath = Path.Combine(workspace.Root, "scientific-objects.pdf");
+        string tiffPath = Path.Combine(workspace.Root, "scientific-objects-16.tif");
+        FigureScientificObjectExportItem[] objects =
+        [
+            new(
+                Guid.NewGuid(),
+                FigureScientificObjectKind.PolygonAnnotation,
+                [new FigureScientificPoint(20, 20), new FigureScientificPoint(80, 20), new FigureScientificPoint(60, 70)],
+                "Membrane", "#FF00B0FF", "#FF00B0FF", 16, "#FFFFFFFF", "Arial", 7, 1.25, true, true, 0),
+            new(
+                Guid.NewGuid(),
+                FigureScientificObjectKind.Roi,
+                [new FigureScientificPoint(100, 20), new FigureScientificPoint(150, 20), new FigureScientificPoint(150, 70), new FigureScientificPoint(100, 70)],
+                "ROI", "#FF00E5FF", "#FF00E5FF", 12, "#FFFFFFFF", "Arial", 7, 1.25, true, true, 1),
+            new(
+                Guid.NewGuid(),
+                FigureScientificObjectKind.DirectionMarker,
+                [new FigureScientificPoint(20, 120), new FigureScientificPoint(120, 120)],
+                "N", "#FFFFFF00", "#FFFFFF00", 0, "#FFFFFFFF", "Arial", 7, 1.25, true, true, 2),
+            new(
+                Guid.NewGuid(),
+                FigureScientificObjectKind.Colorbar,
+                [new FigureScientificPoint(185, 20), new FigureScientificPoint(215, 120)],
+                "Intensity", "#FFFFFFFF", "#FFFFFFFF", 0, "#FFFFFFFF", "Arial", 7, 1.25, false, true, 3,
+                Minimum: 0, Maximum: 4095, Unit: "a.u.", Colormap: "magma"),
+            new(
+                Guid.NewGuid(),
+                FigureScientificObjectKind.ChannelLegend,
+                [new FigureScientificPoint(110, 90), new FigureScientificPoint(175, 145)],
+                "Channels", "#FFFFFFFF", "#FF000000", 80, "#FFFFFFFF", "Arial", 7, 1.25, false, true, 4,
+                ChannelLegendEntries:
+                [
+                    new FigureChannelLegendEntry("DAPI", "#FF4FC3F7"),
+                    new FigureChannelLegendEntry("GFP", "#FF66BB6A"),
+                ]),
+        ];
+        var document = new FigureExportDocument(240, 160, 96, [], scientificObjects: objects);
+        var exporter = new WpfFigureExporter();
+
+        await exporter.ExportAsync(document, pngPath);
+        await exporter.ExportAsync(document, svgPath);
+        await exporter.ExportAsync(document, pdfPath);
+        await exporter.ExportAsync(
+            new FigureExportDocument(240, 160, 96, [], bitDepth: 16, scientificObjects: objects),
+            tiffPath);
+
+        BitmapSource png = new FormatConvertedBitmap(
+            LoadFirstFrame(pngPath),
+            PixelFormats.Bgra32,
+            destinationPalette: null,
+            alphaThreshold: 0);
+        byte[] directionPixel = new byte[4];
+        png.CopyPixels(new System.Windows.Int32Rect(70, 120, 1, 1), directionPixel, 4, 0);
+        Assert.True(directionPixel[1] > 220 && directionPixel[2] > 220 && directionPixel[0] < 80,
+            $"方向标记像素不呈现黄色主导：B={directionPixel[0]}, G={directionPixel[1]}, R={directionPixel[2]}。");
+        string svg = await File.ReadAllTextAsync(svgPath);
+        Assert.Contains("data-scientific-object=\"PolygonAnnotation\"", svg, StringComparison.Ordinal);
+        Assert.Contains("data-scientific-object=\"Roi\"", svg, StringComparison.Ordinal);
+        Assert.Contains("data-scientific-object=\"DirectionMarker\"", svg, StringComparison.Ordinal);
+        Assert.Contains("data-scientific-object=\"Colorbar\"", svg, StringComparison.Ordinal);
+        Assert.Contains("data-scientific-object=\"ChannelLegend\"", svg, StringComparison.Ordinal);
+        Assert.Contains("scientific-colorbar-", svg, StringComparison.Ordinal);
+        Assert.Contains(">DAPI</text>", svg, StringComparison.Ordinal);
+        byte[] pdf = await File.ReadAllBytesAsync(pdfPath);
+        Assert.Equal("%PDF-1.7", Encoding.ASCII.GetString(pdf, 0, 8));
+        Assert.Contains("xref", Encoding.ASCII.GetString(pdf), StringComparison.Ordinal);
+        BitmapSource tiff = new FormatConvertedBitmap(
+            LoadFirstFrame(tiffPath),
+            PixelFormats.Bgra32,
+            destinationPalette: null,
+            alphaThreshold: 0);
+        byte[] tiffDirectionPixel = new byte[4];
+        tiff.CopyPixels(new System.Windows.Int32Rect(70, 120, 1, 1), tiffDirectionPixel, 4, 0);
+        Assert.True(tiffDirectionPixel[1] > 220 && tiffDirectionPixel[2] > 220 && tiffDirectionPixel[0] < 80,
+            $"16-bit TIFF 方向标记没有保留黄色主导：B={tiffDirectionPixel[0]}, G={tiffDirectionPixel[1]}, R={tiffDirectionPixel[2]}。");
     }
     private static SourceAsset CreateAsset(string path, int width, int height) => new(
         Guid.NewGuid(),

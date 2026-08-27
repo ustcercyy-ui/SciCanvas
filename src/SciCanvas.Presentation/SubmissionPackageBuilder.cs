@@ -53,95 +53,150 @@ public sealed class SubmissionPackageBuilder
 
         string root = Path.GetFullPath(request.TargetDirectory);
         EnsureEmptyTarget(root);
-        string figureDirectory = Path.Combine(root, "Figure1");
-        string dataDirectory = Path.Combine(root, "Data");
-        string auditDirectory = Path.Combine(root, "Audit");
-        Directory.CreateDirectory(figureDirectory);
-        Directory.CreateDirectory(Path.Combine(root, "Supplement"));
-        Directory.CreateDirectory(dataDirectory);
-        Directory.CreateDirectory(auditDirectory);
+        string stagingRoot = CreateStagingDirectory(root);
+        try
+        {
+            string figureDirectory = Path.Combine(stagingRoot, "Figure1");
+            string dataDirectory = Path.Combine(stagingRoot, "Data");
+            string auditDirectory = Path.Combine(stagingRoot, "Audit");
+            Directory.CreateDirectory(figureDirectory);
+            Directory.CreateDirectory(Path.Combine(stagingRoot, "Supplement"));
+            Directory.CreateDirectory(dataDirectory);
+            Directory.CreateDirectory(auditDirectory);
 
-        var created = new List<string>();
-        string baseName = SanitizeBaseName(request.FigureBaseName);
-        string tiffPath = Path.Combine(figureDirectory, baseName + ".tif");
-        string svgPath = Path.Combine(figureDirectory, baseName + ".svg");
-        cancellationToken.ThrowIfCancellationRequested();
-        await _figureExporter.ExportAsync(request.Figure, tiffPath, cancellationToken);
-        created.Add(tiffPath);
-        await _figureExporter.ExportAsync(request.Figure, svgPath, cancellationToken);
-        created.Add(svgPath);
+            var created = new List<string>();
+            string baseName = SanitizeBaseName(request.FigureBaseName);
+            string tiffPath = Path.Combine(figureDirectory, baseName + ".tif");
+            string svgPath = Path.Combine(figureDirectory, baseName + ".svg");
+            cancellationToken.ThrowIfCancellationRequested();
+            await _figureExporter.ExportAsync(request.Figure, tiffPath, cancellationToken);
+            created.Add(tiffPath);
+            await _figureExporter.ExportAsync(request.Figure, svgPath, cancellationToken);
+            created.Add(svgPath);
 
-        FigureProvenanceDocument provenance = FigureProvenanceWriter.Create(
-            request.Figure,
-            tiffPath,
-            request.SoftwareVersion,
-            request.Sources.Select(source => source.Asset).ToArray(),
-            request.QcResult,
-            exportProfileId: "submission-package",
-            exportProfileName: "Submission Package",
-            sourceRevisions: request.Sources.ToDictionary(source => source.Asset.Id, source => source.SourceRevision),
-            analyses: request.Sources.SelectMany(source => source.AnalysisResults));
-        string provenancePath = Path.Combine(figureDirectory, baseName + ".provenance.json");
-        string exportReportPath = Path.Combine(figureDirectory, baseName + ".export-report.html");
-        FigureProvenanceWriter.WriteJson(provenance, provenancePath);
-        FigureProvenanceWriter.WriteHtml(provenance, exportReportPath);
-        created.Add(provenancePath);
-        created.Add(exportReportPath);
+            FigureProvenanceDocument provenance = FigureProvenanceWriter.Create(
+                request.Figure,
+                tiffPath,
+                request.SoftwareVersion,
+                request.Sources.Select(source => source.Asset).ToArray(),
+                request.QcResult,
+                exportProfileId: "submission-package",
+                exportProfileName: "Submission Package",
+                sourceRevisions: request.Sources.ToDictionary(source => source.Asset.Id, source => source.SourceRevision),
+                analyses: request.Sources.SelectMany(source => source.AnalysisResults));
+            string provenancePath = Path.Combine(figureDirectory, baseName + ".provenance.json");
+            string exportReportPath = Path.Combine(figureDirectory, baseName + ".export-report.html");
+            FigureProvenanceWriter.WriteJson(provenance, provenancePath);
+            FigureProvenanceWriter.WriteHtml(provenance, exportReportPath);
+            created.Add(provenancePath);
+            created.Add(exportReportPath);
 
-        SourceAssetItemViewModel[] sources = request.Sources.ToArray();
-        string measurementsCsvPath = Path.Combine(dataDirectory, "measurements.csv");
-        string measurementsXlsxPath = Path.Combine(dataDirectory, "measurements.xlsx");
-        WriteMeasurementsCsv(measurementsCsvPath, sources);
-        MeasurementTableXlsxWriter.WriteNew(measurementsXlsxPath, sources);
-        created.Add(measurementsCsvPath);
-        created.Add(measurementsXlsxPath);
+            SourceAssetItemViewModel[] sources = request.Sources.ToArray();
+            string measurementsCsvPath = Path.Combine(dataDirectory, "measurements.csv");
+            string measurementsXlsxPath = Path.Combine(dataDirectory, "measurements.xlsx");
+            WriteMeasurementsCsv(measurementsCsvPath, sources);
+            MeasurementTableXlsxWriter.WriteNew(measurementsXlsxPath, sources);
+            created.Add(measurementsCsvPath);
+            created.Add(measurementsXlsxPath);
 
-        ScientificImageAnalysisResult[] analyses = sources
-            .SelectMany(source => source.AnalysisResults)
-            .ToArray();
-        string analysesCsvPath = Path.Combine(dataDirectory, "analyses.csv");
-        string analysesXlsxPath = Path.Combine(dataDirectory, "analyses.xlsx");
-        WriteNewText(analysesCsvPath, ScientificAnalysisTable.CreateCsv(analyses), emitBom: true);
-        AnalysisTableXlsxWriter.WriteNew(analysesXlsxPath, analyses);
-        created.Add(analysesCsvPath);
-        created.Add(analysesXlsxPath);
+            ScientificImageAnalysisResult[] analyses = sources
+                .SelectMany(source => source.AnalysisResults)
+                .ToArray();
+            string analysesCsvPath = Path.Combine(dataDirectory, "analyses.csv");
+            string analysesXlsxPath = Path.Combine(dataDirectory, "analyses.xlsx");
+            WriteNewText(analysesCsvPath, ScientificAnalysisTable.CreateCsv(analyses), emitBom: true);
+            AnalysisTableXlsxWriter.WriteNew(analysesXlsxPath, analyses);
+            created.Add(analysesCsvPath);
+            created.Add(analysesXlsxPath);
 
-        string particlesPath = Path.Combine(dataDirectory, "particle-analysis.csv");
-        WriteNewText(
-            particlesPath,
-            ScientificAnalysisTable.CreateCsv(analyses.OfType<AssistedRegionAnalysisResult>()),
-            emitBom: true);
-        created.Add(particlesPath);
+            string particlesPath = Path.Combine(dataDirectory, "particle-analysis.csv");
+            WriteNewText(
+                particlesPath,
+                ScientificAnalysisTable.CreateCsv(analyses.OfType<AssistedRegionAnalysisResult>()),
+                emitBom: true);
+            created.Add(particlesPath);
 
-        string auditPath = Path.Combine(auditDirectory, "project-audit.json");
-        WriteNewText(
-            auditPath,
-            JsonSerializer.Serialize(new
-            {
-                software = "SciCanvas",
-                version = request.SoftwareVersion,
-                packagedAt = DateTimeOffset.UtcNow,
-                entries = request.AuditTrail,
-            }, JsonOptions));
-        created.Add(auditPath);
+            string auditPath = Path.Combine(auditDirectory, "project-audit.json");
+            WriteNewText(
+                auditPath,
+                JsonSerializer.Serialize(new
+                {
+                    software = "SciCanvas",
+                    version = request.SoftwareVersion,
+                    packagedAt = DateTimeOffset.UtcNow,
+                    entries = request.AuditTrail,
+                }, JsonOptions));
+            created.Add(auditPath);
 
-        string manifestPath = Path.Combine(auditDirectory, "source-manifest.csv");
-        SourceManifestWriter.WriteNew(manifestPath, sources);
-        created.Add(manifestPath);
+            string manifestPath = Path.Combine(auditDirectory, "source-manifest.csv");
+            SourceManifestWriter.WriteNew(manifestPath, sources);
+            created.Add(manifestPath);
 
-        string qcReportPath = Path.Combine(auditDirectory, "qc-report.html");
-        SubmissionQcReportWriter.WriteNew(qcReportPath, request.QcResult);
-        created.Add(qcReportPath);
+            string qcReportPath = Path.Combine(auditDirectory, "qc-report.html");
+            SubmissionQcReportWriter.WriteNew(qcReportPath, request.QcResult);
+            created.Add(qcReportPath);
 
-        int warningCount = request.QcResult.Issues.Count(issue =>
-            issue.Severity == FigurePreflightSeverity.Warning);
-        string readmePath = Path.Combine(root, "README.txt");
-        WriteNewText(readmePath, CreateReadme(request, warningCount));
-        created.Add(readmePath);
+            int warningCount = request.QcResult.Issues.Count(issue =>
+                issue.Severity == FigurePreflightSeverity.Warning);
+            string readmePath = Path.Combine(stagingRoot, "README.txt");
+            WriteNewText(readmePath, CreateReadme(request, warningCount));
+            created.Add(readmePath);
 
-        return new SubmissionPackageResult(root, created, warningCount);
+            CommitStagingDirectory(stagingRoot, root);
+            return new SubmissionPackageResult(
+                root,
+                created.Select(path => Path.Combine(root, Path.GetRelativePath(stagingRoot, path))).ToArray(),
+                warningCount);
+        }
+        catch
+        {
+            CleanupStagingDirectory(stagingRoot);
+            throw;
+        }
     }
 
+    private static string CreateStagingDirectory(string targetRoot)
+    {
+        string parent = Path.GetDirectoryName(targetRoot)
+            ?? throw new IOException("投稿包目标缺少父目录。");
+        Directory.CreateDirectory(parent);
+        string name = $".{Path.GetFileName(targetRoot)}.scicanvas-staging-{Guid.NewGuid():N}";
+        string stagingRoot = Path.Combine(parent, name);
+        Directory.CreateDirectory(stagingRoot);
+        return stagingRoot;
+    }
+
+    private static void CommitStagingDirectory(string stagingRoot, string targetRoot)
+    {
+        if (Directory.Exists(targetRoot))
+        {
+            if (Directory.EnumerateFileSystemEntries(targetRoot).Any())
+            {
+                throw new IOException("投稿包目标文件夹在提交前已被写入；已保留原目录且未覆盖。");
+            }
+
+            Directory.Delete(targetRoot);
+        }
+
+        Directory.Move(stagingRoot, targetRoot);
+    }
+
+    private static void CleanupStagingDirectory(string stagingRoot)
+    {
+        try
+        {
+            if (Directory.Exists(stagingRoot))
+            {
+                Directory.Delete(stagingRoot, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
     private static void EnsureEmptyTarget(string root)
     {
         if (File.Exists(root))

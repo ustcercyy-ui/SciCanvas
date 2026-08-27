@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using SciCanvas.Core.Channels;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Science;
@@ -30,6 +31,19 @@ public sealed class ProjectRoundTripIntegrationTests
         BitmapSource preview = await new WpfImagePreviewLoader().LoadAsync(sourcePath, 1400);
         var sourceItem = new SourceAssetItemViewModel(asset, preview);
         sourceItem.RestoreSourceRevision(3);
+        sourceItem.Calibration.Restore(
+            new SpatialCalibration(
+                asset.Id,
+                0.25,
+                0.5,
+                "µm",
+                CalibrationOrigin.Manual,
+                ReferencePixelLength: 10,
+                ReferencePhysicalLength: 2.5),
+            referenceStartX: 2,
+            referenceStartY: 2,
+            referenceEndX: 12,
+            referenceEndY: 2);
         original.Sources.Add(sourceItem);
         original.SelectedSource = sourceItem;
         Assert.True(original.Crop.RestoreForSource(
@@ -81,6 +95,9 @@ public sealed class ProjectRoundTripIntegrationTests
             template => template.Id == "materials.synthesis-structure-performance.nature-double");
         FigurePanelViewModel panel = Assert.IsType<FigurePanelViewModel>(
             original.Figure.AddPanel(sourceItem, new PixelRect64(3, 4, 12, 8)));
+        FigureMeasurementOverlayViewModel pinnedOverlay = original.Figure.PinMeasurement(
+            styledMeasurement,
+            panel);
         panel.X = 111;
         panel.Y = 222;
         panel.IsLocked = true;
@@ -89,8 +106,14 @@ public sealed class ProjectRoundTripIntegrationTests
         panel.PhysicalUnitsPerSourcePixel = 0.25;
         panel.ScaleBarPhysicalLength = 2;
         panel.ScaleBarUnit = "µm";
+        panel.CalibrationUnit = "µm";
         panel.ScaleBarShowLabel = true;
         panel.ShowScaleBar = true;
+        FigureAdditionalScaleBarViewModel secondaryScaleBar = panel.AddAdditionalScaleBar();
+        secondaryScaleBar.PhysicalLength = 500;
+        secondaryScaleBar.Unit = "nm";
+        secondaryScaleBar.Anchor = ScaleBarAnchor.TopLeft;
+        secondaryScaleBar.ShowLabel = false;
         original.Figure.AddTextAnnotationCommand.Execute(null);
         FigureAnnotationViewModel textAnnotation = Assert.IsType<FigureAnnotationViewModel>(
             original.Figure.SelectedAnnotation);
@@ -182,6 +205,23 @@ public sealed class ProjectRoundTripIntegrationTests
         Assert.Equal(0.25, restoredPanel.PhysicalUnitsPerSourcePixel);
         Assert.Equal(2, restoredPanel.ScaleBarPhysicalLength);
         Assert.Equal("µm", restoredPanel.ScaleBarUnit);
+        Assert.Equal("µm", restoredPanel.CalibrationUnit);
+        FigureAdditionalScaleBarViewModel restoredSecondaryScaleBar = Assert.Single(restoredPanel.AdditionalScaleBars);
+        Assert.Equal(secondaryScaleBar.Id, restoredSecondaryScaleBar.Id);
+        Assert.Equal(500, restoredSecondaryScaleBar.PhysicalLength);
+        Assert.Equal("nm", restoredSecondaryScaleBar.Unit);
+        Assert.Equal(ScaleBarAnchor.TopLeft, restoredSecondaryScaleBar.Anchor);
+        Assert.False(restoredSecondaryScaleBar.ShowLabel);
+        FigureMeasurementOverlayViewModel restoredOverlay = Assert.Single(restored.Figure.MeasurementOverlays);
+        Assert.Equal(pinnedOverlay.Id, restoredOverlay.Id);
+        Assert.Equal(styledMeasurement.Id, restoredOverlay.MeasurementId);
+        Assert.Equal(panel.Id, restoredOverlay.PanelId);
+        Assert.Equal(3, restoredOverlay.SourceRevision);
+        Assert.Equal(ScientificMeasurementKind.RectangleRoi, restoredOverlay.Kind);
+        Assert.Equal("#FFFF0000", restoredOverlay.ScientificObject.Style.StrokeColor);
+        Assert.Equal("#FF0000FF", restoredOverlay.ScientificObject.Style.FillColor);
+        Assert.Equal(20, restoredOverlay.ScientificObject.Style.FillOpacityPercent);
+        Assert.Equal("µm", restoredOverlay.ScientificObject.CalibrationRelationship!.Unit);
         Assert.Equal(5, restored.Figure.Annotations.Count);
         FigureAnnotationViewModel restoredText = restored.Figure.Annotations.Single(
             annotation => annotation.Kind == FigureAnnotationKind.Text &&
@@ -215,6 +255,76 @@ public sealed class ProjectRoundTripIntegrationTests
         Assert.Equal(sourceHash, SHA256.HashData(await File.ReadAllBytesAsync(sourcePath)));
     }
 
+    [Fact]
+    public async Task SaveThenOpen_RestoresScientificObjectsAndUndoRedo()
+    {
+        using var workspace = new TestWorkspace();
+        string projectPath = Path.Combine(workspace.Root, "scientific-objects.scicanvas");
+        MainWindowViewModel original = CreateViewModel();
+
+        original.Figure.AddPolygonScientificObjectCommand.Execute(null);
+        FigureScientificObjectViewModel polygon = Assert.IsType<FigureScientificObjectViewModel>(
+            original.Figure.SelectedScientificObject);
+        Guid polygonId = polygon.Id;
+        original.UndoCommand.Execute(null);
+        Assert.Empty(original.Figure.ScientificObjects);
+        original.RedoCommand.Execute(null);
+        polygon = Assert.Single(original.Figure.ScientificObjects);
+        Assert.Equal(polygonId, polygon.Id);
+        Assert.Equal(polygonId, original.Figure.SelectedScientificObject?.Id);
+        polygon.Label = "Membrane boundary";
+        polygon.PointsText = "100,100; 300,100; 300,240; 100,240";
+        original.CompleteHistoryGesture();
+
+        original.Figure.AddRoiScientificObjectCommand.Execute(null);
+        FigureScientificObjectViewModel roi = Assert.IsType<FigureScientificObjectViewModel>(
+            original.Figure.SelectedScientificObject);
+        roi.Label = "Nucleus ROI";
+        original.Figure.AddDirectionMarkerCommand.Execute(null);
+        FigureScientificObjectViewModel direction = Assert.IsType<FigureScientificObjectViewModel>(
+            original.Figure.SelectedScientificObject);
+        direction.Label = "North";
+        original.Figure.AddColorbarCommand.Execute(null);
+        FigureScientificObjectViewModel colorbar = Assert.IsType<FigureScientificObjectViewModel>(
+            original.Figure.SelectedScientificObject);
+        colorbar.Label = "Intensity";
+        colorbar.Minimum = 0;
+        colorbar.Maximum = 4095;
+        colorbar.Unit = "a.u.";
+        colorbar.Colormap = "magma";
+        original.Figure.AddChannelLegendCommand.Execute(null);
+        FigureScientificObjectViewModel legend = Assert.IsType<FigureScientificObjectViewModel>(
+            original.Figure.SelectedScientificObject);
+        legend.Label = "Channels";
+        legend.ChannelEntriesText = "DAPI|#FF4FC3F7; GFP|#FF66BB6A";
+        original.CompleteHistoryGesture();
+
+        await original.SaveProjectToPathAsync(projectPath);
+
+        MainWindowViewModel restored = CreateViewModel();
+        await restored.OpenProjectFromPathAsync(projectPath);
+
+        Assert.Null(restored.LastError);
+        Assert.False(restored.IsDirty);
+        Assert.Equal(5, restored.Figure.ScientificObjects.Count);
+        FigureScientificObjectViewModel restoredPolygon = restored.Figure.ScientificObjects.Single(
+            item => item.Kind == FigureScientificObjectKind.PolygonAnnotation);
+        Assert.Equal(polygonId, restoredPolygon.Id);
+        Assert.Equal("Membrane boundary", restoredPolygon.Label);
+        Assert.Equal("100,100; 300,100; 300,240; 100,240", restoredPolygon.PointsText);
+        Assert.Equal("Nucleus ROI", restored.Figure.ScientificObjects.Single(
+            item => item.Kind == FigureScientificObjectKind.Roi).Label);
+        Assert.Equal("North", restored.Figure.ScientificObjects.Single(
+            item => item.Kind == FigureScientificObjectKind.DirectionMarker).Label);
+        FigureScientificObjectViewModel restoredColorbar = restored.Figure.ScientificObjects.Single(
+            item => item.Kind == FigureScientificObjectKind.Colorbar);
+        Assert.Equal(4095, restoredColorbar.Maximum);
+        Assert.Equal("magma", restoredColorbar.Colormap);
+        FigureScientificObjectViewModel restoredLegend = restored.Figure.ScientificObjects.Single(
+            item => item.Kind == FigureScientificObjectKind.ChannelLegend);
+        Assert.Equal(2, restoredLegend.ChannelEntries.Count);
+        Assert.Equal("DAPI", restoredLegend.ChannelEntries[0].Label);
+    }
     [Fact]
     public async Task OpenProject_WhenSourceChanged_RefusesWithoutReplacingCurrentState()
     {
@@ -775,6 +885,109 @@ public sealed class ProjectRoundTripIntegrationTests
         Assert.Equal(original.Figure.Template.Id, restored.Figure.Template.Id);
     }
 
+    [Fact]
+    public async Task MultiChannelGroup_SaveOpenAndUndoRedo_PreservesScientificChannelIdentity()
+    {
+        using var workspace = new TestWorkspace();
+        string referencePath = Path.Combine(workspace.Root, "HAADF.png");
+        string titaniumPath = Path.Combine(workspace.Root, "Ti.png");
+        string projectPath = Path.Combine(workspace.Root, "eds.scicanvas");
+        CreatePng(referencePath, 12, 10);
+        CreatePng(titaniumPath, 12, 10);
+
+        MainWindowViewModel original = CreateViewModel();
+        SourceAsset referenceAsset = await CreateReader().ImportAsync(referencePath);
+        SourceAsset titaniumAsset = await CreateReader().ImportAsync(titaniumPath);
+        var reference = new SourceAssetItemViewModel(
+            referenceAsset,
+            await new WpfImagePreviewLoader().LoadAsync(referencePath, 1400));
+        var titanium = new SourceAssetItemViewModel(
+            titaniumAsset,
+            await new WpfImagePreviewLoader().LoadAsync(titaniumPath, 1400));
+        original.Sources.Add(reference);
+        original.Sources.Add(titanium);
+        MultiChannelAssetGroup group = CreateMultiChannelGroup(referenceAsset.Id, titaniumAsset.Id);
+        original.MultiChannelWorkspace.Restore([group]);
+        await original.SaveProjectToPathAsync(projectPath);
+        Assert.False(original.IsDirty);
+
+        ChannelGroupMemberViewModel titaniumChannel =
+            Assert.Single(original.MultiChannelWorkspace.Groups).Members[1];
+        titaniumChannel.Color = "#FF00FFFF";
+        titaniumChannel.Opacity = 0.65;
+        Assert.True(original.IsDirty);
+        original.UndoCommand.Execute(null);
+        Assert.Equal("#FFFF3B30", Assert.Single(original.MultiChannelWorkspace.Groups).Members[1].Color);
+        original.RedoCommand.Execute(null);
+        Assert.Equal("#FF00FFFF", Assert.Single(original.MultiChannelWorkspace.Groups).Members[1].Color);
+        await original.SaveProjectToPathAsync(projectPath);
+
+        SciCanvasProjectDocument saved = await new JsonProjectStore().LoadAsync(projectPath);
+        ProjectMultiChannelAssetGroupSnapshot savedGroup = Assert.Single(saved.MultiChannelGroups);
+        Assert.Equal(group.Id, savedGroup.Id);
+        Assert.Equal(referenceAsset.Id, savedGroup.ReferenceAssetId);
+        ProjectChannelGroupMemberSnapshot savedTitanium = savedGroup.Members[1];
+        Assert.Equal(group.Members[1].ChannelId, savedTitanium.ChannelId);
+        Assert.Equal(titaniumAsset.Id, savedTitanium.AssetId);
+        Assert.Equal("Ti", savedTitanium.Name);
+        Assert.Equal("filenameSuggestion", savedTitanium.NameOrigin);
+        Assert.Equal("#FF00FFFF", savedTitanium.Color);
+        Assert.Equal(0.65, savedTitanium.Opacity);
+
+        MainWindowViewModel restored = CreateViewModel();
+        await restored.OpenProjectFromPathAsync(projectPath);
+
+        Assert.Null(restored.LastError);
+        MultiChannelAssetGroup restoredGroup = Assert.Single(
+            restored.MultiChannelWorkspace.CreateModels());
+        Assert.Equal(group.Id, restoredGroup.Id);
+        Assert.Equal(referenceAsset.Id, restoredGroup.ReferenceAssetId);
+        Assert.True(restoredGroup.SameFieldOfViewConfirmed);
+        ChannelGroupMember restoredTitanium = restoredGroup.Members[1];
+        Assert.Equal(group.Members[1].ChannelId, restoredTitanium.ChannelId);
+        Assert.Equal(titaniumAsset.Id, restoredTitanium.AssetId);
+        Assert.Equal(ChannelNameOrigin.FilenameSuggestion, restoredTitanium.NameOrigin);
+        Assert.True(restoredTitanium.IsNameConfirmed);
+        Assert.Equal("#FF00FFFF", restoredTitanium.Color);
+        Assert.Equal(0.65, restoredTitanium.DisplaySettings.Opacity);
+    }
+
+    private static MultiChannelAssetGroup CreateMultiChannelGroup(
+        Guid referenceAssetId,
+        Guid titaniumAssetId)
+    {
+        Guid referenceChannelId = Guid.NewGuid();
+        Guid titaniumChannelId = Guid.NewGuid();
+        return new MultiChannelAssetGroup(
+            Guid.NewGuid(),
+            "EDS Map Group",
+            referenceAssetId,
+            [
+                new ChannelGroupMember(
+                    referenceChannelId,
+                    referenceAssetId,
+                    0,
+                    "HAADF",
+                    "Reference",
+                    "#FFFFFFFF",
+                    ChannelNameOrigin.User,
+                    true,
+                    new ChannelDisplaySettings(
+                        referenceChannelId, true, "#FFFFFFFF", 1, 0, 255, 1, false)),
+                new ChannelGroupMember(
+                    titaniumChannelId,
+                    titaniumAssetId,
+                    0,
+                    "Ti",
+                    "ElementalMap",
+                    "#FFFF3B30",
+                    ChannelNameOrigin.FilenameSuggestion,
+                    true,
+                    new ChannelDisplaySettings(
+                        titaniumChannelId, true, "#FFFF3B30", 1, 0, 255, 1, false)),
+            ],
+            SameFieldOfViewConfirmed: true).EnsureValid();
+    }
     private static MainWindowViewModel CreateViewModel(
         IProjectRecoveryStore? recoveryStore = null,
         IProjectRecoveryPrompt? recoveryPrompt = null,

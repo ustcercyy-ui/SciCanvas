@@ -141,6 +141,44 @@ public sealed class JsonProjectStore : IProjectStore
             }
         }
 
+        if (document.MultiChannelGroups.Select(group => group.Id).Distinct().Count() !=
+            document.MultiChannelGroups.Count)
+        {
+            throw new InvalidDataException("工程包含重复的多通道素材组 ID。");
+        }
+
+        Dictionary<Guid, ProjectSourceSnapshot> channelSources =
+            document.Sources.ToDictionary(source => source.Id);
+        foreach (ProjectMultiChannelAssetGroupSnapshot group in document.MultiChannelGroups)
+        {
+            bool groupHeaderValid = group.Id != Guid.Empty &&
+                !string.IsNullOrWhiteSpace(group.Name) && group.Name.Trim().Length <= 128 &&
+                sourceIds.Contains(group.ReferenceAssetId) && group.Members.Count >= 2;
+            bool membersValid = group.Members.All(member =>
+                member.ChannelId != Guid.Empty &&
+                channelSources.TryGetValue(member.AssetId, out ProjectSourceSnapshot? source) &&
+                member.FrameIndex >= 0 && member.FrameIndex < Math.Max(1, source.Metadata.FrameCount) &&
+                !string.IsNullOrWhiteSpace(member.Name) && member.Name.Trim().Length <= 128 &&
+                member.Role?.Length <= 128 &&
+                member.IsNameConfirmed &&
+                member.NameOrigin is "user" or "filenameSuggestion" or "omeMetadata" &&
+                IsHexColor(member.Color) &&
+                double.IsFinite(member.Opacity) && member.Opacity is >= 0 and <= 1 &&
+                double.IsFinite(member.DisplayMinimum) && double.IsFinite(member.DisplayMaximum) &&
+                member.DisplayMaximum > member.DisplayMinimum &&
+                double.IsFinite(member.Gamma) && member.Gamma is > 0 and <= 100);
+            bool identitiesValid =
+                group.Members.Count(member => member.AssetId == group.ReferenceAssetId) == 1 &&
+                group.Members.Select(member => member.ChannelId).Distinct().Count() == group.Members.Count &&
+                group.Members.Select(member => (member.AssetId, member.FrameIndex)).Distinct().Count() ==
+                    group.Members.Count &&
+                group.Members.Select(member => member.Name.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase).Count() == group.Members.Count;
+            if (!groupHeaderValid || !membersValid || !identitiesValid)
+            {
+                throw new InvalidDataException("工程包含无效或不可追溯的多通道素材组。");
+            }
+        }
         foreach (ProjectImageLayerSnapshot layer in document.Layers)
         {
             if (!sourceIds.Contains(layer.SourceAssetId) ||

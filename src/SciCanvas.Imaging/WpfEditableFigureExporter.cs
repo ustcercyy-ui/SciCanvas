@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
+using SciCanvas.Core.Science;
 
 namespace SciCanvas.Imaging;
 
@@ -70,6 +71,24 @@ internal static class WpfEditableFigureExporter
             AppendSvgAnnotation(svg, annotation, document.Dpi, document.GlobalStyle);
         }
 
+        foreach (FigureMeasurementOverlayExportItem overlay in
+                 document.MeasurementOverlays.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            AppendSvgMeasurementOverlay(
+                svg,
+                overlay,
+                WpfFigureExporter.ResolveMeasurementOverlayPanel(overlay, document),
+                document.Dpi);
+        }
+
+        foreach (FigureScientificObjectExportItem scientificObject in
+                 document.ScientificObjects.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            WpfFigureExporter.ValidateScientificObject(scientificObject, document);
+            AppendSvgScientificObject(svg, scientificObject, document.Dpi);
+        }
         svg.Append("</svg>\n");
         WriteNewFile(targetPath, Encoding.UTF8.GetBytes(svg.ToString()));
     }
@@ -102,33 +121,127 @@ internal static class WpfEditableFigureExporter
         int dpi,
         FigureGlobalStyle style)
     {
-        if (panel.ScaleBar is not { } scaleBar)
+        IReadOnlyList<FigureScaleBarExportSpec> scaleBars = panel.EffectiveScaleBars;
+        if (scaleBars.Count == 0)
         {
             return;
         }
 
-        double sourcePixels = scaleBar.PhysicalLength / scaleBar.PhysicalUnitsPerSourcePixel;
-        double outputPixelsPerSourcePixel = imageRect.Width / panel.SourceRect.Width;
-        double barWidth = sourcePixels * outputPixelsPerSourcePixel;
-        double margin = Math.Max(10, Math.Min(imageRect.Width, imageRect.Height) * 0.035);
         double thickness = Math.Max(2, style.EffectiveScaleBarThicknessPt / 72.0 * dpi);
-        double right = imageRect.Right - margin;
-        double y = imageRect.Bottom - margin - thickness / 2.0;
-        double left = right - barWidth;
-        svg.Append($"    <line x1=\"{F(left)}\" y1=\"{F(y)}\" x2=\"{F(right)}\" y2=\"{F(y)}\" stroke=\"#000000\" stroke-width=\"{F(thickness + Math.Max(3, dpi / 100.0))}\" stroke-linecap=\"square\"/>\n");
+        double fontSize = Math.Max(12, style.EffectiveScaleBarFontSizePt / 72.0 * dpi);
+        IReadOnlyList<FigureScaleBarGeometry> geometries = FigureScaleBarLayout.Calculate(
+            scaleBars,
+            panel.SourceRect,
+            new FigureImageRect(imageRect.X, imageRect.Y, imageRect.Width, imageRect.Height),
+            dpi,
+            thickness,
+            fontSize);
         Color scaleBarColor = WpfFigureExporter.ParseColor(style.ScaleBarColor);
-        string scaleBarHex = ColorHex(scaleBarColor);
-        svg.Append($"    <line x1=\"{F(left)}\" y1=\"{F(y)}\" x2=\"{F(right)}\" y2=\"{F(y)}\" stroke=\"{scaleBarHex}\" stroke-width=\"{F(thickness)}\" stroke-linecap=\"square\"/>\n");
-        if (scaleBar.ShowLabel)
+        Color labelColor = WpfFigureExporter.ParseColor(style.EffectiveScaleBarLabelColor);
+        foreach (FigureScaleBarGeometry geometry in geometries)
         {
-            double fontSize = Math.Max(12, style.EffectiveScaleBarFontSizePt / 72.0 * dpi);
-            double textX = right - ($"{scaleBar.PhysicalLength:0.###} {scaleBar.Unit}".Length * fontSize * 0.58);
-            double textY = y - thickness - fontSize * 1.3;
-            Color labelColor = WpfFigureExporter.ParseColor(style.EffectiveScaleBarLabelColor);
-            svg.Append($"    <text x=\"{F(textX)}\" y=\"{F(textY)}\" font-family=\"{Escape(style.EffectiveScaleBarFontFamily)}\" font-size=\"{F(fontSize)}\" font-weight=\"{(style.ScaleBarLabelIsBold ? "700" : "400")}\" fill=\"{ColorHex(labelColor)}\" stroke=\"#000000\" stroke-width=\"{F(Math.Max(2, dpi / 150.0))}\" paint-order=\"stroke\">{Escape($"{scaleBar.PhysicalLength:0.###} {scaleBar.Unit}")}</text>\n");
+            svg.Append($"    <line x1=\"{F(geometry.Left)}\" y1=\"{F(geometry.Y)}\" x2=\"{F(geometry.Right)}\" y2=\"{F(geometry.Y)}\" stroke=\"#000000\" stroke-width=\"{F(thickness + Math.Max(3, dpi / 100.0))}\" stroke-linecap=\"square\"/>\n");
+            svg.Append($"    <line x1=\"{F(geometry.Left)}\" y1=\"{F(geometry.Y)}\" x2=\"{F(geometry.Right)}\" y2=\"{F(geometry.Y)}\" stroke=\"{ColorHex(scaleBarColor)}\" stroke-width=\"{F(thickness)}\" stroke-linecap=\"square\"/>\n");
+            if (geometry.Spec.ShowLabel)
+            {
+                double textX = geometry.Right - (geometry.Spec.Label.Length * fontSize * 0.58);
+                svg.Append($"    <text x=\"{F(textX)}\" y=\"{F(geometry.LabelTop)}\" font-family=\"{Escape(style.EffectiveScaleBarFontFamily)}\" font-size=\"{F(fontSize)}\" font-weight=\"{(style.ScaleBarLabelIsBold ? "700" : "400")}\" dominant-baseline=\"hanging\" fill=\"{ColorHex(labelColor)}\" stroke=\"#000000\" stroke-width=\"{F(Math.Max(2, dpi / 150.0))}\" paint-order=\"stroke\">{Escape(geometry.Spec.Label)}</text>\n");
+            }
+        }
+    }
+    private static void AppendSvgMeasurementOverlay(
+        StringBuilder svg,
+        FigureMeasurementOverlayExportItem overlay,
+        FigurePanelExportItem panel,
+        int dpi)
+    {
+        FigureMeasurementOverlayGeometry geometry = FigureMeasurementOverlayMapper.Map(overlay.ScientificObject, panel);
+        FigureMeasurementOverlayStyle style = overlay.Style;
+        Color stroke = WpfFigureExporter.ParseColor(style.StrokeColor);
+        Color fill = WpfFigureExporter.ParseColor(style.FillColor);
+        string strokeWidth = F(Math.Max(0.25, geometry.StrokeWidthPixels));
+        string dash = CreateSvgDashArray(style.LineStyle);
+        string dashAttribute = string.IsNullOrEmpty(dash) ? string.Empty : $" stroke-dasharray=\"{dash}\"";
+        string fillOpacity = F(Math.Clamp(fill.A / 255.0 * style.FillOpacityPercent / 100.0, 0, 1));
+        svg.Append($"  <g data-scientific-object=\"measurement-overlay\" data-overlay-id=\"{overlay.Id}\" data-measurement-id=\"{overlay.MeasurementId}\" data-source-id=\"{overlay.SourceAssetId}\" data-source-revision=\"{overlay.SourceRevision}\">\n");
+        AppendSvgMeasurementShape(svg, overlay.MeasurementKind, geometry, stroke, fill, strokeWidth, dashAttribute, fillOpacity);
+
+        if (style.ShowMarkers)
+        {
+            Color markerStroke = WpfFigureExporter.ParseColor(style.MarkerStrokeColor);
+            Color markerFill = WpfFigureExporter.ParseColor(style.MarkerFillColor);
+            double radius = Math.Max(1, geometry.MarkerSizePixels / 2);
+            foreach (MeasurementPoint point in GetMarkerPoints(overlay.MeasurementKind, geometry))
+            {
+                svg.Append($"    <circle cx=\"{F(point.X)}\" cy=\"{F(point.Y)}\" r=\"{F(radius)}\" fill=\"{ColorHex(markerFill)}\" stroke=\"{ColorHex(markerStroke)}\" stroke-width=\"{F(Math.Max(0.25, geometry.StrokeWidthPixels * 0.75))}\"/>\n");
+            }
+        }
+
+        if (style.ShowLabel)
+        {
+            Color label = WpfFigureExporter.ParseColor(style.LabelColor);
+            svg.Append($"    <text x=\"{F(geometry.LabelAnchor.X)}\" y=\"{F(geometry.LabelAnchor.Y)}\" font-family=\"{Escape(style.LabelFontFamily)}\" font-size=\"{F(style.LabelFontSizePt / 72.0 * dpi)}\" font-weight=\"{(style.LabelIsBold ? "700" : "400")}\" dominant-baseline=\"hanging\" fill=\"{ColorHex(label)}\">{Escape(FigureMeasurementOverlayMapper.CreateLabel(overlay.ScientificObject))}</text>\n");
+        }
+
+        svg.Append("  </g>\n");
+    }
+
+    private static void AppendSvgMeasurementShape(
+        StringBuilder svg,
+        ScientificMeasurementKind kind,
+        FigureMeasurementOverlayGeometry geometry,
+        Color stroke,
+        Color fill,
+        string strokeWidth,
+        string dashAttribute,
+        string fillOpacity)
+    {
+        string common = $"stroke=\"{ColorHex(stroke)}\" stroke-width=\"{strokeWidth}\"{dashAttribute}";
+        switch (kind)
+        {
+            case ScientificMeasurementKind.Length:
+                svg.Append($"    <line x1=\"{F(geometry.PointA.X)}\" y1=\"{F(geometry.PointA.Y)}\" x2=\"{F(geometry.PointB.X)}\" y2=\"{F(geometry.PointB.Y)}\" {common}/>\n");
+                break;
+            case ScientificMeasurementKind.Angle:
+                svg.Append($"    <polyline points=\"{Points([geometry.PointA, geometry.PointB, geometry.PointC ?? geometry.PointB])}\" fill=\"none\" {common}/>\n");
+                break;
+            case ScientificMeasurementKind.RectangleRoi:
+                svg.Append($"    <rect x=\"{F(Math.Min(geometry.PointA.X, geometry.PointB.X))}\" y=\"{F(Math.Min(geometry.PointA.Y, geometry.PointB.Y))}\" width=\"{F(Math.Abs(geometry.PointB.X - geometry.PointA.X))}\" height=\"{F(Math.Abs(geometry.PointB.Y - geometry.PointA.Y))}\" fill=\"{ColorHex(fill)}\" fill-opacity=\"{fillOpacity}\" {common}/>\n");
+                break;
+            case ScientificMeasurementKind.CircleRoi:
+                double cx = (geometry.PointA.X + geometry.PointB.X) / 2;
+                double cy = (geometry.PointA.Y + geometry.PointB.Y) / 2;
+                svg.Append($"    <ellipse cx=\"{F(cx)}\" cy=\"{F(cy)}\" rx=\"{F(Math.Abs(geometry.PointB.X - geometry.PointA.X) / 2)}\" ry=\"{F(Math.Abs(geometry.PointB.Y - geometry.PointA.Y) / 2)}\" fill=\"{ColorHex(fill)}\" fill-opacity=\"{fillOpacity}\" {common}/>\n");
+                break;
+            case ScientificMeasurementKind.Polyline:
+                svg.Append($"    <polyline points=\"{Points(geometry.PathPoints)}\" fill=\"none\" {common}/>\n");
+                break;
+            default:
+                throw new InvalidOperationException("不支持的 Measurement Overlay 类型。");
         }
     }
 
+    private static IReadOnlyList<MeasurementPoint> GetMarkerPoints(
+        ScientificMeasurementKind kind,
+        FigureMeasurementOverlayGeometry geometry) => kind switch
+    {
+        ScientificMeasurementKind.Length => [geometry.PointA, geometry.PointB],
+        ScientificMeasurementKind.Angle => [geometry.PointA, geometry.PointB, geometry.PointC ?? geometry.PointB],
+        ScientificMeasurementKind.Polyline => geometry.PathPoints,
+        _ => [geometry.PointA, geometry.PointB],
+    };
+
+    private static string Points(IEnumerable<MeasurementPoint> points) => string.Join(
+        " ",
+        points.Select(point => $"{F(point.X)},{F(point.Y)}"));
+
+    private static string CreateSvgDashArray(string lineStyle) => lineStyle switch
+    {
+        "dash" => "5 3",
+        "dot" => "1 2",
+        "dash-dot" => "5 2 1 2",
+        _ => string.Empty,
+    };
     private static void AppendSvgAnnotation(
         StringBuilder svg,
         FigureAnnotationExportItem annotation,
@@ -219,6 +332,78 @@ internal static class WpfEditableFigureExporter
         svg.Append($"  <{element} {geometry} fill=\"{ColorHex(fillColor)}\" fill-opacity=\"{F(fillOpacity)}\" stroke=\"{stroke}\" stroke-width=\"{F(strokeWidth)}\"{strokeOpacity}/>\n");
     }
 
+    private static void AppendSvgScientificObject(StringBuilder svg, FigureScientificObjectExportItem item, int dpi)
+    {
+        Color stroke = WpfFigureExporter.ParseColor(item.StrokeColor);
+        Color fill = WpfFigureExporter.ParseColor(item.FillColor);
+        Color text = WpfFigureExporter.ParseColor(item.TextColor);
+        double line = item.StrokeWidthPt / 72.0 * dpi;
+        double font = item.FontSizePt / 72.0 * dpi;
+        string common = $"data-scientific-object=\"{item.Kind}\" data-object-id=\"{item.Id}\" stroke=\"{ColorHex(stroke)}\" stroke-width=\"{F(line)}\"";
+        if (item.Kind is FigureScientificObjectKind.PolygonAnnotation or FigureScientificObjectKind.Roi)
+        {
+            double opacity = fill.A / 255.0 * item.FillOpacityPercent / 100.0;
+            string points = string.Join(" ", item.Points.Select(point => $"{F(point.X)},{F(point.Y)}"));
+            svg.Append($"  <g {common}><polygon points=\"{points}\" fill=\"{ColorHex(fill)}\" fill-opacity=\"{F(opacity)}\"/>\n");
+            AppendSvgScientificText(svg, item.Label, item.Points[0].X, item.Points[0].Y - font - 4, text, item, font);
+            svg.Append("  </g>\n");
+            return;
+        }
+        if (item.Kind == FigureScientificObjectKind.DirectionMarker)
+        {
+            FigureScientificPoint start = item.Points[0];
+            FigureScientificPoint end = item.Points[1];
+            (FigureScientificPoint left, FigureScientificPoint right, FigureScientificPoint baseCenter) = DirectionHead(start, end, Math.Max(line * 4, 10.0 / 72.0 * dpi));
+            svg.Append($"  <g {common} fill=\"{ColorHex(stroke)}\"><line x1=\"{F(start.X)}\" y1=\"{F(start.Y)}\" x2=\"{F(baseCenter.X)}\" y2=\"{F(baseCenter.Y)}\"/><polygon points=\"{F(end.X)},{F(end.Y)} {F(left.X)},{F(left.Y)} {F(right.X)},{F(right.Y)}\"/>\n");
+            AppendSvgScientificText(svg, item.Label, end.X + 5, end.Y - font - 5, text, item, font);
+            svg.Append("  </g>\n");
+            return;
+        }
+        (double x, double y, double width, double height) = ScientificBounds(item.Points);
+        if (item.Kind == FigureScientificObjectKind.Colorbar)
+        {
+            string gradientId = $"scientific-colorbar-{item.Id:N}";
+            IReadOnlyList<Color> colors = WpfFigureExporter.GetColormapColors(item.Colormap);
+            svg.Append($"  <defs><linearGradient id=\"{gradientId}\" x1=\"0\" y1=\"1\" x2=\"0\" y2=\"0\">");
+            for (int index = 0; index < colors.Count; index++) svg.Append($"<stop offset=\"{F(index / (double)Math.Max(1, colors.Count - 1))}\" stop-color=\"{ColorHex(colors[index])}\"/>");
+            svg.Append($"</linearGradient></defs>\n  <g {common}><rect x=\"{F(x)}\" y=\"{F(y)}\" width=\"{F(width)}\" height=\"{F(height)}\" fill=\"url(#{gradientId})\"/>\n");
+            AppendSvgScientificText(svg, $"{item.Maximum:0.###} {item.Unit}", x + width + 5, y, text, item, font);
+            AppendSvgScientificText(svg, $"{item.Minimum:0.###} {item.Unit}", x + width + 5, y + height - font, text, item, font);
+            AppendSvgScientificText(svg, item.Label, x, Math.Max(0, y - font - 4), text, item, font);
+            svg.Append("  </g>\n");
+            return;
+        }
+        svg.Append($"  <g {common}><rect x=\"{F(x)}\" y=\"{F(y)}\" width=\"{F(width)}\" height=\"{F(height)}\" fill=\"#0C1219\" fill-opacity=\"0.75\"/>\n");
+        double row = height / Math.Max(1, item.EffectiveChannelLegendEntries.Count);
+        for (int index = 0; index < item.EffectiveChannelLegendEntries.Count; index++)
+        {
+            FigureChannelLegendEntry entry = item.EffectiveChannelLegendEntries[index];
+            double rowY = y + index * row;
+            svg.Append($"    <rect x=\"{F(x + 5)}\" y=\"{F(rowY + Math.Max(2, (row - font) / 2))}\" width=\"{F(Math.Min(16, width * 0.18))}\" height=\"{F(Math.Max(4, font))}\" fill=\"{ColorHex(WpfFigureExporter.ParseColor(entry.Color))}\" stroke=\"none\"/>\n");
+            AppendSvgScientificText(svg, entry.Label, x + Math.Min(24, width * 0.25), rowY + Math.Max(0, (row - font) / 2), text, item, font);
+        }
+        svg.Append("  </g>\n");
+    }
+
+    private static void AppendSvgScientificText(StringBuilder svg, string value, double x, double y, Color color, FigureScientificObjectExportItem item, double font)
+    {
+        if (!string.IsNullOrWhiteSpace(value)) svg.Append($"    <text x=\"{F(x)}\" y=\"{F(y)}\" font-family=\"{Escape(item.FontFamily)}\" font-size=\"{F(font)}\" font-weight=\"{(item.IsBold ? "700" : "400")}\" dominant-baseline=\"hanging\" fill=\"{ColorHex(color)}\">{Escape(value)}</text>\n");
+    }
+
+    private static (FigureScientificPoint Left, FigureScientificPoint Right, FigureScientificPoint BaseCenter) DirectionHead(FigureScientificPoint start, FigureScientificPoint end, double head)
+    {
+        double dx = end.X - start.X;
+        double dy = end.Y - start.Y;
+        double length = Math.Sqrt(dx * dx + dy * dy);
+        double ux = dx / length;
+        double uy = dy / length;
+        double half = head * 0.52;
+        var baseCenter = new FigureScientificPoint(end.X - ux * head, end.Y - uy * head);
+        return (new FigureScientificPoint(baseCenter.X - uy * half, baseCenter.Y + ux * half), new FigureScientificPoint(baseCenter.X + uy * half, baseCenter.Y - ux * half), baseCenter);
+    }
+
+    private static (double X, double Y, double Width, double Height) ScientificBounds(IReadOnlyList<FigureScientificPoint> points) =>
+        (Math.Min(points[0].X, points[1].X), Math.Min(points[0].Y, points[1].Y), Math.Abs(points[1].X - points[0].X), Math.Abs(points[1].Y - points[0].Y));
     private static void AppendSvgRect(
         StringBuilder svg,
         double x,
@@ -250,9 +435,13 @@ internal static class WpfEditableFigureExporter
 
         List<(string Name, int ObjectNumber)> images = [];
         var opacityStates = new Dictionary<(int Fill, int Stroke), (string Name, int ObjectNumber)>();
-        foreach ((int Fill, int Stroke) key in document.Annotations
-                     .Where(annotation => annotation.IsVisible)
-                     .Select(GetPdfAnnotationOpacityKey)
+        IEnumerable<(int Fill, int Stroke)> opacityKeys = document.Annotations
+            .Where(annotation => annotation.IsVisible)
+            .Select(GetPdfAnnotationOpacityKey)
+            .Concat(document.MeasurementOverlays
+                .Where(overlay => overlay.IsVisible)
+                .Select(GetPdfMeasurementOverlayFillOpacityKey));
+        foreach ((int Fill, int Stroke) key in opacityKeys
                      .Where(key => key.Fill != 1_000_000 || key.Stroke != 1_000_000)
                      .Distinct())
         {
@@ -303,6 +492,30 @@ internal static class WpfEditableFigureExporter
             }
         }
 
+        foreach (FigureMeasurementOverlayExportItem overlay in
+                 document.MeasurementOverlays.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            (int Fill, int Stroke) fillOpacityKey = GetPdfMeasurementOverlayFillOpacityKey(overlay);
+            string? fillOpacityStateName = opacityStates.TryGetValue(fillOpacityKey, out var fillOpacityState)
+                ? fillOpacityState.Name
+                : null;
+            AppendPdfMeasurementOverlay(
+                content,
+                overlay,
+                WpfFigureExporter.ResolveMeasurementOverlayPanel(overlay, document),
+                document.Dpi,
+                scale,
+                pageHeight,
+                fillOpacityStateName);
+        }
+        foreach (FigureScientificObjectExportItem scientificObject in
+                 document.ScientificObjects.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            WpfFigureExporter.ValidateScientificObject(scientificObject, document);
+            AppendPdfScientificObject(content, scientificObject, document.Dpi, scale, pageHeight);
+        }
         int contentObject = pdf.AddObject(BuildPdfStream(Encoding.ASCII.GetBytes(content.ToString())));
         string xObjects = images.Count == 0
             ? string.Empty
@@ -320,6 +533,190 @@ internal static class WpfEditableFigureExporter
         WriteNewFile(targetPath, pdf.ToBytes(catalogObject));
     }
 
+    private static void AppendPdfMeasurementOverlay(
+        StringBuilder content,
+        FigureMeasurementOverlayExportItem overlay,
+        FigurePanelExportItem panel,
+        int dpi,
+        double scale,
+        double pageHeight,
+        string? fillOpacityStateName)
+    {
+        FigureMeasurementOverlayGeometry geometry = FigureMeasurementOverlayMapper.Map(
+            overlay.ScientificObject,
+            panel);
+        FigureMeasurementOverlayStyle style = overlay.Style;
+        Color stroke = WpfFigureExporter.ParseColor(style.StrokeColor);
+        Color fill = WpfFigureExporter.ParseColor(style.FillColor);
+        content.Append("q\n");
+        AppendPdfColor(content, stroke, fill: false);
+        content.Append($"{F(Math.Max(0.25, geometry.StrokeWidthPixels) * scale)} w ");
+        AppendPdfDash(content, style.LineStyle, scale);
+        switch (overlay.MeasurementKind)
+        {
+            case ScientificMeasurementKind.Length:
+                AppendPdfLine(content, geometry.PointA, geometry.PointB, scale, pageHeight);
+                break;
+            case ScientificMeasurementKind.Angle:
+                AppendPdfLine(content, geometry.PointA, geometry.PointB, scale, pageHeight);
+                AppendPdfLine(content, geometry.PointB, geometry.PointC ?? geometry.PointB, scale, pageHeight);
+                break;
+            case ScientificMeasurementKind.RectangleRoi:
+                AppendPdfMeasurementFill(
+                    content,
+                    fill,
+                    style.FillOpacityPercent,
+                    fillOpacityStateName,
+                    () => AppendPdfRectForPoints(content, geometry.PointA, geometry.PointB, scale, pageHeight));
+                AppendPdfColor(content, stroke, fill: false);
+                AppendPdfRectForPoints(content, geometry.PointA, geometry.PointB, scale, pageHeight);
+                content.Append("S\n");
+                break;
+            case ScientificMeasurementKind.CircleRoi:
+                AppendPdfMeasurementFill(
+                    content,
+                    fill,
+                    style.FillOpacityPercent,
+                    fillOpacityStateName,
+                    () => AppendPdfEllipseForPoints(content, geometry.PointA, geometry.PointB, scale, pageHeight));
+                AppendPdfColor(content, stroke, fill: false);
+                AppendPdfEllipseForPoints(content, geometry.PointA, geometry.PointB, scale, pageHeight);
+                content.Append("S\n");
+                break;
+            case ScientificMeasurementKind.Polyline:
+                AppendPdfPolyline(content, geometry.PathPoints, scale, pageHeight);
+                break;
+            default:
+                throw new InvalidOperationException("不支持的 Measurement Overlay 类型。");
+        }
+
+        if (style.ShowMarkers)
+        {
+            Color markerStroke = WpfFigureExporter.ParseColor(style.MarkerStrokeColor);
+            Color markerFill = WpfFigureExporter.ParseColor(style.MarkerFillColor);
+            double radius = Math.Max(1, geometry.MarkerSizePixels / 2);
+            AppendPdfColor(content, markerStroke, fill: false);
+            content.Append($"{F(Math.Max(0.25, geometry.StrokeWidthPixels * 0.75) * scale)} w ");
+            AppendPdfColor(content, markerFill, fill: true);
+            foreach (MeasurementPoint point in GetMarkerPoints(overlay.MeasurementKind, geometry))
+            {
+                AppendPdfEllipse(
+                    content,
+                    (point.X - radius) * scale,
+                    pageHeight - (point.Y + radius) * scale,
+                    radius * 2 * scale,
+                    radius * 2 * scale);
+                content.Append("B\n");
+            }
+        }
+
+        if (style.ShowLabel)
+        {
+            Color label = WpfFigureExporter.ParseColor(style.LabelColor);
+            FormattedText text = CreateText(
+                FigureMeasurementOverlayMapper.CreateLabel(overlay.ScientificObject),
+                style.LabelFontSizePt / 72.0 * dpi,
+                style.LabelIsBold ? FontWeights.Bold : FontWeights.Normal,
+                style.LabelFontFamily);
+            AppendPdfGeometry(
+                content,
+                text.BuildGeometry(new Point(geometry.LabelAnchor.X, geometry.LabelAnchor.Y)),
+                label,
+                scale,
+                pageHeight,
+                fill: true);
+        }
+
+        content.Append("Q\n");
+    }
+
+    private static void AppendPdfMeasurementFill(
+        StringBuilder content,
+        Color fill,
+        double fillOpacityPercent,
+        string? fillOpacityStateName,
+        Action appendPath)
+    {
+        if (fillOpacityPercent <= 0)
+        {
+            return;
+        }
+
+        content.Append("q ");
+        if (!string.IsNullOrWhiteSpace(fillOpacityStateName))
+        {
+            content.Append($"/{fillOpacityStateName} gs ");
+        }
+        AppendPdfColor(content, fill, fill: true);
+        appendPath();
+        content.Append("f\nQ\n");
+    }
+    private static void AppendPdfDash(StringBuilder content, string lineStyle, double scale)
+    {
+        string dash = lineStyle switch
+        {
+            "dash" => $"[{F(5 * scale)} {F(3 * scale)}] 0 d ",
+            "dot" => $"[{F(scale)} {F(2 * scale)}] 0 d ",
+            "dash-dot" => $"[{F(5 * scale)} {F(2 * scale)} {F(scale)} {F(2 * scale)}] 0 d ",
+            _ => "[] 0 d ",
+        };
+        content.Append(dash);
+    }
+
+    private static void AppendPdfLine(
+        StringBuilder content,
+        MeasurementPoint first,
+        MeasurementPoint second,
+        double scale,
+        double pageHeight) => content.Append(
+            $"{F(first.X * scale)} {F(pageHeight - first.Y * scale)} m {F(second.X * scale)} {F(pageHeight - second.Y * scale)} l S\n");
+
+    private static void AppendPdfPolyline(
+        StringBuilder content,
+        IReadOnlyList<MeasurementPoint> points,
+        double scale,
+        double pageHeight)
+    {
+        if (points.Count < 2)
+        {
+            throw new InvalidOperationException("Polyline Measurement Overlay 至少需要两个点。");
+        }
+
+        content.Append($"{F(points[0].X * scale)} {F(pageHeight - points[0].Y * scale)} m ");
+        foreach (MeasurementPoint point in points.Skip(1))
+        {
+            content.Append($"{F(point.X * scale)} {F(pageHeight - point.Y * scale)} l ");
+        }
+        content.Append("S\n");
+    }
+
+    private static void AppendPdfRectForPoints(
+        StringBuilder content,
+        MeasurementPoint first,
+        MeasurementPoint second,
+        double scale,
+        double pageHeight)
+    {
+        double x = Math.Min(first.X, second.X);
+        double y = Math.Min(first.Y, second.Y);
+        double width = Math.Abs(second.X - first.X);
+        double height = Math.Abs(second.Y - first.Y);
+        AppendPdfRect(content, x * scale, pageHeight - (y + height) * scale, width * scale, height * scale);
+    }
+
+    private static void AppendPdfEllipseForPoints(
+        StringBuilder content,
+        MeasurementPoint first,
+        MeasurementPoint second,
+        double scale,
+        double pageHeight)
+    {
+        double x = Math.Min(first.X, second.X);
+        double y = Math.Min(first.Y, second.Y);
+        double width = Math.Abs(second.X - first.X);
+        double height = Math.Abs(second.Y - first.Y);
+        AppendPdfEllipse(content, x * scale, pageHeight - (y + height) * scale, width * scale, height * scale);
+    }
     private static void AppendPdfPanelLabel(
         StringBuilder content,
         string label,
@@ -358,39 +755,122 @@ internal static class WpfEditableFigureExporter
         double pageHeight,
         FigureGlobalStyle style)
     {
-        if (panel.ScaleBar is not { } scaleBar)
+        IReadOnlyList<FigureScaleBarExportSpec> scaleBars = panel.EffectiveScaleBars;
+        if (scaleBars.Count == 0)
         {
             return;
         }
 
-        double sourcePixels = scaleBar.PhysicalLength / scaleBar.PhysicalUnitsPerSourcePixel;
-        double barWidth = sourcePixels * imageRect.Width / panel.SourceRect.Width;
-        double margin = Math.Max(10, Math.Min(imageRect.Width, imageRect.Height) * 0.035);
         double thickness = Math.Max(2, style.EffectiveScaleBarThicknessPt / 72.0 * dpi);
-        double right = imageRect.Right - margin;
-        double y = imageRect.Bottom - margin - thickness / 2;
-        double left = right - barWidth;
-        AppendPdfColor(content, Colors.Black, fill: false);
-        content.Append($"{F((thickness + Math.Max(3, dpi / 100.0)) * scale)} w {F(left * scale)} {F(pageHeight - y * scale)} m {F(right * scale)} {F(pageHeight - y * scale)} l S\n");
+        double fontSize = Math.Max(12, style.EffectiveScaleBarFontSizePt / 72.0 * dpi);
+        IReadOnlyList<FigureScaleBarGeometry> geometries = FigureScaleBarLayout.Calculate(
+            scaleBars,
+            panel.SourceRect,
+            new FigureImageRect(imageRect.X, imageRect.Y, imageRect.Width, imageRect.Height),
+            dpi,
+            thickness,
+            fontSize);
         Color scaleBarColor = WpfFigureExporter.ParseColor(style.ScaleBarColor);
-        AppendPdfColor(content, scaleBarColor, fill: false);
-        content.Append($"{F(thickness * scale)} w {F(left * scale)} {F(pageHeight - y * scale)} m {F(right * scale)} {F(pageHeight - y * scale)} l S\n");
-        if (scaleBar.ShowLabel)
+        Color labelColor = WpfFigureExporter.ParseColor(style.EffectiveScaleBarLabelColor);
+        foreach (FigureScaleBarGeometry geometry in geometries)
         {
-            string textValue = $"{scaleBar.PhysicalLength:0.###} {scaleBar.Unit}";
-            double fontSize = Math.Max(12, style.EffectiveScaleBarFontSizePt / 72.0 * dpi);
-            FormattedText text = CreateText(
-                textValue,
-                fontSize,
-                style.ScaleBarLabelIsBold ? FontWeights.Bold : FontWeights.Normal,
-                style.EffectiveScaleBarFontFamily);
-            double textX = right - text.Width;
-            double textY = y - thickness - text.Height - Math.Max(3, dpi / 100.0);
-            Color labelColor = WpfFigureExporter.ParseColor(style.EffectiveScaleBarLabelColor);
-            AppendPdfGeometry(content, text.BuildGeometry(new Point(textX, textY)), labelColor, scale, pageHeight, fill: true, stroke: Colors.Black, strokeWidth: Math.Max(2, dpi / 150.0) * scale);
+            AppendPdfColor(content, Colors.Black, fill: false);
+            content.Append($"{F((thickness + Math.Max(3, dpi / 100.0)) * scale)} w {F(geometry.Left * scale)} {F(pageHeight - geometry.Y * scale)} m {F(geometry.Right * scale)} {F(pageHeight - geometry.Y * scale)} l S\n");
+            AppendPdfColor(content, scaleBarColor, fill: false);
+            content.Append($"{F(thickness * scale)} w {F(geometry.Left * scale)} {F(pageHeight - geometry.Y * scale)} m {F(geometry.Right * scale)} {F(pageHeight - geometry.Y * scale)} l S\n");
+            if (geometry.Spec.ShowLabel)
+            {
+                FormattedText text = CreateText(
+                    geometry.Spec.Label,
+                    fontSize,
+                    style.ScaleBarLabelIsBold ? FontWeights.Bold : FontWeights.Normal,
+                    style.EffectiveScaleBarFontFamily);
+                double textX = geometry.Right - text.Width;
+                AppendPdfGeometry(content, text.BuildGeometry(new Point(textX, geometry.LabelTop)), labelColor, scale, pageHeight, fill: true, stroke: Colors.Black, strokeWidth: Math.Max(2, dpi / 150.0) * scale);
+            }
+        }
+    }
+    private static void AppendPdfScientificObject(
+        StringBuilder content,
+        FigureScientificObjectExportItem item,
+        int dpi,
+        double scale,
+        double pageHeight)
+    {
+        Color stroke = WpfFigureExporter.ParseColor(item.StrokeColor);
+        Color fill = WpfFigureExporter.ParseColor(item.FillColor);
+        Color text = WpfFigureExporter.ParseColor(item.TextColor);
+        double strokeWidth = item.StrokeWidthPt / 72.0 * dpi * scale;
+        double fontSize = item.FontSizePt / 72.0 * dpi;
+        if (item.Kind is FigureScientificObjectKind.PolygonAnnotation or FigureScientificObjectKind.Roi)
+        {
+            AppendPdfColor(content, fill, fill: true);
+            AppendPdfColor(content, stroke, fill: false);
+            content.Append($"{F(strokeWidth)} w ");
+            FigureScientificPoint first = item.Points[0];
+            content.Append($"{F(first.X * scale)} {F(pageHeight - first.Y * scale)} m ");
+            foreach (FigureScientificPoint point in item.Points.Skip(1)) content.Append($"{F(point.X * scale)} {F(pageHeight - point.Y * scale)} l ");
+            content.Append("h B\n");
+            AppendPdfScientificText(content, item.Label, item.Points[0].X, item.Points[0].Y - fontSize - 4, text, item, fontSize, scale, pageHeight);
+            return;
+        }
+        if (item.Kind == FigureScientificObjectKind.DirectionMarker)
+        {
+            FigureScientificPoint start = item.Points[0];
+            FigureScientificPoint end = item.Points[1];
+            (FigureScientificPoint left, FigureScientificPoint right, FigureScientificPoint baseCenter) = DirectionHead(start, end, Math.Max(strokeWidth / scale * 4, 10.0 / 72.0 * dpi));
+            AppendPdfColor(content, stroke, fill: false);
+            content.Append($"{F(strokeWidth)} w {F(start.X * scale)} {F(pageHeight - start.Y * scale)} m {F(baseCenter.X * scale)} {F(pageHeight - baseCenter.Y * scale)} l S\n");
+            AppendPdfColor(content, stroke, fill: true);
+            content.Append($"{F(end.X * scale)} {F(pageHeight - end.Y * scale)} m {F(left.X * scale)} {F(pageHeight - left.Y * scale)} l {F(right.X * scale)} {F(pageHeight - right.Y * scale)} l h f\n");
+            AppendPdfScientificText(content, item.Label, end.X + 5, end.Y - fontSize - 5, text, item, fontSize, scale, pageHeight);
+            return;
+        }
+        (double x, double y, double width, double height) = ScientificBounds(item.Points);
+        if (item.Kind == FigureScientificObjectKind.Colorbar)
+        {
+            IReadOnlyList<Color> colors = WpfFigureExporter.GetColormapColors(item.Colormap);
+            double slice = height / colors.Count;
+            for (int index = 0; index < colors.Count; index++)
+            {
+                AppendPdfColor(content, colors[index], fill: true);
+                AppendPdfRect(content, x * scale, pageHeight - (y + (index + 1) * slice) * scale, width * scale, slice * scale);
+                content.Append("f\n");
+            }
+            AppendPdfColor(content, stroke, fill: false);
+            content.Append($"{F(strokeWidth)} w ");
+            AppendPdfRect(content, x * scale, pageHeight - (y + height) * scale, width * scale, height * scale);
+            content.Append("S\n");
+            AppendPdfScientificText(content, $"{item.Maximum:0.###} {item.Unit}", x + width + 5, y, text, item, fontSize, scale, pageHeight);
+            AppendPdfScientificText(content, $"{item.Minimum:0.###} {item.Unit}", x + width + 5, y + height - fontSize, text, item, fontSize, scale, pageHeight);
+            AppendPdfScientificText(content, item.Label, x, Math.Max(0, y - fontSize - 4), text, item, fontSize, scale, pageHeight);
+            return;
+        }
+        AppendPdfColor(content, Color.FromRgb(12, 18, 25), fill: true);
+        AppendPdfColor(content, stroke, fill: false);
+        content.Append($"{F(strokeWidth)} w ");
+        AppendPdfRect(content, x * scale, pageHeight - (y + height) * scale, width * scale, height * scale);
+        content.Append("B\n");
+        double row = height / Math.Max(1, item.EffectiveChannelLegendEntries.Count);
+        for (int index = 0; index < item.EffectiveChannelLegendEntries.Count; index++)
+        {
+            FigureChannelLegendEntry entry = item.EffectiveChannelLegendEntries[index];
+            double rowY = y + index * row;
+            AppendPdfColor(content, WpfFigureExporter.ParseColor(entry.Color), fill: true);
+            AppendPdfRect(content, (x + 5) * scale, pageHeight - (rowY + Math.Max(2, (row - fontSize) / 2) + Math.Max(4, fontSize)) * scale, Math.Min(16, width * 0.18) * scale, Math.Max(4, fontSize) * scale);
+            content.Append("f\n");
+            AppendPdfScientificText(content, entry.Label, x + Math.Min(24, width * 0.25), rowY + Math.Max(0, (row - fontSize) / 2), text, item, fontSize, scale, pageHeight);
         }
     }
 
+    private static void AppendPdfScientificText(StringBuilder content, string value, double x, double y, Color color, FigureScientificObjectExportItem item, double font, double scale, double pageHeight)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            FormattedText label = CreateText(value, font, item.IsBold ? FontWeights.Bold : FontWeights.Normal, item.FontFamily);
+            AppendPdfGeometry(content, label.BuildGeometry(new Point(x, y)), color, scale, pageHeight, fill: true);
+        }
+    }
     private static void AppendPdfAnnotation(
         StringBuilder content,
         FigureAnnotationExportItem annotation,
@@ -466,6 +946,22 @@ internal static class WpfEditableFigureExporter
         content.Append($"{F(annotation.EndX * scale)} {F(pageHeight - annotation.EndY * scale)} m {F(leftX * scale)} {F(pageHeight - leftY * scale)} l {F(rightX * scale)} {F(pageHeight - rightY * scale)} l h f\n");
     }
 
+    private static (int Fill, int Stroke) GetPdfMeasurementOverlayFillOpacityKey(
+        FigureMeasurementOverlayExportItem overlay)
+    {
+        static int Alpha(double value) =>
+            (int)Math.Round(Math.Clamp(value, 0, 1) * 1_000_000, MidpointRounding.AwayFromZero);
+
+        bool hasRoiFill = overlay.MeasurementKind is ScientificMeasurementKind.RectangleRoi or
+            ScientificMeasurementKind.CircleRoi;
+        if (!hasRoiFill || overlay.Style.FillOpacityPercent <= 0)
+        {
+            return (1_000_000, 1_000_000);
+        }
+
+        Color fill = WpfFigureExporter.ParseColor(overlay.Style.FillColor);
+        return (Alpha(fill.A / 255.0 * overlay.Style.FillOpacityPercent / 100.0), 1_000_000);
+    }
     private static (int Fill, int Stroke) GetPdfAnnotationOpacityKey(
         FigureAnnotationExportItem annotation)
     {

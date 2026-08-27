@@ -35,6 +35,8 @@ public sealed class SciCanvasProjectDocument
 
     public IReadOnlyList<ProjectScientificAnalysisSnapshot> Analyses { get; init; } = [];
 
+    public IReadOnlyList<ProjectMultiChannelAssetGroupSnapshot> MultiChannelGroups { get; init; } = [];
+
     public ProjectTemplateSnapshot? TemplateSnapshot { get; init; }
 
     public IReadOnlyList<ProjectAuditEntrySnapshot> AuditTrail { get; init; } = [];
@@ -108,6 +110,49 @@ public sealed class ProjectSourceSnapshot
     public long SourceRevision { get; init; } = 1;
 }
 
+public sealed class ProjectMultiChannelAssetGroupSnapshot
+{
+    public Guid Id { get; init; }
+
+    public string Name { get; init; } = string.Empty;
+
+    public Guid ReferenceAssetId { get; init; }
+
+    public bool SameFieldOfViewConfirmed { get; init; }
+
+    public IReadOnlyList<ProjectChannelGroupMemberSnapshot> Members { get; init; } = [];
+}
+
+public sealed class ProjectChannelGroupMemberSnapshot
+{
+    public Guid ChannelId { get; init; }
+
+    public Guid AssetId { get; init; }
+
+    public int FrameIndex { get; init; }
+
+    public string Name { get; init; } = string.Empty;
+
+    public string? Role { get; init; }
+
+    public string Color { get; init; } = "#FFFFFFFF";
+
+    public string NameOrigin { get; init; } = "user";
+
+    public bool IsNameConfirmed { get; init; }
+
+    public bool Visible { get; init; } = true;
+
+    public double Opacity { get; init; } = 1;
+
+    public double DisplayMinimum { get; init; }
+
+    public double DisplayMaximum { get; init; } = 255;
+
+    public double Gamma { get; init; } = 1;
+
+    public bool Invert { get; init; }
+}
 public sealed class ProjectFingerprintSnapshot
 {
     public long ByteLength { get; init; }
@@ -440,6 +485,70 @@ public sealed class ProjectMeasurementSnapshot
     public IReadOnlyList<ProjectMeasurementPointSnapshot> Points { get; init; } = [];
 }
 
+public sealed class ProjectMeasurementOverlaySnapshot
+{
+    public Guid Id { get; init; }
+
+    public Guid MeasurementId { get; init; }
+
+    public Guid PanelId { get; init; }
+
+    public ProjectMeasurementSnapshot SourceGeometry { get; init; } = new();
+
+    public ProjectMeasurementOverlayCalibrationSnapshot? CalibrationRelationship { get; init; }
+
+    public ProjectMeasurementOverlayStyleSnapshot Style { get; init; } = new();
+
+    public string? LabelOverride { get; init; }
+
+    public bool IsVisible { get; init; } = true;
+
+    public int ZIndex { get; init; }
+}
+
+public sealed class ProjectMeasurementOverlayCalibrationSnapshot
+{
+    public Guid SourceAssetId { get; init; }
+
+    public long SourceRevision { get; init; } = 1;
+
+    public double UnitsPerPixelX { get; init; }
+
+    public double UnitsPerPixelY { get; init; }
+
+    public string Unit { get; init; } = "µm";
+}
+
+public sealed class ProjectMeasurementOverlayStyleSnapshot
+{
+    public string StrokeColor { get; init; } = "#FF22C7E8";
+
+    public double StrokeWidthPixels { get; init; } = 3;
+
+    public string LineStyle { get; init; } = "solid";
+
+    public string FillColor { get; init; } = "#FF22C7E8";
+
+    public double FillOpacityPercent { get; init; } = 8;
+
+    public string MarkerStrokeColor { get; init; } = "#FF22C7E8";
+
+    public string MarkerFillColor { get; init; } = "#FF11171F";
+
+    public double MarkerSizePixels { get; init; } = 18;
+
+    public bool ShowMarkers { get; init; } = true;
+
+    public string LabelColor { get; init; } = "#FF22C7E8";
+
+    public string LabelFontFamily { get; init; } = "Arial";
+
+    public double LabelFontSizePt { get; init; } = 9;
+
+    public bool LabelIsBold { get; init; }
+
+    public bool ShowLabel { get; init; } = true;
+}
 public sealed class ProjectMeasurementPointSnapshot
 {
     public double X { get; init; }
@@ -593,6 +702,10 @@ public sealed class ProjectTemplateSnapshot
 
     public IReadOnlyList<ProjectAnnotationSnapshot> Annotations { get; init; } = [];
 
+    public IReadOnlyList<ProjectFigureScientificObjectSnapshot> ScientificObjects { get; init; } = [];
+
+    public IReadOnlyList<ProjectMeasurementOverlaySnapshot> MeasurementOverlays { get; init; } = [];
+
     public ProjectGlobalStyleSnapshot? GlobalStyle { get; init; }
 
     public IReadOnlyList<ProjectScientificColorSnapshot> ScientificColors { get; init; } = [];
@@ -646,11 +759,34 @@ public sealed class ProjectScaleBarSnapshot
 
     public double PhysicalUnitsPerSourcePixel { get; init; }
 
+    /// <summary>Unit of PhysicalUnitsPerSourcePixel. Older files fall back to Unit.</summary>
+    public string? CalibrationUnit { get; init; }
+
+    public double PhysicalLength { get; init; }
+
+    /// <summary>Display unit for the primary bar.</summary>
+    public string Unit { get; init; } = "µm";
+
+    public string Anchor { get; init; } = "bottomRight";
+
+    public bool ShowLabel { get; init; } = true;
+
+    public IReadOnlyList<ProjectAdditionalScaleBarSnapshot> AdditionalBars { get; init; } = [];
+}
+
+public sealed class ProjectAdditionalScaleBarSnapshot
+{
+    public Guid Id { get; init; }
+
     public double PhysicalLength { get; init; }
 
     public string Unit { get; init; } = "µm";
 
+    public string Anchor { get; init; } = "bottomRight";
+
     public bool ShowLabel { get; init; } = true;
+
+    public bool IsVisible { get; init; } = true;
 }
 
 public sealed class ProjectAnnotationSnapshot
@@ -694,6 +830,50 @@ public sealed class ProjectAnnotationSnapshot
     public int ZIndex { get; init; }
 }
 
+public sealed class ProjectFigureScientificObjectSnapshot
+{
+    public Guid Id { get; init; }
+
+    public string Kind { get; init; } = "polygonAnnotation";
+
+    /// <summary>Final-canvas points encoded as invariant x,y; x,y pairs.</summary>
+    public string Points { get; init; } = string.Empty;
+
+    public string Label { get; init; } = string.Empty;
+
+    public string StrokeColor { get; init; } = "#FFFFB300";
+
+    public string FillColor { get; init; } = "#FFFFB300";
+
+    public double FillOpacityPercent { get; init; } = 12;
+
+    public string TextColor { get; init; } = "#FFFFFFFF";
+
+    public string FontFamily { get; init; } = "Arial";
+
+    public double FontSizePt { get; init; } = 7;
+
+    public double StrokeWidthPt { get; init; } = 1.25;
+
+    public bool IsBold { get; init; } = true;
+
+    public bool Visible { get; init; } = true;
+
+    public bool Locked { get; init; }
+
+    public int ZIndex { get; init; }
+
+    public double Minimum { get; init; }
+
+    public double Maximum { get; init; } = 1;
+
+    public string Unit { get; init; } = "a.u.";
+
+    public string Colormap { get; init; } = "viridis";
+
+    /// <summary>Invariant label|#AARRGGBB; label|#AARRGGBB pairs.</summary>
+    public string ChannelEntries { get; init; } = string.Empty;
+}
 public sealed class ProjectAuditEntrySnapshot
 {
     public DateTimeOffset Timestamp { get; init; }

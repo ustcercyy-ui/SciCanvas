@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SciCanvas.Persistence;
 
 namespace SciCanvas.Platform.Windows.Tests;
@@ -34,6 +35,24 @@ public sealed class ProjectMigrationPipelineTests
         Assert.Contains(migrated.AuditTrail, entry => entry.Command == "MigrateProject");
     }
 
+    [Fact]
+    public void MigrateToCurrent_UsesDeterministicAuditTimestampAndSemanticResult()
+    {
+        var legacy = new SciCanvasProjectDocument
+        {
+            SchemaVersion = "2.2",
+            ProjectId = Guid.Parse("4A53BD2B-4BDD-4C95-8580-AD96D2AC3A71"),
+            Title = "Deterministic legacy",
+            UpdatedAt = new DateTimeOffset(2026, 8, 27, 5, 6, 7, TimeSpan.Zero),
+        };
+
+        SciCanvasProjectDocument first = ProjectMigrationPipeline.MigrateToCurrent(legacy);
+        SciCanvasProjectDocument second = ProjectMigrationPipeline.MigrateToCurrent(legacy);
+
+        Assert.Equal(JsonSerializer.Serialize(first), JsonSerializer.Serialize(second));
+        ProjectAuditEntrySnapshot audit = Assert.Single(first.AuditTrail);
+        Assert.Equal(legacy.UpdatedAt, audit.Timestamp);
+    }
     [Fact]
     public void MigrateToCurrent_IsIdempotent()
     {
