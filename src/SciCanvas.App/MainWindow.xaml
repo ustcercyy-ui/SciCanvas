@@ -37,6 +37,107 @@
         <SolidColorBrush x:Key="MutedBrush" Color="#8F9BAD" />
         <SolidColorBrush x:Key="AccentBrush" Color="#22C7E8" />
 
+        <ControlTemplate x:Key="VerticalScrollBarTemplate" TargetType="{x:Type ScrollBar}">
+            <Grid Background="{TemplateBinding Background}" SnapsToDevicePixels="True">
+                <Track x:Name="PART_Track" Orientation="Vertical" IsDirectionReversed="True" Focusable="False">
+                    <Track.DecreaseRepeatButton>
+                        <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}" Focusable="False">
+                            <RepeatButton.Template>
+                                <ControlTemplate TargetType="{x:Type RepeatButton}">
+                                    <Border Background="Transparent" />
+                                </ControlTemplate>
+                            </RepeatButton.Template>
+                        </RepeatButton>
+                    </Track.DecreaseRepeatButton>
+                    <Track.Thumb>
+                        <Thumb MinHeight="24" Margin="2" Background="{TemplateBinding Foreground}">
+                            <Thumb.Template>
+                                <ControlTemplate TargetType="{x:Type Thumb}">
+                                    <Border x:Name="ThumbBorder" Background="{TemplateBinding Background}" CornerRadius="4" />
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="ThumbBorder" Property="Background" Value="#6E8194" />
+                                        </Trigger>
+                                        <Trigger Property="IsDragging" Value="True">
+                                            <Setter TargetName="ThumbBorder" Property="Background" Value="#22C7E8" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Thumb.Template>
+                        </Thumb>
+                    </Track.Thumb>
+                    <Track.IncreaseRepeatButton>
+                        <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}" Focusable="False">
+                            <RepeatButton.Template>
+                                <ControlTemplate TargetType="{x:Type RepeatButton}">
+                                    <Border Background="Transparent" />
+                                </ControlTemplate>
+                            </RepeatButton.Template>
+                        </RepeatButton>
+                    </Track.IncreaseRepeatButton>
+                </Track>
+            </Grid>
+        </ControlTemplate>
+
+        <ControlTemplate x:Key="HorizontalScrollBarTemplate" TargetType="{x:Type ScrollBar}">
+            <Grid Background="{TemplateBinding Background}" SnapsToDevicePixels="True">
+                <Track x:Name="PART_Track" Orientation="Horizontal" IsDirectionReversed="False" Focusable="False">
+                    <Track.DecreaseRepeatButton>
+                        <RepeatButton Command="{x:Static ScrollBar.PageLeftCommand}" Focusable="False">
+                            <RepeatButton.Template>
+                                <ControlTemplate TargetType="{x:Type RepeatButton}">
+                                    <Border Background="Transparent" />
+                                </ControlTemplate>
+                            </RepeatButton.Template>
+                        </RepeatButton>
+                    </Track.DecreaseRepeatButton>
+                    <Track.Thumb>
+                        <Thumb MinWidth="24" Margin="2" Background="{TemplateBinding Foreground}">
+                            <Thumb.Template>
+                                <ControlTemplate TargetType="{x:Type Thumb}">
+                                    <Border x:Name="ThumbBorder" Background="{TemplateBinding Background}" CornerRadius="4" />
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="ThumbBorder" Property="Background" Value="#6E8194" />
+                                        </Trigger>
+                                        <Trigger Property="IsDragging" Value="True">
+                                            <Setter TargetName="ThumbBorder" Property="Background" Value="#22C7E8" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Thumb.Template>
+                        </Thumb>
+                    </Track.Thumb>
+                    <Track.IncreaseRepeatButton>
+                        <RepeatButton Command="{x:Static ScrollBar.PageRightCommand}" Focusable="False">
+                            <RepeatButton.Template>
+                                <ControlTemplate TargetType="{x:Type RepeatButton}">
+                                    <Border Background="Transparent" />
+                                </ControlTemplate>
+                            </RepeatButton.Template>
+                        </RepeatButton>
+                    </Track.IncreaseRepeatButton>
+                </Track>
+            </Grid>
+        </ControlTemplate>
+
+        <Style TargetType="{x:Type ScrollBar}">
+            <Setter Property="Background" Value="#10161E" />
+            <Setter Property="Foreground" Value="#526579" />
+            <Setter Property="Width" Value="12" />
+            <Setter Property="MinWidth" Value="12" />
+            <Setter Property="Template" Value="{StaticResource VerticalScrollBarTemplate}" />
+            <Style.Triggers>
+                <Trigger Property="Orientation" Value="Horizontal">
+                    <Setter Property="Width" Value="Auto" />
+                    <Setter Property="MinWidth" Value="0" />
+                    <Setter Property="Height" Value="12" />
+                    <Setter Property="MinHeight" Value="12" />
+                    <Setter Property="Template" Value="{StaticResource HorizontalScrollBarTemplate}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
         <Style TargetType="Button">
             <Setter Property="Foreground" Value="#E8EDF4" />
             <Setter Property="Background" Value="#202A36" />
@@ -1294,7 +1395,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <Button Grid.Column="0" Command="{Binding ShowInspectorTabCommand}" Content="检查器" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="8,0">
+                        <Button x:Name="InspectorTabButton" Grid.Column="0" Command="{Binding ShowInspectorTabCommand}" Content="检查器" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="8,0">
                             <Button.Style>
                                 <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                     <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
@@ -1310,7 +1411,7 @@
                                 </Style>
                             </Button.Style>
                         </Button>
-                        <Button Grid.Column="1" Command="{Binding ShowLayersTabCommand}" Content="图层" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="8,0">
+                        <Button x:Name="LayersTabButton" Grid.Column="1" Command="{Binding ShowLayersTabCommand}" Content="图层" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="8,0">
                             <Button.Style>
                                 <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                     <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
@@ -1326,7 +1427,7 @@
                                 </Style>
                             </Button.Style>
                         </Button>
-                        <Button Grid.Column="2" Command="{Binding ShowChannelsTabCommand}" Content="通道" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="8,0">
+                        <Button x:Name="ChannelsTabButton" Grid.Column="2" Command="{Binding ShowChannelsTabCommand}" Content="通道" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="8,0">
                             <Button.Style>
                                 <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                     <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
@@ -3367,9 +3468,10 @@
                             </Border>
                         </StackPanel>
                     </ScrollViewer>
-                    <app:ChannelsInspector Grid.Row="1"
+                    <app:ChannelsInspector x:Name="ChannelsInspectorPanel"
+                                           Grid.Row="1"
                                            DataContext="{Binding MultiChannelWorkspace}"
-                                           Visibility="{Binding ChannelsTabVisibility}" />
+                                           Visibility="{Binding DataContext.ChannelsTabVisibility, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
                 </Grid>
             </Border>
 

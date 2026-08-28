@@ -2,7 +2,7 @@
 
 SciCanvas v2.4 的产品主题是 **Scientific Objects, Multichannel & Reproducible Publishing**。路线图以源文件只读、非破坏处理、raw/display 分离、源像素坐标和物理坐标为科学真值、确定性处理和可审计导出为不可协商的约束。
 
-本文档同时记录已经落地的阶段成果与尚未完成的工作。`v2.4.0-alpha.1` 是 PR1–PR5 阶段性预发布，不代表 v2.4 全部功能完成。
+本文档同时记录已经落地的阶段成果与尚未完成的工作。`v2.4.0-alpha.2` 是 PR1–PR5 阶段包的界面热修订，不代表 v2.4 全部功能完成。
 
 ## 总体目标
 
@@ -115,6 +115,7 @@ v2.4 建立四条统一能力：
 - v2.3 基线：227 tests。
 - PR1–PR5 新增：28 tests。
 - `v2.4.0-alpha.1`：255 passed，0 failed，0 skipped。
+- `v2.4.0-alpha.2`：256 passed，0 failed，0 skipped；新增右侧标签页互斥显示与滚动回归。
 - Release solution build：0 warnings，0 errors。
 
 ## 当前明确限制

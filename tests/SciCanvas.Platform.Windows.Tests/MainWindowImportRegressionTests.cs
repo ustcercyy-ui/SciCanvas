@@ -21,6 +21,66 @@ namespace SciCanvas.Platform.Windows.Tests;
 public sealed class MainWindowImportRegressionTests
 {
     [Fact]
+    public void RightSidebarTabs_RenderOnlyTheActivePage()
+    {
+        string? captureDirectory = Environment.GetEnvironmentVariable("SCICANVAS_QA_TABS_SCREENSHOT_DIR");
+        WpfTestHost.Invoke(() =>
+        {
+            MainWindow? window = null;
+            try
+            {
+                MainWindowViewModel viewModel = CreateViewModel();
+                window = new MainWindow
+                {
+                    DataContext = viewModel,
+                    Width = 1000,
+                    Height = 720,
+                    WindowState = WindowState.Normal,
+                };
+                window.Show();
+                window.UpdateLayout();
+
+                var inspector = Assert.IsType<ScrollViewer>(window.FindName("InspectorScrollViewer"));
+                var layers = Assert.IsType<ScrollViewer>(window.FindName("LayersScrollViewer"));
+                var channels = Assert.IsType<ChannelsInspector>(window.FindName("ChannelsInspectorPanel"));
+                var rightSidebar = Assert.IsType<Border>(window.FindName("RightSidebarPanel"));
+                var inspectorButton = Assert.IsType<Button>(window.FindName("InspectorTabButton"));
+                var layersButton = Assert.IsType<Button>(window.FindName("LayersTabButton"));
+                var channelsButton = Assert.IsType<Button>(window.FindName("ChannelsTabButton"));
+
+                AssertSidebarPageVisibility(inspector, layers, channels, Visibility.Visible, Visibility.Collapsed, Visibility.Collapsed);
+                CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "inspector");
+
+                ExecuteBoundButtonCommand(layersButton);
+                window.UpdateLayout();
+                AssertSidebarPageVisibility(inspector, layers, channels, Visibility.Collapsed, Visibility.Visible, Visibility.Collapsed);
+                CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "layers");
+
+                ExecuteBoundButtonCommand(channelsButton);
+                window.UpdateLayout();
+                AssertSidebarPageVisibility(inspector, layers, channels, Visibility.Collapsed, Visibility.Collapsed, Visibility.Visible);
+                CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "channels");
+
+                ExecuteBoundButtonCommand(inspectorButton);
+                window.UpdateLayout();
+                AssertSidebarPageVisibility(inspector, layers, channels, Visibility.Visible, Visibility.Collapsed, Visibility.Collapsed);
+
+                inspector.ScrollToVerticalOffset(200);
+                window.UpdateLayout();
+                Assert.True(inspector.VerticalOffset > 0);
+            }
+            finally
+            {
+                if (window is not null)
+                {
+                    window.DataContext = null;
+                    window.Close();
+                }
+            }
+        }, TimeSpan.FromSeconds(15));
+    }
+
+    [Fact]
     public void EmptyProject_HidesSourceViewportAndDefaultCropOverlay()
     {
         WpfTestHost.Invoke(() =>
@@ -870,6 +930,66 @@ public sealed class MainWindowImportRegressionTests
         new NoOpProjectStore(),
         assistedRegionAnalyzer: assistedRegionAnalyzer,
         unsavedChangesPrompt: unsavedChangesPrompt);
+
+    private static void AssertSidebarPageVisibility(
+        ScrollViewer inspector,
+        ScrollViewer layers,
+        ChannelsInspector channels,
+        Visibility expectedInspector,
+        Visibility expectedLayers,
+        Visibility expectedChannels)
+    {
+        Assert.Equal(expectedInspector, inspector.Visibility);
+        Assert.Equal(expectedLayers, layers.Visibility);
+        Assert.Equal(expectedChannels, channels.Visibility);
+    }
+
+    private static void ExecuteBoundButtonCommand(Button button)
+    {
+        Assert.NotNull(button.Command);
+        Assert.True(button.Command.CanExecute(button.CommandParameter));
+        button.Command.Execute(button.CommandParameter);
+    }
+
+    private static void CaptureSidebarIfRequested(
+        Window window,
+        FrameworkElement sidebar,
+        string? captureDirectory,
+        string stateName)
+    {
+        if (string.IsNullOrWhiteSpace(captureDirectory))
+        {
+            return;
+        }
+
+        string fullDirectory = Path.GetFullPath(captureDirectory);
+        Directory.CreateDirectory(fullDirectory);
+        const double dpi = 192;
+        const double scale = dpi / 96;
+        var fullScreenshot = new RenderTargetBitmap(
+            Math.Max(1, (int)Math.Ceiling(window.ActualWidth * scale)),
+            Math.Max(1, (int)Math.Ceiling(window.ActualHeight * scale)),
+            dpi,
+            dpi,
+            PixelFormats.Pbgra32);
+        fullScreenshot.Render(window);
+        Point sidebarOrigin = sidebar.TranslatePoint(new Point(0, 0), window);
+        int cropX = Math.Clamp((int)Math.Floor(sidebarOrigin.X * scale), 0, fullScreenshot.PixelWidth - 1);
+        int cropY = Math.Clamp((int)Math.Floor(sidebarOrigin.Y * scale), 0, fullScreenshot.PixelHeight - 1);
+        int cropWidth = Math.Clamp((int)Math.Ceiling(sidebar.ActualWidth * scale), 1, fullScreenshot.PixelWidth - cropX);
+        int cropHeight = Math.Clamp((int)Math.Ceiling(sidebar.ActualHeight * scale), 1, fullScreenshot.PixelHeight - cropY);
+        var sidebarScreenshot = new CroppedBitmap(
+            fullScreenshot,
+            new Int32Rect(cropX, cropY, cropWidth, cropHeight));
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(sidebarScreenshot));
+        using FileStream output = new(
+            Path.Combine(fullDirectory, $"SciCanvas-right-sidebar-{stateName}.png"),
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.None);
+        encoder.Save(output);
+    }
 
     private static PixelRect64 AssertCrop(CropEditorViewModel crop)
     {
