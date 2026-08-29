@@ -3,7 +3,9 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using SciCanvas.Core.Export;
+using SpatialLinkGroup = SciCanvas.Core.Linking.LinkGroup;
 using SciCanvas.Core.Science;
+using SciCanvas.Core.Workspace;
 using SciCanvas.Persistence;
 
 namespace SciCanvas.Presentation;
@@ -15,7 +17,10 @@ public sealed record SubmissionPackageRequest(
     FigurePreflightResult QcResult,
     IReadOnlyList<ProjectAuditEntrySnapshot> AuditTrail,
     string SoftwareVersion,
-    string FigureBaseName = "figure1");
+    string FigureBaseName = "figure1",
+    IReadOnlyList<ResolvedFont>? FontResolutions = null,
+    IReadOnlyList<SpatialLinkGroup>? LinkGroups = null,
+    IReadOnlyList<RoiObject>? Rois = null);
 
 public sealed record SubmissionPackageResult(
     string RootDirectory,
@@ -83,7 +88,10 @@ public sealed class SubmissionPackageBuilder
                 exportProfileId: "submission-package",
                 exportProfileName: "Submission Package",
                 sourceRevisions: request.Sources.ToDictionary(source => source.Asset.Id, source => source.SourceRevision),
-                analyses: request.Sources.SelectMany(source => source.AnalysisResults));
+                analyses: request.Sources.SelectMany(source => source.AnalysisResults),
+                fontResolutions: request.FontResolutions,
+                linkGroups: request.LinkGroups,
+                rois: request.Rois);
             string provenancePath = Path.Combine(figureDirectory, baseName + ".provenance.json");
             string exportReportPath = Path.Combine(figureDirectory, baseName + ".export-report.html");
             FigureProvenanceWriter.WriteJson(provenance, provenancePath);

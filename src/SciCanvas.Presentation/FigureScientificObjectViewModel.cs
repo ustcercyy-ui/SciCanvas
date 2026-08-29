@@ -30,6 +30,7 @@ public sealed class FigureScientificObjectViewModel : ObservableObject
     private string _unit = "a.u.";
     private string _colormap = "viridis";
     private string _channelEntriesText = "DAPI|#FF4FC3F7; GFP|#FF66BB6A";
+    private Guid? _channelId;
 
     public FigureScientificObjectViewModel(
         FigureScientificObjectKind kind,
@@ -191,6 +192,18 @@ public sealed class FigureScientificObjectViewModel : ObservableObject
 
     public IReadOnlyList<FigureChannelLegendEntry> ChannelEntries => ParseChannelEntries(ChannelEntriesText);
 
+    public Guid? ChannelId
+    {
+        get => _channelId;
+        set
+        {
+            if (SetProperty(ref _channelId, value))
+            {
+                NotifyChanged();
+            }
+        }
+    }
+
     public PointCollection PolygonPoints => new(ParsePointsOrEmpty().Select(point => new Point(point.X, point.Y)));
 
     public Geometry DirectionGeometry
@@ -281,7 +294,8 @@ public sealed class FigureScientificObjectViewModel : ObservableObject
         double maximum,
         string unit,
         string colormap,
-        string channelEntriesText)
+        string channelEntriesText,
+        Guid? channelId = null)
     {
         PointsText = pointsText;
         Label = label;
@@ -300,6 +314,7 @@ public sealed class FigureScientificObjectViewModel : ObservableObject
         Unit = unit;
         Colormap = colormap;
         ChannelEntriesText = channelEntriesText;
+        ChannelId = channelId;
     }
 
     /// <summary>Scales canonical final-canvas point text while keeping invalid draft text editable.</summary>
@@ -357,7 +372,8 @@ public sealed class FigureScientificObjectViewModel : ObservableObject
             var candidate = new FigureScientificObjectExportItem(
                 Id, Kind, points, Label, StrokeColor, FillColor, FillOpacityPercent,
                 TextColor, FontFamily, FontSizePt, StrokeWidthPt, IsBold, IsVisible,
-                ZIndex, Minimum, Maximum, Unit, Colormap, ChannelEntries);
+                ZIndex, Minimum, Maximum, Unit, Colormap, ChannelEntries,
+                ChannelId: ChannelId);
             candidate.EnsureValid(_canvasWidth, _canvasHeight);
             item = candidate;
             message = string.Empty;

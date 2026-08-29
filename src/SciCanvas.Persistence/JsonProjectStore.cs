@@ -1,5 +1,14 @@
 using System.Text.Json;
 using SciCanvas.Core.Workspace;
+using SciCanvas.Core.Science;
+using LinkingLinkGroup = SciCanvas.Core.Linking.LinkGroup;
+using LinkingLinkSyncOptions = SciCanvas.Core.Linking.LinkSyncOptions;
+using LinkingSpatialMapping = SciCanvas.Core.Linking.SpatialMapping;
+using LinkingSpatialMappingKind = SciCanvas.Core.Linking.SpatialMappingKind;
+using LinkingSpatialMappingOrigin = SciCanvas.Core.Linking.SpatialMappingOrigin;
+using LinkingSpatialMatrix3x3 = SciCanvas.Core.Linking.SpatialMatrix3x3;
+using LinkingRegistrationLandmarkPair = SciCanvas.Core.Linking.RegistrationLandmarkPair;
+using LinkingSpatialPoint = SciCanvas.Core.Linking.SpatialPoint;
 
 namespace SciCanvas.Persistence;
 
@@ -157,9 +166,10 @@ public sealed class JsonProjectStore : IProjectStore
             bool membersValid = group.Members.All(member =>
                 member.ChannelId != Guid.Empty &&
                 channelSources.TryGetValue(member.AssetId, out ProjectSourceSnapshot? source) &&
+                member.SourceRevision is long capturedRevision && capturedRevision >= 1 &&
                 member.FrameIndex >= 0 && member.FrameIndex < Math.Max(1, source.Metadata.FrameCount) &&
                 !string.IsNullOrWhiteSpace(member.Name) && member.Name.Trim().Length <= 128 &&
-                member.Role?.Length <= 128 &&
+                (member.Role is null || member.Role.Length <= 128) &&
                 member.IsNameConfirmed &&
                 member.NameOrigin is "user" or "filenameSuggestion" or "omeMetadata" &&
                 IsHexColor(member.Color) &&
@@ -179,6 +189,105 @@ public sealed class JsonProjectStore : IProjectStore
                 throw new InvalidDataException("工程包含无效或不可追溯的多通道素材组。");
             }
         }
+        if (document.LinkGroups.Select(group => group.Id).Distinct().Count() !=
+            document.LinkGroups.Count)
+        {
+            throw new InvalidDataException("工程包含重复的 LinkGroup ID。");
+        }
+
+        Dictionary<Guid, long> sourceRevisions = document.Sources.ToDictionary(
+            source => source.Id,
+            source => source.SourceRevision);
+        Dictionary<Guid, LinkingLinkGroup> validatedLinkGroups = [];
+        foreach (ProjectLinkGroupSnapshot snapshot in document.LinkGroups)
+        {
+            try
+            {
+                ProjectLinkSyncOptionsSnapshot options = snapshot.SyncOptions
+                    ?? throw new InvalidDataException("LinkGroup 缺少同步选项。");
+                LinkingLinkSyncOptions syncOptions = LinkingLinkSyncOptions.None;
+                if (options.Pan) syncOptions |= LinkingLinkSyncOptions.Pan;
+                if (options.Zoom) syncOptions |= LinkingLinkSyncOptions.Zoom;
+                if (options.Crop) syncOptions |= LinkingLinkSyncOptions.Crop;
+                if (options.Roi) syncOptions |= LinkingLinkSyncOptions.Roi;
+                if (options.ColorScale) syncOptions |= LinkingLinkSyncOptions.ColorScale;
+
+                LinkingSpatialMapping[] mappings = (snapshot.Mappings
+                        ?? throw new InvalidDataException("LinkGroup 缺少 SpatialMapping。"))
+                    .Select(mapping =>
+                    {
+                        if (mapping.Matrix is null || mapping.Matrix.Count != 9 ||
+                            mapping.Matrix.Any(value => !double.IsFinite(value)))
+                        {
+                            throw new InvalidDataException("SpatialMapping matrix 必须包含 9 个有限的 row-major 数值。");
+                        }
+
+                        if (!sourceRevisions.TryGetValue(mapping.SourceAssetId, out long sourceRevision) ||
+                            !sourceRevisions.TryGetValue(mapping.TargetAssetId, out long targetRevision) ||
+                            mapping.SourceRevision > sourceRevision ||
+                            mapping.TargetRevision > targetRevision)
+                        {
+                            throw new InvalidDataException("SpatialMapping 引用了不存在或未来的素材修订。");
+                        }
+
+                        double[] matrix = mapping.Matrix.ToArray();
+                        return new LinkingSpatialMapping(
+                            mapping.Id,
+                            mapping.SourceAssetId,
+                            mapping.TargetAssetId,
+                            mapping.SourceRevision,
+                            mapping.TargetRevision,
+                            mapping.Kind?.ToLowerInvariant() switch
+                            {
+                                "identity" => LinkingSpatialMappingKind.Identity,
+                                "translation" => LinkingSpatialMappingKind.Translation,
+                                "rigid" => LinkingSpatialMappingKind.Rigid,
+                                "affine" => LinkingSpatialMappingKind.Affine,
+                                _ => throw new InvalidDataException("工程包含未知 SpatialMapping 类型。"),
+                            },
+                            new LinkingSpatialMatrix3x3(
+                                matrix[0], matrix[1], matrix[2],
+                                matrix[3], matrix[4], matrix[5],
+                                matrix[6], matrix[7], matrix[8]),
+                            mapping.Origin?.ToLowerInvariant() switch
+                            {
+                                "userdeclaredidentity" => LinkingSpatialMappingOrigin.UserDeclaredIdentity,
+                                "userdeclaredtranslation" => LinkingSpatialMappingOrigin.UserDeclaredTranslation,
+                                "manuallandmarks" => LinkingSpatialMappingOrigin.ManualLandmarks,
+                                "importedmetadata" => LinkingSpatialMappingOrigin.ImportedMetadata,
+                                _ => throw new InvalidDataException("工程包含未知 SpatialMapping 来源。"),
+                            },
+                            mapping.CreatedAt,
+                            mapping.ResidualPixels,
+                            (mapping.Landmarks ?? [])
+                                .Select(landmark => new LinkingRegistrationLandmarkPair(
+                                    landmark.Id,
+                                    new LinkingSpatialPoint(landmark.SourceX, landmark.SourceY),
+                                    new LinkingSpatialPoint(landmark.TargetX, landmark.TargetY)))
+                                .ToArray(),
+                            mapping.ResidualPhysical,
+                            mapping.ResidualPhysicalUnit).EnsureValid();
+                    })
+                    .ToArray();
+
+                var group = new LinkingLinkGroup(
+                    snapshot.Id,
+                    snapshot.Name,
+                    snapshot.ReferenceAssetId,
+                    snapshot.AssetIds
+                        ?? throw new InvalidDataException("LinkGroup 缺少素材成员。"),
+                    syncOptions,
+                    mappings).EnsureValid(sourceIds);
+                validatedLinkGroups.Add(group.Id, group);
+            }
+            catch (Exception exception) when (
+                exception is InvalidOperationException or ArgumentException or OverflowException)
+            {
+                throw new InvalidDataException("工程包含无效或不可追溯的 LinkGroup / SpatialMapping。", exception);
+            }
+        }
+        IReadOnlyDictionary<Guid, ProjectMultiChannelAssetGroupSnapshot> channelGroupsById =
+            document.MultiChannelGroups.ToDictionary(group => group.Id);
         foreach (ProjectImageLayerSnapshot layer in document.Layers)
         {
             if (!sourceIds.Contains(layer.SourceAssetId) ||
@@ -187,6 +296,14 @@ public sealed class JsonProjectStore : IProjectStore
                 layer.Transform.ScaleX <= 0 || layer.Transform.ScaleY <= 0)
             {
                 throw new InvalidDataException($"图层 {layer.Name} 的工程记录无效。");
+            }
+
+            if (layer.CompositeGroupId is Guid compositeGroupId &&
+                (!channelGroupsById.TryGetValue(compositeGroupId, out ProjectMultiChannelAssetGroupSnapshot? group) ||
+                 !group.Members.Any(member => member.AssetId == layer.SourceAssetId)))
+            {
+                throw new InvalidDataException(
+                    $"图层 {layer.Name} 的 CompositeGroupId 不存在或不包含该 Panel 的源素材。");
             }
 
             if (layer.NormalizedCrop is { } crop &&
@@ -216,6 +333,94 @@ public sealed class JsonProjectStore : IProjectStore
             if (layer.StyleOverride is { } styleOverride && !IsValidPanelStyleOverride(styleOverride))
             {
                 throw new InvalidDataException($"图层 {layer.Name} 的 Panel 局部样式覆盖无效。");
+            }
+        }
+
+        if (document.Rois.Select(roi => roi.Id).Distinct().Count() != document.Rois.Count)
+        {
+            throw new InvalidDataException("工程包含重复的 canonical ROI ID。");
+        }
+
+        HashSet<Guid> roiIds = document.Rois.Select(roi => roi.Id).ToHashSet();
+        foreach (ProjectRoiSnapshot snapshot in document.Rois)
+        {
+            try
+            {
+                if (!sourceRevisions.TryGetValue(snapshot.AssetId, out long currentRevision) ||
+                    snapshot.SourceRevision > currentRevision)
+                {
+                    throw new InvalidDataException("Canonical ROI 引用了不存在或未来的 source revision。");
+                }
+
+                ProjectRoiStyleSnapshot roiStyleSnapshot = snapshot.Style ?? new ProjectRoiStyleSnapshot();
+                var roi = new RoiObject
+                {
+                    Id = snapshot.Id,
+                    AssetId = snapshot.AssetId,
+                    SourceRevision = snapshot.SourceRevision,
+                    GeometryKind = snapshot.GeometryKind?.ToLowerInvariant() switch
+                    {
+                        "rectangle" => RoiGeometryKind.Rectangle,
+                        "ellipse" => RoiGeometryKind.Ellipse,
+                        "polygon" => RoiGeometryKind.Polygon,
+                        "polyline" => RoiGeometryKind.Polyline,
+                        _ => throw new InvalidDataException("工程包含未知 canonical ROI geometry kind。"),
+                    },
+                    FrameIndex = snapshot.FrameIndex,
+                    SourceGeometry = (snapshot.SourceGeometry ?? [])
+                        .Select(point => new MeasurementPoint(point.X, point.Y))
+                        .ToArray(),
+                    Style = new RoiStyle(
+                        roiStyleSnapshot.StrokeColor,
+                        roiStyleSnapshot.StrokeWidth,
+                        roiStyleSnapshot.FillColor,
+                        roiStyleSnapshot.FillOpacity,
+                        roiStyleSnapshot.Label,
+                        roiStyleSnapshot.LabelFont,
+                        roiStyleSnapshot.LabelColor),
+                    Propagation = snapshot.Propagation is null
+                        ? null
+                        : new RoiPropagationProvenance(
+                            snapshot.Propagation.ReferenceRoiId,
+                            snapshot.Propagation.TargetRoiId,
+                            snapshot.Propagation.LinkGroupId,
+                            snapshot.Propagation.MappingId),
+                };
+                roi.EnsureValid();
+                if (roi.Propagation is { } propagation)
+                {
+                    if (!roiIds.Contains(propagation.ReferenceRoiId) ||
+                        !validatedLinkGroups.TryGetValue(propagation.LinkGroupId, out LinkingLinkGroup? linkGroup) ||
+                        !linkGroup.Mappings.Any(mapping =>
+                            mapping.Id == propagation.MappingId &&
+                            mapping.TargetAssetId == roi.AssetId))
+                    {
+                        throw new InvalidDataException("ROI propagation provenance 引用了不存在的 reference ROI、LinkGroup 或 Mapping。");
+                    }
+                }
+            }
+            catch (Exception exception) when (
+                exception is InvalidOperationException or ArgumentException or OverflowException)
+            {
+                throw new InvalidDataException("工程包含无效或不可追溯的 canonical ROI。", exception);
+            }
+        }
+        foreach (IGrouping<Guid, ProjectImageLayerSnapshot> linkedLayers in document.Layers
+                     .Where(layer => layer.CropLinkGroupId.HasValue)
+                     .GroupBy(layer => layer.CropLinkGroupId!.Value))
+        {
+            if (validatedLinkGroups.TryGetValue(linkedLayers.Key, out LinkingLinkGroup? group))
+            {
+                HashSet<Guid> linkedAssetIds = linkedLayers.Select(layer => layer.SourceAssetId).ToHashSet();
+                if (linkedLayers.Any(layer => !group.ContainsAsset(layer.SourceAssetId)) ||
+                    group.AssetIds.Any(assetId => !linkedAssetIds.Contains(assetId)))
+                {
+                    throw new InvalidDataException("跨素材 LinkGroup 的图层成员与素材成员不一致。");
+                }
+            }
+            else if (linkedLayers.Select(layer => layer.SourceAssetId).Distinct().Count() != 1)
+            {
+                throw new InvalidDataException("跨素材裁剪联动必须保存对应的 LinkGroup / SpatialMapping。");
             }
         }
 
@@ -380,15 +585,13 @@ public sealed class JsonProjectStore : IProjectStore
                     analysis.AppliedThresholdNormalized is double appliedThreshold &&
                     double.IsFinite(appliedThreshold) && appliedThreshold is >= 0 and <= 1 &&
                     analysis.MinimumAreaPixels is >= 1 and <= 10_000_000 &&
-                    analysis.MaximumCandidates is >= 1 and <= 100_000 &&
+                    (analysis.MaximumCandidates is null or >= 1) &&
                     analysis.ForegroundPixelCount is >= 0 &&
                     analysis.TotalPixelCount is > 0 &&
                     analysis.ForegroundPixelCount <= analysis.TotalPixelCount &&
                     region is not null && analysis.TotalPixelCount == region.Width * region.Height;
                 double maximumRaw = analysis.SourceBitDepth == 16 ? ushort.MaxValue : byte.MaxValue;
                 bool particlesValid = region is not null &&
-                    analysis.MaximumCandidates is int maximumCandidates &&
-                    analysis.Particles.Count <= maximumCandidates &&
                     analysis.Particles.Select(particle => particle.Id).Distinct().Count() ==
                     analysis.Particles.Count &&
                     analysis.Particles.All(particle =>

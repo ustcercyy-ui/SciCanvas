@@ -5,12 +5,13 @@ namespace SciCanvas.Persistence;
 /// normalized crop, millimeter frames, source revisions and scientific validity;
 /// V2.1 adds source-revision-bound scientific image analysis results; V2.2 adds
 /// persisted threshold/particle analysis and reproducible automation parameters; V2.3
-/// separates scientific stroke/fill/marker/label and annotation text/shape styles. All new
-/// fields have deterministic defaults for legacy documents.
+/// separates scientific stroke/fill/marker/label and annotation text/shape styles; V2.4
+/// persists scientific objects, multichannel/link/mapping state, composite panels, publishing
+/// portability and export policy. All new fields have deterministic defaults for legacy documents.
 /// </summary>
 public static class ProjectMigrationPipeline
 {
-    public const string CurrentVersion = "2.3";
+    public const string CurrentVersion = "2.4";
 
     public static IReadOnlySet<string> SupportedVersions { get; } =
         new HashSet<string>(StringComparer.Ordinal)
@@ -22,6 +23,7 @@ public static class ProjectMigrationPipeline
             "2.0",
             "2.1",
             "2.2",
+            "2.3",
             CurrentVersion,
         };
 
@@ -38,6 +40,10 @@ public static class ProjectMigrationPipeline
             return document;
         }
 
+        bool requiresCanonicalStyleMigration = !string.Equals(
+            document.SchemaVersion,
+            "2.3",
+            StringComparison.Ordinal);
         Guid figureId = CreateStableFigureId(document.ProjectId);
         ProjectWorkspaceSnapshot workspace = document.Workspace.Figures.Count > 0
             ? document.Workspace
@@ -81,16 +87,25 @@ public static class ProjectMigrationPipeline
             CropPresets = document.CropPresets,
             Guides = document.Guides,
             ExportProfiles = document.ExportProfiles,
+            JournalPresetSnapshots = document.JournalPresetSnapshots,
+            FontSubstitutions = document.FontSubstitutions,
             Calibrations = document.Calibrations,
-            Measurements = document.Measurements
-                .Select(measurement => MigrateMeasurement(measurement, globalFontFamily))
-                .ToArray(),
+            Measurements = requiresCanonicalStyleMigration
+                ? document.Measurements
+                    .Select(measurement => MigrateMeasurement(measurement, globalFontFamily))
+                    .ToArray()
+                : document.Measurements,
             Analyses = document.Analyses,
-            TemplateSnapshot = MigrateTemplateSnapshot(
-                document.TemplateSnapshot,
-                globalFontFamily,
-                globalTextColor,
-                globalShapeColor),
+            MultiChannelGroups = MigrateMultiChannelGroups(document.MultiChannelGroups, document.Sources),
+            LinkGroups = document.LinkGroups,
+            Rois = document.Rois,
+            TemplateSnapshot = requiresCanonicalStyleMigration
+                ? MigrateTemplateSnapshot(
+                    document.TemplateSnapshot,
+                    globalFontFamily,
+                    globalTextColor,
+                    globalShapeColor)
+                : document.TemplateSnapshot,
             AuditTrail = document.AuditTrail
                 .Concat(
                 [
@@ -108,6 +123,40 @@ public static class ProjectMigrationPipeline
                 .ToArray(),
             Workspace = workspace,
         };
+    }
+
+    private static IReadOnlyList<ProjectMultiChannelAssetGroupSnapshot> MigrateMultiChannelGroups(
+        IReadOnlyList<ProjectMultiChannelAssetGroupSnapshot> groups,
+        IReadOnlyList<ProjectSourceSnapshot> sources)
+    {
+        IReadOnlyDictionary<Guid, long> revisions = sources.ToDictionary(
+            source => source.Id,
+            source => Math.Max(1, source.SourceRevision));
+        return groups.Select(group => new ProjectMultiChannelAssetGroupSnapshot
+        {
+            Id = group.Id,
+            Name = group.Name,
+            ReferenceAssetId = group.ReferenceAssetId,
+            SameFieldOfViewConfirmed = group.SameFieldOfViewConfirmed,
+            Members = group.Members.Select(member => new ProjectChannelGroupMemberSnapshot
+            {
+                ChannelId = member.ChannelId,
+                AssetId = member.AssetId,
+                SourceRevision = member.SourceRevision ?? revisions.GetValueOrDefault(member.AssetId, 1),
+                FrameIndex = member.FrameIndex,
+                Name = member.Name,
+                Role = member.Role,
+                Color = member.Color,
+                NameOrigin = member.NameOrigin,
+                IsNameConfirmed = member.IsNameConfirmed,
+                Visible = member.Visible,
+                Opacity = member.Opacity,
+                DisplayMinimum = member.DisplayMinimum,
+                DisplayMaximum = member.DisplayMaximum,
+                Gamma = member.Gamma,
+                Invert = member.Invert,
+            }).ToArray(),
+        }).ToArray();
     }
 
     private static ProjectMeasurementSnapshot MigrateMeasurement(
@@ -171,6 +220,7 @@ public static class ProjectMigrationPipeline
             LayerSlots = template.LayerSlots,
             ScaleBars = template.ScaleBars,
             MeasurementOverlays = template.MeasurementOverlays,
+            ScientificObjects = template.ScientificObjects,
             Annotations = template.Annotations
                 .Select(annotation => MigrateAnnotation(
                     annotation,

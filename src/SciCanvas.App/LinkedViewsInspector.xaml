@@ -1,0 +1,150 @@
+<UserControl x:Class="SciCanvas.App.LinkedViewsInspector"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             MinWidth="250">
+    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled"
+                  CanContentScroll="False">
+        <StackPanel Margin="16,16,16,24">
+            <TextBlock Text="联动视图" FontSize="15" FontWeight="SemiBold" />
+            <TextBlock Margin="0,4,0,0"
+                       Text="跨素材裁剪 · Identity / Translation"
+                       Foreground="{DynamicResource MutedBrush}"
+                       FontSize="10" />
+
+            <Border Margin="0,12,0,0"
+                    Padding="10"
+                    Background="#10212A"
+                    BorderBrush="#245A68"
+                    BorderThickness="1"
+                    CornerRadius="4">
+                <StackPanel>
+                    <TextBlock Text="坐标约定" Foreground="#8CE5F4" FontSize="10" FontWeight="SemiBold" />
+                    <TextBlock Margin="0,4,0,0"
+                               Text="TargetPoint = M × SourcePoint；矩阵按 row-major 保存。跨源同步只改变目标裁剪坐标，不替换目标 SourceAsset。"
+                               Foreground="{DynamicResource MutedBrush}"
+                               FontSize="9"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <TextBlock Margin="0,12,0,0"
+                       Text="{Binding SummaryText}"
+                       Foreground="#DCE7F0"
+                       FontSize="9"
+                       TextWrapping="Wrap" />
+            <ListBox Margin="0,9,0,0"
+                     MinHeight="80"
+                     MaxHeight="190"
+                     Background="{DynamicResource PanelBrush}"
+                     BorderBrush="{DynamicResource BorderBrush}"
+                     BorderThickness="1"
+                     ItemsSource="{Binding Groups}"
+                     SelectedItem="{Binding SelectedGroup}">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Padding" Value="0" />
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Margin="8,7">
+                            <TextBlock Text="{Binding Name}" FontSize="10" FontWeight="SemiBold" />
+                            <TextBlock Margin="0,2,0,0" Text="{Binding ReferenceAssetName, StringFormat=参考：{0}}" Foreground="#80DDEA" FontSize="8" />
+                            <TextBlock Margin="0,2,0,0" Text="{Binding MemberSummary}" Foreground="{DynamicResource MutedBrush}" FontSize="8" TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <Border Margin="0,12,0,0"
+                    Padding="10"
+                    Background="{DynamicResource PanelRaisedBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="4">
+                <StackPanel>
+                    <TextBlock Text="同步语义" FontWeight="SemiBold" />
+                    <UniformGrid Margin="0,8,0,0" Columns="3">
+                        <CheckBox IsChecked="{Binding SelectedGroup.SyncCrop}" Content="Crop" />
+                        <CheckBox IsChecked="{Binding SelectedGroup.SyncRoi}" Content="ROI" ToolTip="PR6 保存映射语义；多边形 ROI 实例传播在 PR8 完成" />
+                        <CheckBox IsChecked="{Binding SelectedGroup.SyncColorScale}" Content="ColorScale" />
+                    </UniformGrid>
+                    <TextBlock Margin="0,6,0,0" Text="{Binding SelectedGroup.SyncSummary}" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                </StackPanel>
+            </Border>
+
+            <ItemsControl Margin="0,12,0,0" ItemsSource="{Binding SelectedGroup.Mappings}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Margin="0,0,0,9"
+                                Padding="10"
+                                Background="#111B23"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="4">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding TargetAssetName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" Text="{Binding KindText}" Foreground="#80DDEA" FontSize="9" />
+                                </Grid>
+                                <TextBlock Margin="0,3,0,0"
+                                           Text="{Binding SourceAssetName, StringFormat={}{0} → target}"
+                                           Foreground="{DynamicResource MutedBrush}"
+                                           FontSize="8"
+                                           TextTrimming="CharacterEllipsis" />
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Offset X / px" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                        <TextBox Margin="0,3,0,0"
+                                                 Text="{Binding OffsetX, UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Offset Y / px" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                        <TextBox Margin="0,3,0,0"
+                                                 Text="{Binding OffsetY, UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" />
+                                    </StackPanel>
+                                </Grid>
+                                <Button Margin="0,7,0,0"
+                                        Command="{Binding ResetIdentityCommand}"
+                                        Content="重置为 Identity" />
+                                <TextBlock Margin="0,6,0,0"
+                                           Text="{Binding ProvenanceText}"
+                                           Foreground="{DynamicResource MutedBrush}"
+                                           FontFamily="Consolas"
+                                           FontSize="8"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <Border Padding="9" Background="#241B16" BorderBrush="#755137" BorderThickness="1" CornerRadius="4">
+                <StackPanel>
+                    <TextBlock Text="修订安全" Foreground="#E7C49C" FontSize="10" FontWeight="SemiBold" />
+                    <TextBlock Margin="0,4,0,0"
+                               Text="任一素材 revision 改变后，现有映射会停止同步，直到重新确认或重建映射。"
+                               Foreground="#BDA68E"
+                               FontSize="8"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+            <TextBlock Margin="0,9,0,0"
+                       Text="{Binding SynchronizationStatusText}"
+                       Foreground="#80DDEA"
+                       FontSize="9"
+                       TextWrapping="Wrap" />
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -1,17 +1,26 @@
-﻿$ErrorActionPreference = "Stop"
+param(
+    [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA "SciCanvas"),
+    [switch]$NoStartMenuShortcut,
+    [switch]$CreateDesktopShortcut
+)
 
-$installRoot = Join-Path $env:LOCALAPPDATA "SciCanvas"
+$ErrorActionPreference = "Stop"
+
+$InstallRoot = [Environment]::ExpandEnvironmentVariables($InstallRoot)
+$InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)
 $startMenuRoot = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
-$shortcutPath = Join-Path $startMenuRoot "SciCanvas.lnk"
-$appExecutable = Join-Path $installRoot "SciCanvas.App.exe"
+$startMenuShortcutPath = Join-Path $startMenuRoot "SciCanvas.lnk"
+$desktopRoot = [Environment]::GetFolderPath("DesktopDirectory")
+$desktopShortcutPath = Join-Path $desktopRoot "SciCanvas.lnk"
+$appExecutable = Join-Path $InstallRoot "SciCanvas.App.exe"
 $sourceRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 $running = Get-Process -Name "SciCanvas.App" -ErrorAction SilentlyContinue
 if ($running) {
-    throw "SciCanvas 正在运行，请先关闭后再安装。"
+    throw "SciCanvas is running. Close it before installation."
 }
 
-New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $startMenuRoot -Force | Out-Null
 
 $excludedNames = @(
@@ -24,29 +33,56 @@ $excludedNames = @(
 Get-ChildItem -LiteralPath $sourceRoot -Force |
     Where-Object { $excludedNames -notcontains $_.Name } |
     ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $installRoot $_.Name) -Recurse -Force
+        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $InstallRoot $_.Name) -Recurse -Force
     }
 
-$shell = New-Object -ComObject WScript.Shell
-$shortcut = $shell.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = $appExecutable
-$shortcut.WorkingDirectory = $installRoot
-$shortcut.Description = "SciCanvas 科研组图工作台"
-$shortcut.Save()
+function New-SciCanvasShortcut([string]$ShortcutPath) {
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($ShortcutPath)
+    $shortcut.TargetPath = $appExecutable
+    $shortcut.WorkingDirectory = $InstallRoot
+    $shortcut.Description = "SciCanvas scientific figure workspace"
+    $shortcut.Save()
+}
 
+if ($NoStartMenuShortcut) {
+    if (Test-Path -LiteralPath $startMenuShortcutPath) {
+        Remove-Item -LiteralPath $startMenuShortcutPath -Force
+    }
+}
+else {
+    New-SciCanvasShortcut $startMenuShortcutPath
+}
+
+if ($CreateDesktopShortcut) {
+    New-SciCanvasShortcut $desktopShortcutPath
+}
+elseif (Test-Path -LiteralPath $desktopShortcutPath) {
+    Remove-Item -LiteralPath $desktopShortcutPath -Force
+}
+
+$installRootLiteral = $InstallRoot.Replace("'", "''")
+$startMenuShortcutLiteral = $startMenuShortcutPath.Replace("'", "''")
+$desktopShortcutLiteral = $desktopShortcutPath.Replace("'", "''")
 $uninstallScript = @"
 `$ErrorActionPreference = "Stop"
-`$installRoot = Join-Path `$env:LOCALAPPDATA "SciCanvas"
-`$shortcutPath = Join-Path `$env:APPDATA "Microsoft\Windows\Start Menu\Programs\SciCanvas.lnk"
+`$installRoot = '$installRootLiteral'
+`$startMenuShortcutPath = '$startMenuShortcutLiteral'
+`$desktopShortcutPath = '$desktopShortcutLiteral'
 if (Get-Process -Name "SciCanvas.App" -ErrorAction SilentlyContinue) {
-    throw "SciCanvas 正在运行，请先关闭后再卸载。"
+    throw "SciCanvas is running. Close it before uninstallation."
 }
-if (Test-Path -LiteralPath `$shortcutPath) { Remove-Item -LiteralPath `$shortcutPath -Force }
+if (Test-Path -LiteralPath `$startMenuShortcutPath) { Remove-Item -LiteralPath `$startMenuShortcutPath -Force }
+if (Test-Path -LiteralPath `$desktopShortcutPath) { Remove-Item -LiteralPath `$desktopShortcutPath -Force }
 if (Test-Path -LiteralPath `$installRoot) { Remove-Item -LiteralPath `$installRoot -Recurse -Force }
-Write-Host "SciCanvas 已卸载。"
+Write-Host "SciCanvas has been uninstalled."
 "@
-Set-Content -LiteralPath (Join-Path $installRoot "Uninstall-SciCanvas.ps1") -Value $uninstallScript -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $InstallRoot "Uninstall-SciCanvas.ps1") -Value $uninstallScript -Encoding UTF8
 
-Write-Host "SciCanvas 已安装到：$installRoot"
-Write-Host "开始菜单快捷方式：$shortcutPath"
-
+Write-Host "SciCanvas installed to: $InstallRoot"
+if (!$NoStartMenuShortcut) {
+    Write-Host "Start menu shortcut: $startMenuShortcutPath"
+}
+if ($CreateDesktopShortcut) {
+    Write-Host "Desktop shortcut: $desktopShortcutPath"
+}

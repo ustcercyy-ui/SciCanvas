@@ -65,8 +65,7 @@ public sealed class WpfFigureExporter : IFigureExporter
                 cancellationToken.ThrowIfCancellationRequested();
                 ValidatePanel(panel, document);
 
-                BitmapSource cropped = LoadExactCrop(panel.Source.OriginalPath, panel.SourceRect, panel.FrameIndex);
-                cropped = WpfImageAdjustmentProcessor.Apply(cropped, panel.Adjustments);
+                BitmapSource cropped = LoadPanelImage(panel, cancellationToken);
                 Rect imageRect = CalculateContainedRect(
                     cropped.PixelWidth,
                     cropped.PixelHeight,
@@ -138,6 +137,17 @@ public sealed class WpfFigureExporter : IFigureExporter
 
             throw;
         }
+    }
+
+    internal static BitmapSource LoadPanelImage(
+        FigurePanelExportItem panel,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(panel);
+        BitmapSource source = panel.IsComposite
+            ? WpfCompositePanelRenderer.Render(panel.EffectiveChannelLayers, cancellationToken)
+            : LoadExactCrop(panel.Source.OriginalPath, panel.SourceRect, panel.FrameIndex);
+        return WpfImageAdjustmentProcessor.Apply(source, panel.Adjustments);
     }
 
     internal static BitmapSource LoadExactCrop(string sourcePath, PixelRect64 crop, int frameIndex = 0)
@@ -822,6 +832,22 @@ public sealed class WpfFigureExporter : IFigureExporter
             throw new InvalidOperationException($"面板 {panel.Label} 超出拼版画布边界。");
         }
 
+
+        if (panel.IsComposite)
+        {
+            foreach (FigureChannelLayerExportItem layer in panel.EffectiveChannelLayers)
+            {
+                layer.EnsureValid();
+            }
+
+            if (panel.EffectiveChannelLayers.Select(layer => layer.GroupId).Distinct().Count() != 1 ||
+                panel.EffectiveChannelLayers.Select(layer => layer.SourceRect.Width).Distinct().Count() != 1 ||
+                panel.EffectiveChannelLayers.Select(layer => layer.SourceRect.Height).Distinct().Count() != 1)
+            {
+                throw new InvalidOperationException(
+                    $"复合面板 {panel.Label} 的通道层必须来自同一组且具有相同裁剪尺寸。");
+            }
+        }
 
         foreach (FigureScaleBarExportSpec scaleBar in panel.EffectiveScaleBars)
         {

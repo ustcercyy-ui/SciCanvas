@@ -1,6 +1,7 @@
 using SciCanvas.Core.Channels;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
+using LinkingLinkGroup = SciCanvas.Core.Linking.LinkGroup;
 using SciCanvas.Core.Science;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Workspace;
@@ -39,7 +40,11 @@ internal sealed record EditorHistorySnapshot(
     IReadOnlyList<CalibrationHistorySnapshot> Calibrations,
     IReadOnlyList<MeasurementHistorySnapshot> Measurements,
     IReadOnlyList<AnalysisHistorySnapshot> Analyses,
-    IReadOnlyList<MultiChannelAssetGroup> MultiChannelGroups);
+    IReadOnlyList<MultiChannelAssetGroup> MultiChannelGroups,
+    IReadOnlyList<LinkingLinkGroup>? LinkGroups = null,
+    IReadOnlyList<RoiObject>? Rois = null,
+    IReadOnlyList<JournalExportPreset>? JournalPresets = null,
+    IReadOnlyList<FontSubstitutionRule>? FontSubstitutions = null);
 
 internal sealed record PanelHistorySnapshot(
     Guid Id,
@@ -63,6 +68,7 @@ internal sealed record PanelHistorySnapshot(
     ImageAdjustmentParameters Adjustments,
     bool IsAspectRatioLocked,
     Guid? CropLinkGroupId,
+    Guid? CompositeGroupId,
     PanelFitMode FitMode,
     double RotationDegrees,
     ScientificValidity ReplacementValidity,
@@ -115,7 +121,8 @@ internal sealed record ScientificObjectHistorySnapshot(
     double Maximum,
     string Unit,
     string Colormap,
-    string ChannelEntriesText);
+    string ChannelEntriesText,
+    Guid? ChannelId);
 internal sealed record GuideHistorySnapshot(
     Guid Id,
     FigureGuideOrientation Orientation,

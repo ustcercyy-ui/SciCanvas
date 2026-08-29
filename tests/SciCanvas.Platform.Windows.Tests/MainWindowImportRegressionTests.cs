@@ -43,27 +43,69 @@ public sealed class MainWindowImportRegressionTests
                 var inspector = Assert.IsType<ScrollViewer>(window.FindName("InspectorScrollViewer"));
                 var layers = Assert.IsType<ScrollViewer>(window.FindName("LayersScrollViewer"));
                 var channels = Assert.IsType<ChannelsInspector>(window.FindName("ChannelsInspectorPanel"));
+                var linkedViews = Assert.IsType<LinkedViewsInspector>(window.FindName("LinkedViewsInspectorPanel"));
+var registration = Assert.IsType<RegistrationWorkspace>(window.FindName("RegistrationWorkspacePanel"));
+                var roiPropagation = Assert.IsType<RoiPropagationWorkspace>(window.FindName("RoiPropagationWorkspacePanel"));
                 var rightSidebar = Assert.IsType<Border>(window.FindName("RightSidebarPanel"));
                 var inspectorButton = Assert.IsType<Button>(window.FindName("InspectorTabButton"));
                 var layersButton = Assert.IsType<Button>(window.FindName("LayersTabButton"));
                 var channelsButton = Assert.IsType<Button>(window.FindName("ChannelsTabButton"));
+                var linkedViewsButton = Assert.IsType<Button>(window.FindName("LinkedViewsTabButton"));
+var registrationButton = Assert.IsType<Button>(window.FindName("RegistrationTabButton"));
+                var roiPropagationButton = Assert.IsType<Button>(window.FindName("RoiPropagationTabButton"));
 
                 AssertSidebarPageVisibility(inspector, layers, channels, Visibility.Visible, Visibility.Collapsed, Visibility.Collapsed);
+                Assert.Equal(Visibility.Collapsed, linkedViews.Visibility);
+                Assert.Equal(Visibility.Collapsed, registration.Visibility);
+                Assert.Equal(Visibility.Collapsed, roiPropagation.Visibility);
                 CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "inspector");
 
                 ExecuteBoundButtonCommand(layersButton);
                 window.UpdateLayout();
                 AssertSidebarPageVisibility(inspector, layers, channels, Visibility.Collapsed, Visibility.Visible, Visibility.Collapsed);
+                Assert.Equal(Visibility.Collapsed, linkedViews.Visibility);
+                Assert.Equal(Visibility.Collapsed, registration.Visibility);
+                Assert.Equal(Visibility.Collapsed, roiPropagation.Visibility);
                 CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "layers");
 
                 ExecuteBoundButtonCommand(channelsButton);
                 window.UpdateLayout();
                 AssertSidebarPageVisibility(inspector, layers, channels, Visibility.Collapsed, Visibility.Collapsed, Visibility.Visible);
+                Assert.Equal(Visibility.Collapsed, linkedViews.Visibility);
+                Assert.Equal(Visibility.Collapsed, registration.Visibility);
+                Assert.Equal(Visibility.Collapsed, roiPropagation.Visibility);
                 CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "channels");
+
+                ExecuteBoundButtonCommand(linkedViewsButton);
+                window.UpdateLayout();
+                AssertSidebarPageVisibility(inspector, layers, channels, Visibility.Collapsed, Visibility.Collapsed, Visibility.Collapsed);
+                Assert.Equal(Visibility.Visible, linkedViews.Visibility);
+                Assert.Equal(Visibility.Collapsed, registration.Visibility);
+                Assert.Equal(Visibility.Collapsed, roiPropagation.Visibility);
+                CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "linked-views");
+
+                ExecuteBoundButtonCommand(registrationButton);
+                window.UpdateLayout();
+                AssertSidebarPageVisibility(inspector, layers, channels, Visibility.Collapsed, Visibility.Collapsed, Visibility.Collapsed);
+                Assert.Equal(Visibility.Collapsed, linkedViews.Visibility);
+                Assert.Equal(Visibility.Visible, registration.Visibility);
+                Assert.Equal(Visibility.Collapsed, roiPropagation.Visibility);
+CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "registration");
+
+                ExecuteBoundButtonCommand(roiPropagationButton);
+                window.UpdateLayout();
+                AssertSidebarPageVisibility(inspector, layers, channels, Visibility.Collapsed, Visibility.Collapsed, Visibility.Collapsed);
+                Assert.Equal(Visibility.Collapsed, linkedViews.Visibility);
+                Assert.Equal(Visibility.Collapsed, registration.Visibility);
+                Assert.Equal(Visibility.Visible, roiPropagation.Visibility);
+                CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "roi-propagation");
 
                 ExecuteBoundButtonCommand(inspectorButton);
                 window.UpdateLayout();
                 AssertSidebarPageVisibility(inspector, layers, channels, Visibility.Visible, Visibility.Collapsed, Visibility.Collapsed);
+                Assert.Equal(Visibility.Collapsed, linkedViews.Visibility);
+                Assert.Equal(Visibility.Collapsed, registration.Visibility);
+                Assert.Equal(Visibility.Collapsed, roiPropagation.Visibility);
 
                 inspector.ScrollToVerticalOffset(200);
                 window.UpdateLayout();

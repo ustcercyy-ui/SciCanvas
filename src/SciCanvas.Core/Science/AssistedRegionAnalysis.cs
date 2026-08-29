@@ -19,16 +19,14 @@ public sealed record AssistedRegionAnalysisOptions(
     PixelRect64 RegionOfInterest,
     bool UseAutomaticThreshold = true,
     double ThresholdNormalized = 0.5,
-    int MinimumAreaPixels = 16,
-    int MaximumCandidates = 1000)
+    int MinimumAreaPixels = 16)
 {
     public bool IsValid =>
         RegionOfInterest.Width > 0 &&
         RegionOfInterest.Height > 0 &&
         double.IsFinite(ThresholdNormalized) &&
         ThresholdNormalized is >= 0 and <= 1 &&
-        MinimumAreaPixels is >= 1 and <= 10_000_000 &&
-        MaximumCandidates is >= 1 and <= 100_000;
+        MinimumAreaPixels is >= 1 and <= 10_000_000;
 
     public bool DetectDarkRegions => Mode is
         AssistedRegionMode.DarkParticles or
@@ -133,7 +131,6 @@ public sealed record ParticleAnalysisRecipe(
     bool UseAutomaticThreshold,
     double ThresholdNormalized,
     int MinimumAreaPixels,
-    int MaximumCandidates,
     ImageAnalysisChannel Channel)
 {
     public int Version { get; init; } = 1;
@@ -143,8 +140,7 @@ public sealed record ParticleAnalysisRecipe(
         Version == 1 &&
         double.IsFinite(ThresholdNormalized) &&
         ThresholdNormalized is >= 0 and <= 1 &&
-        MinimumAreaPixels is >= 1 and <= 10_000_000 &&
-        MaximumCandidates is >= 1 and <= 100_000;
+        MinimumAreaPixels is >= 1 and <= 10_000_000;
 
     public AssistedRegionAnalysisOptions CreateOptions(PixelRect64 region)
     {
@@ -158,8 +154,7 @@ public sealed record ParticleAnalysisRecipe(
             region,
             UseAutomaticThreshold,
             ThresholdNormalized,
-            MinimumAreaPixels,
-            MaximumCandidates);
+            MinimumAreaPixels);
     }
 }
 

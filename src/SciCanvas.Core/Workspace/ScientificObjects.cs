@@ -93,11 +93,111 @@ public sealed record AnalysisResultObject : ScientificObject
     public required ScientificImageAnalysisResult Result { get; init; }
 }
 
+public enum RoiGeometryKind
+{
+    Rectangle,
+    Ellipse,
+    Polygon,
+    Polyline,
+}
+
+public sealed record RoiStyle(
+    string StrokeColor,
+    double StrokeWidth,
+    string FillColor,
+    double FillOpacity,
+    string? Label = null,
+    string? LabelFont = null,
+    string? LabelColor = null)
+{
+    public static RoiStyle Default { get; } = new(
+        "#FF22C7E8",
+        2,
+        "#FF22C7E8",
+        0.12,
+        null,
+        "Arial",
+        "#FF22C7E8");
+
+    public RoiStyle EnsureValid()
+    {
+        if (!ScientificStyleColor.ValidateColor(StrokeColor) ||
+            !ScientificStyleColor.ValidateColor(FillColor) ||
+            !double.IsFinite(StrokeWidth) || StrokeWidth <= 0 ||
+            !double.IsFinite(FillOpacity) || FillOpacity is < 0 or > 1 ||
+            Label?.Length > 256 || LabelFont?.Length > 128 ||
+            (LabelColor is not null && !ScientificStyleColor.ValidateColor(LabelColor)))
+        {
+            throw new InvalidOperationException("ROI style 必须包含有效颜色、线宽、填充透明度与可选标签。");
+        }
+
+        return this;
+    }
+}
+
+public sealed record RoiPropagationProvenance(
+    Guid ReferenceRoiId,
+    Guid TargetRoiId,
+    Guid LinkGroupId,
+    Guid MappingId)
+{
+    public RoiPropagationProvenance EnsureValid()
+    {
+        if (ReferenceRoiId == Guid.Empty || TargetRoiId == Guid.Empty ||
+            LinkGroupId == Guid.Empty || MappingId == Guid.Empty ||
+            ReferenceRoiId == TargetRoiId)
+        {
+            throw new InvalidOperationException("ROI propagation provenance 缺少有效 ROI、LinkGroup 或 Mapping ID。");
+        }
+
+        return this;
+    }
+}
+
+/// <summary>Canonical ROI geometry is always stored in source pixel coordinates.</summary>
 public sealed record RoiObject : ScientificObject
 {
     public override ScientificObjectKind Kind => ScientificObjectKind.Roi;
 
     public required IReadOnlyList<MeasurementPoint> SourceGeometry { get; init; }
+
+    public RoiGeometryKind GeometryKind { get; init; } = RoiGeometryKind.Polygon;
+
+    public int FrameIndex { get; init; }
+
+    public RoiStyle Style { get; init; } = RoiStyle.Default;
+
+    public RoiPropagationProvenance? Propagation { get; init; }
+
+    public RoiObject EnsureValid()
+    {
+        int minimumPoints = GeometryKind switch
+        {
+            RoiGeometryKind.Rectangle or RoiGeometryKind.Ellipse => 2,
+            RoiGeometryKind.Polygon => 3,
+            RoiGeometryKind.Polyline => 2,
+            _ => int.MaxValue,
+        };
+        if (Id == Guid.Empty || AssetId is not Guid assetId || assetId == Guid.Empty ||
+            SourceRevision is not long revision || revision < 1 || FrameIndex < 0 ||
+            !Enum.IsDefined(GeometryKind) || SourceGeometry.Count < minimumPoints ||
+            SourceGeometry.Any(point => !double.IsFinite(point.X) || !double.IsFinite(point.Y)))
+        {
+            throw new InvalidOperationException("Canonical ROI 必须绑定素材/revision/frame，并保存有效 source-pixel geometry。");
+        }
+
+        Style.EnsureValid();
+        if (Propagation is not null)
+        {
+            Propagation.EnsureValid();
+            if (Propagation.TargetRoiId != Id)
+            {
+                throw new InvalidOperationException("ROI propagation 的 TargetRoiId 必须等于当前 ROI ID。");
+            }
+        }
+
+        return this;
+    }
 }
 
 public sealed record InsetObject : ScientificObject
@@ -120,6 +220,8 @@ public sealed record ColorbarObject : ScientificObject
     public required string Unit { get; init; }
 
     public required string Colormap { get; init; }
+
+    public Guid? ChannelId { get; init; }
 
     public IReadOnlyList<double> Ticks { get; init; } = [];
 }

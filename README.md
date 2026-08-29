@@ -126,26 +126,26 @@ CLI 退出码：`0` 成功、`2` 参数错误、`3` 工程或源图验证失败�
 - ROI 统计、强度剖面、直方图与颗粒分析都绑定 Source Asset、source revision、frame、channel、bit depth、算法版本和分析时间；替换源图后不会把旧结果误认为当前结果。
 - 原始像素读取支持 8-bit / 16-bit 与 Luminance、Red、Green、Blue、Alpha 通道；16-bit 阈值与均值不经 8-bit 量化。
 - 亮颗粒、暗颗粒等阈值模式可使用确定性 Otsu 或手动阈值，输出连通域数量、面积分数、面积、周长、等效直径、圆度、长宽比、原始强度与真实 Feret 最大/最小径。
-- 当前阈值、最小面积、候选上限与通道可形成批处理配方，并应用于裁剪队列中的多个来源；每个结果仍分别绑定各自来源 revision，整个批次作为单个历史手势并写入审计轨迹。
+- 当前阈值、最小面积与通道可形成批处理配方，并应用于裁剪队列中的多个来源；所有满足条件的连通区域都会返回，不再按候选数量截断。每个结果仍分别绑定各自来源 revision，整个批次作为单个历史手势并写入审计轨迹。
 - 分析结果可随 `2.2` 工程保存、严格校验和迁移，并统一导出为 CSV / XLSX；旧 `2.1` 工程会显式迁移且保留既有分析。
 - Figure 全局样式、OME 标定、各向异性角度、像素精确裁剪、格式感知导出预检和 Panel 标签序列等正确性问题同步修复。
 
 源图仍保持只读；辅助分析只生成可审计结果，不进行生成式填充、克隆、擦除或对象移除。
 
-## v2.4 Stage 1：Scientific Objects & Multichannel Foundation
+## v2.4 Scientific Objects, Multichannel & Reproducible Publishing
 
-`v2.4.0-alpha.2` 是 2.4 路线图 PR1–PR5 阶段包的界面热修订，并保持工程 schema 为 `2.3`，以避免在 PR12 正式迁移前制造伪兼容承诺。
+`v2.4.0-alpha` 已完成路线图 PR1–PR12，工程 schema 正式升级为 `2.4`。
 
-- 正确性闭环覆盖测量叠加、原子投稿包、确定性迁移和 16-bit Alpha 预检。
-- Panel 的尺寸语义与多个独立比例尺进入同一工程、渲染、历史和预检链路。
-- Measurement、Scale Bar、Colorbar、ROI、Inset、Text 与 Arrow 以明确科学对象模型持久化。
-- 原始像素平面与多通道素材组合支持通道颜色、可见性、强度范围、Gamma、混合模式和组合预览。
-- 多通道工作区进入桌面检查器，并与工程保存、恢复、映射和撤销/重做集成。
-- 右侧检查器、图层和通道页现在严格互斥显示，不再发生标题、说明和空列表叠层；深色滚动条与工作区主题保持一致。
-- 当前验证基线为 `256/256` tests。
+- Canonical Scientific Objects 覆盖 Measurement Overlay、多尺度标尺、Polygon Annotation、Canonical ROI、Direction Marker、Colorbar 与 Channel Legend，并统一进入工程、历史、预览、栅格、SVG、PDF 与 provenance。
+- 多通道 EDS Asset Group 保存 raw UInt8/UInt16 plane、通道名称来源、颜色、显示范围、Gamma、Opacity、FrameIndex 和 source revision；Panel composite 从不可变 channel layers 确定性重建，旧单源工程保持兼容。
+- Linked Views、Translation/Rigid/Affine registration、revision stale 阻断、Polygon ROI 顶点传播与逐通道 raw statistics 形成可保存、可恢复、可撤销的闭环。
+- Integrity QC 精确定位 Asset/Panel/Object/Measurement/Analysis/Channel/LinkGroup/Mapping，并新增 UInt8/UInt16 旋转/镜像 exact duplicate 检测。
+- Journal preset pack、显式字体替换和 PDF 字体策略进入 Publishing Portability 工作区；requested font 不会被 fallback 静默改写。
+- Export 与投稿包统一使用不可变 `FigureExportDocument`；provenance 记录 channels、registration、ROI propagation、colorbar/legend、font resolution 和 PDF 实际策略。
+- 辅助区域/颗粒分析已取消 1000 条候选截断，返回所有满足阈值和最小面积条件的连通区域。
+- 最终本地 Release 验证为 `305/305` tests（Core 129 + Windows 176），solution build 为 0 warnings、0 errors。
 
-完整边界与后续 PR6–PR12 计划见 [v2.4 路线图](docs/ROADMAP_2.4.md)，本次热修订与验收记录见 [v2.4.0-alpha.2 发布说明](docs/RELEASE_2.4.0-alpha.2.md)。
-
+当前限制包括：不宣称 full OME-TIFF/CZI/LIF/ND2/DM3/DM4/Bio-Formats；不猜测未保存的 interleaved RGB component；任意 affine warp 尚未作为像素重采样 composite；内置 PDF writer 当前可靠路径为文字轮廓，不宣称字体子集嵌入。完整内容见 [v2.4.0-alpha 发布说明](docs/RELEASE_2.4.0.md)与 [v2.4 路线图](docs/ROADMAP_2.4.md)。
 ## v2.3 Scientific Styling, Integrity & Submission
 
 `v2.3.0-alpha` 把科研对象样式从界面字段升级为可迁移、可审计并贯穿预览/工程/导出的统一系统，同时交付投稿前科研完整性检查和一键投稿包。
@@ -204,13 +204,13 @@ dotnet publish .\src\SciCanvas.Cli\SciCanvas.Cli.csproj --configuration Release 
 
 生成后可双击 `.\artifacts\SciCanvas-win-x64\SciCanvas.App.exe`，或在终端运行同目录的 `SciCanvas.Cli.exe`。该目录版仍需要系统安装 .NET 10 Desktop Runtime。
 
-当前可直接交付的阶段版本为 `v2.4.0-alpha.2` 自包含 Windows x64 包：
+当前可直接交付的版本为 `v2.4.0-alpha` 自包含 Windows x64 包：
 
-- [SciCanvas-v2.4.0-alpha.2-Setup.exe](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.4.0-alpha.2/SciCanvas-v2.4.0-alpha.2-Setup.exe)：双击安装到当前用户目录，不需要管理员权限，同时安装 GUI 与 CLI。
-- [SciCanvas-v2.4.0-alpha.2-Portable.zip](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.4.0-alpha.2/SciCanvas-v2.4.0-alpha.2-Portable.zip)：解压后运行 `SciCanvas.App.exe` 或 `SciCanvas.Cli.exe`，不需要安装 .NET。
-- [SciCanvas-v2.4.0-alpha.2-SHA256.txt](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.4.0-alpha.2/SciCanvas-v2.4.0-alpha.2-SHA256.txt)：安装包与便携包的 SHA-256 校验值。
+- [SciCanvas-v2.4.0-alpha-Setup.exe](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.4.0-alpha/SciCanvas-v2.4.0-alpha-Setup.exe)：双击安装到当前用户目录，不需要管理员权限，同时安装 GUI 与 CLI。
+- [SciCanvas-v2.4.0-alpha-Portable.zip](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.4.0-alpha/SciCanvas-v2.4.0-alpha-Portable.zip)：解压后运行 `SciCanvas.App.exe` 或 `SciCanvas.Cli.exe`，不需要安装 .NET。
+- [SciCanvas-v2.4.0-alpha-SHA256.txt](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.4.0-alpha/SciCanvas-v2.4.0-alpha-SHA256.txt)：安装包与便携包的 SHA-256 校验值。
 
-完整更新内容、安装步骤和验证记录见 [v2.4.0-alpha.2 Release](https://github.com/ustcercyy-ui/SciCanvas/releases/tag/v2.4.0-alpha.2)。
+完整更新内容、安装步骤和验证记录见 [v2.4.0-alpha Release](https://github.com/ustcercyy-ui/SciCanvas/releases/tag/v2.4.0-alpha)。
 构建与测试：
 
 ```powershell
@@ -237,6 +237,7 @@ dotnet test .\SciCanvas.sln --configuration Debug
 - [v2.0.1 交互改进与安装验证](docs/RELEASE_2.0.1.md)
 - [v2.2 科学分析与自动化发布说明](docs/RELEASE_2.2.0.md)
 - [v2.3 科研样式、完整性与投稿包发布说明](docs/RELEASE_2.3.0.md)
+- [v2.4.0-alpha 最终阶段发布说明](docs/RELEASE_2.4.0.md)
 - [v2.4.0-alpha.2 检查器与图层显示热修订](docs/RELEASE_2.4.0-alpha.2.md)
 - [v2.4.0-alpha.1 科学对象与多通道阶段发布说明](docs/RELEASE_2.4.0-alpha.1.md)
 - [v2.4 完整路线图与 PR1–PR12 状态](docs/ROADMAP_2.4.md)

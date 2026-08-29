@@ -1,3 +1,5 @@
+using SciCanvas.Core.Channels;
+using SpatialLinkGroup = SciCanvas.Core.Linking.LinkGroup;
 using SciCanvas.Core.Sources;
 
 namespace SciCanvas.Core.Workspace;
@@ -31,7 +33,16 @@ public sealed record QcResult(
     Guid? PanelId = null,
     Guid? AssetId = null,
     Guid? ObjectId = null,
-    bool CanAutoFix = false);
+    bool CanAutoFix = false)
+{
+    public QcIssueLocation Location { get; init; } = new(
+        FigureId: FigureId,
+        PanelId: PanelId,
+        AssetId: AssetId,
+        ScientificObjectId: ObjectId);
+
+    public IReadOnlyList<QcIssueLocation> RelatedLocations { get; init; } = [];
+}
 
 public sealed record QcConfiguration(
     double MinimumEffectiveDpi = 300,
@@ -55,13 +66,23 @@ public sealed record QcConfiguration(
 public sealed record QcContext(
     ScientificProject Project,
     QcConfiguration Configuration,
-    IFontCatalog? FontCatalog = null)
+    IFontCatalog? FontCatalog = null,
+    IReadOnlyList<MultiChannelAssetGroup>? MultiChannelGroups = null,
+    IReadOnlyList<SpatialLinkGroup>? LinkGroups = null,
+    IReadOnlyList<RawCropQcCandidate>? RawCrops = null,
+    IReadOnlySet<Guid>? QuantitativeChannelIds = null)
 {
     public ScientificAsset? GetAsset(Guid assetId) =>
         Project.Assets.GetValueOrDefault(assetId);
 
     public ScientificObject? GetScientificObject(Guid objectId) =>
         Project.ScientificObjects.GetValueOrDefault(objectId);
+
+    public IReadOnlyList<MultiChannelAssetGroup> EffectiveMultiChannelGroups => MultiChannelGroups ?? [];
+
+    public IReadOnlyList<SpatialLinkGroup> EffectiveLinkGroups => LinkGroups ?? [];
+
+    public IReadOnlyList<RawCropQcCandidate> EffectiveRawCrops => RawCrops ?? [];
 }
 
 public interface IQcRule
@@ -114,6 +135,11 @@ public sealed class QcEngine
         yield return new ExactDuplicateSourceRule();
         yield return new DuplicateCropRule();
         yield return new StaleScientificObjectRule();
+        yield return new PreciseScientificObjectRule();
+        yield return new MultiChannelIntegrityRule();
+        yield return new LinkedViewIntegrityRule();
+        yield return new ColorbarIntegrityRule();
+        yield return new ExactTransformedDuplicateRule();
     }
 }
 
@@ -133,17 +159,31 @@ internal abstract class QcRuleBase(string id, QcCategory category) : IQcRule
         Guid? panelId = null,
         Guid? assetId = null,
         Guid? objectId = null,
-        bool canAutoFix = false) => new(
+        bool canAutoFix = false,
+        QcIssueLocation? location = null,
+        IReadOnlyList<QcIssueLocation>? relatedLocations = null)
+    {
+        QcIssueLocation effectiveLocation = location ?? new QcIssueLocation(
+            FigureId: figureId,
+            PanelId: panelId,
+            AssetId: assetId,
+            ScientificObjectId: objectId);
+        return new QcResult(
             $"{Id}:{suffix}",
             Id,
             severity,
             Category,
             message,
-            figureId,
-            panelId,
-            assetId,
-            objectId,
-            canAutoFix);
+            effectiveLocation.FigureId,
+            effectiveLocation.PanelId,
+            effectiveLocation.AssetId,
+            effectiveLocation.ScientificObjectId,
+            canAutoFix)
+        {
+            Location = effectiveLocation,
+            RelatedLocations = relatedLocations ?? [],
+        };
+    }
 }
 
 internal sealed class ObjectOutsideCanvasRule()

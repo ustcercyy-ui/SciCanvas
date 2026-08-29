@@ -2,7 +2,7 @@
 
 SciCanvas v2.4 的产品主题是 **Scientific Objects, Multichannel & Reproducible Publishing**。路线图以源文件只读、非破坏处理、raw/display 分离、源像素坐标和物理坐标为科学真值、确定性处理和可审计导出为不可协商的约束。
 
-本文档同时记录已经落地的阶段成果与尚未完成的工作。`v2.4.0-alpha.2` 是 PR1–PR5 阶段包的界面热修订，不代表 v2.4 全部功能完成。
+本文档记录 PR1–PR12 的最终实施结果。`v2.4.0-alpha` 已完成全部路线图阶段，工程 schema 为 `2.4`；各能力边界和验证结果以本文及 [最终发布说明](RELEASE_2.4.0.md) 为准。
 
 ## 总体目标
 
@@ -15,7 +15,7 @@ v2.4 建立四条统一能力：
 
 目标场景包括 SEM、BSE、HAADF/STEM、EDS 元素分布图、多通道显微图、同视场多模态比较和前后对比。
 
-## 已完成：PR1–PR5
+## 已完成：PR1–PR12
 
 ### PR1：v2.3 correctness closure
 
@@ -62,53 +62,63 @@ v2.4 建立四条统一能力：
 - 多通道组进入项目 JSON 校验、保存/打开、自动恢复和 Undo/Redo。
 - 待配准组可保存，但在 SpatialMapping 完成前不会启用跨源联动。
 
-## 待完成：PR6–PR12
-
 ### PR6：Linked Views + SpatialMapping
 
-- 正式实现 `LinkGroup` 与持久化的 `LinkSyncOptions`。
-- 支持不同 `SourceAsset` 之间的 Identity 与 Translation mapping。
-- 至少完整同步 Crop、ROI 与 ColorScale；各 Panel 始终保留自己的 `SourceAssetId`。
-- 任何同步都不得通过替换目标素材来伪造跨源联动。
+- 新增独立 `SciCanvas.Core.Linking` 模型：`LinkGroup`、flags 形式的 `LinkSyncOptions`、`SpatialMapping`、`SpatialMatrix3x3` 与映射溯源。
+- Matrix 明确使用 row-major 和 `TargetPoint = M × SourcePoint`；支持 Identity、Translation，并为 Rigid/Affine 保留经过验证的核心表达。
+- 不同 `SourceAsset` 的 Panel 可通过用户声明的 Identity 或 Translation 同步 half-open Crop；矩形按四角映射后取确定性 bounding box。
+- Crop 与 ColorScale 同步始终保留每个 Panel 原本的 `SourceAssetId`；运行时与测试均阻止旧 `ReplaceSource` 语义用于跨源同步。
+- Mapping 保存两端 AssetId、source revision、类型、矩阵、origin、创建时间和 residual；revision 变化后停止同步并要求复核。
+- LinkGroup 进入工程 JSON 校验、可选 2.3 扩展 schema、手动/自动保存、恢复与原子 Undo/Redo。
+- 新增独立 Linked Views Inspector，可查看成员与溯源、切换 Crop/ROI/ColorScale 语义、编辑 Translation 偏移并重置 Identity。
+- ROI 同步选项与 point mapping primitive 已就绪；Polygon ROI 实例传播和逐通道 raw statistics 仍按 PR8 完成，不把当前 canvas geometry 冒充 source-pixel ROI。
+- 同期移除辅助区域/颗粒分析的 1000 条候选截断；旧 `maximumCandidates` 仅兼容读取，所有满足阈值与最小面积条件的连通区域均返回。
 
 ### PR7：Registration
 
-- 手工 landmark pairs。
-- Translation、Rigid 与 Affine 求解。
-- 明确矩阵约定、正反向映射和非共线约束。
-- 计算 pixel RMS；存在兼容标定时同时报告物理单位 RMS。
-- Mapping 绑定两端 source revision；修订变化后进入 `ReviewRequired`。
+- 新增独立 `RegistrationWorkspaceViewModel` / `RegistrationWorkspace.xaml`，可逐行录入 `sourceX,sourceY -> targetX,targetY` landmark pairs。
+- Translation 使用最小二乘平均位移，Rigid 使用二维无缩放旋转 + 平移求解，Affine 使用至少 3 个不共线点的最小二乘求解；退化输入明确报错。
+- 全部矩阵统一为 row-major `TargetPoint = M × SourcePoint`，Rigid 额外验证正交性和 `det=+1`，正反向映射保持可逆。
+- Mapping 持久化 landmarks、逐点 residual、pixel RMS、可用目标标定下的物理 RMS/单位，以及两端 source revision。
+- revision 变化进入 `ReviewRequired`，产生 `mapping-revision-stale` assessment，并停止 linked crop、ROI propagation 与 analysis；重新求解或确认会绑定当前 revision。
+- Registration provenance 进入 JSON schema、工程保存/打开、自动恢复和 Undo/Redo；Linked Crop 可立即使用新 Rigid/Affine 矩阵。
 
 ### PR8：ROI Propagation
 
-- Polygon ROI 通过 SpatialMapping 映射到其他通道。
-- 跨通道 ROI Statistics 必须逐通道读取 raw plane。
-- 禁止在 pseudocolor 或 composite RGB 上计算科研统计。
+- `RoiObject` 正式成为绑定 `AssetId`、`SourceRevision`、`FrameIndex`、`RoiGeometryKind`、source-pixel geometry 和 canonical style 的 ROI 模型。
+- 新增独立 `RoiPropagationWorkspaceViewModel` / `RoiPropagationWorkspace.xaml`；reference Polygon 的每个顶点通过 SpatialMapping 映射到目标素材，不用 bounding rectangle 代替 polygon geometry。
+- 每个 target ROI 持久化 `ReferenceRoiId`、`TargetRoiId`、`LinkGroupId` 与 `MappingId`；工程保存/打开、自动恢复和 Undo/Redo 保留完整关系。
+- Polygon mask 使用确定性的 even-odd point-in-polygon，按 `(x+0.5, y+0.5)` pixel center 取样并包含边界，只统计 polygon 内像素。
+- `ROI Statistics Across Channels` 为每个 `ChannelGroupMember` 构造显式 raw plane request，保持 UInt8/UInt16 位深，保存 RoiId、ChannelId、LinkGroup/Mapping provenance。
+- 统计路径不读取 pseudocolor、display range、Gamma、Opacity 或 composite RGB；无法证明 component index 的 interleaved RGB 不做猜测并明确拒绝。
+- revision stale 会在传播和跨通道分析前阻断，避免静默复用过期 registration。
+
+## 最终阶段：PR9–PR12
 
 ### PR9：Integrity QC
 
-- QC issue location 精确到 Asset、Panel、Object、Measurement、Analysis、Channel、LinkGroup 和 Mapping。
-- 增加旋转/镜像 exact duplicate 检测，覆盖 UInt8/UInt16，禁止先降为 8-bit。
-- 增加 channel/link/mapping revision、colorbar/channel range 和 registration validity 规则。
+- QC issue location 已精确到 Asset、Panel、Object、Measurement、Analysis、Channel、LinkGroup 和 Mapping，并进入可导航工作区。
+- 旋转/镜像 exact duplicate 检测覆盖 UInt8/UInt16，直接比较 raw samples，禁止先降为 8-bit。
+- 已增加 channel/link/mapping revision、colorbar/channel range 和 registration validity 规则。
 
 ### PR10：Publishing Portability
 
-- Journal preset pack 的导入、导出与团队共享。
-- 显式 Font substitution UI；requested font 永远不被 fallback 改写。
-- PDF font strategy：OutlineText、PreferEmbedded、PreferEmbeddedWithOutlineFallback。
+- Journal preset pack 已支持导入、导出、团队共享和独立 schema 校验。
+- Font substitution UI 显式保存 Requested/Substitute；requested font 永远不被 fallback 改写。
+- PDF font strategy 已提供 OutlineText、PreferEmbedded、PreferEmbeddedWithOutlineFallback；当前 writer 的可靠输出为文字轮廓，无法保证子集嵌入与 ToUnicode 时严格阻断或带原因回退。
 
 ### PR11：Export + Provenance Integration
 
-- 将所有 Scientific Objects、multichannel、registration、font resolution 和 PDF policy 统一接入 GUI/CLI/export provenance。
-- Preview 与 Export 使用同一科学参数。
-- Derived composite 明确记录 source bit depths、算法、版本和参数，不能冒充原始位深。
+- 不可变 `FigureExportDocument` 已统一承载 Scientific Objects、Measurement Overlays、Polygon points 和 multichannel layer items；exporter 不读取 ViewModel。
+- Panel composite 由各通道 raw UInt8/UInt16 plane、source revision、crop、frame、selector 和 display settings 确定性重建；旧单源导出保持兼容。
+- Provenance 已覆盖 channel、registration、ROI propagation、colorbar/legend、font resolution/substitution 和 PDF 实际策略；derived composite 不冒充原始位深。
 
 ### PR12：Schema 2.4、Regression、Docs、Release
 
-- 正式把 project schema 升级到 `2.4`，提供显式、确定性的 2.3 → 2.4 migration。
-- 更新 JSON Schema、示例工程、README、架构说明和最终发布说明。
-- 完成全量单元、集成、像素、DPI、迁移、CLI、安装/卸载和 Windows CI 回归。
-- 发布正式 v2.4 预览版或稳定候选版，并准确列出仍不支持的格式和能力。
+- Project schema 已升级到 `2.4`，保留全部历史版本读取，并提供显式、确定性、幂等的 2.3 → 2.4 migration。
+- JSON Schema、README、路线图与最终发布说明已同步，完整迁移 fixture 保留颜色、字体、测量样式、Panel Label、比例尺、裁剪和投稿设置。
+- 本地 Release solution build 与完整单元、集成、像素、迁移和桌面工作区回归已通过；安装包与远端 CI 结果记录在最终 release 页面。
+- 产品版本为 `2.4.0-alpha`、文件版本为 `2.4.0.0`，并准确列出仍不支持的格式和能力。
 
 ## 当前验证基线
 
@@ -116,11 +126,15 @@ v2.4 建立四条统一能力：
 - PR1–PR5 新增：28 tests。
 - `v2.4.0-alpha.1`：255 passed，0 failed，0 skipped。
 - `v2.4.0-alpha.2`：256 passed，0 failed，0 skipped；新增右侧标签页互斥显示与滚动回归。
+- PR6 当前 main：266 passed，0 failed，0 skipped；包含 1089 个连通区域全部返回、跨源 Identity/Translation、修订失效、SourceAsset 不变、JSON 往返、Undo/Redo 与四页互斥 UI 回归。
+- PR7–PR8 当前 main：281 passed，0 failed，0 skipped；Core 111 + Windows 170，覆盖 Translation/Rigid/Affine、退化输入、像素/物理 RMS、mapping-revision-stale、Affine Polygon propagation、10×10 polygon mask、逐通道 raw plane、工程往返、Undo/Redo 与六页互斥 UI 回归。
+- PR9–PR12 最终本地 Release：306 passed，0 failed，0 skipped；Core 129 + Windows 177，新增 exact duplicate/QC、preset/font/PDF portability、真实 UInt16 composite、GUI/CLI 统一 provenance、schema 2.4 与完整 2.3 migration fixture 回归。
 - Release solution build：0 warnings，0 errors。
 
 ## 当前明确限制
 
-- 尚未实现跨源 LinkGroup/SpatialMapping、Registration、ROI propagation 和跨通道统计。
-- 尚未正式升级 schema 2.4；阶段包继续写入 schema 2.3，并为新增字段提供向后兼容默认。
+- 跨通道统计当前要求每个 `ChannelGroupMember` 能证明为单通道 ExternalAsset/FramePlane；尚未在 group 模型中保存任意 interleaved RGB component index，因此不会猜测 RGB 分量。
+- 当前 composite renderer 要求映射后的 raw layer 尺寸一致；不宣称任意 affine warp 已完成像素级重采样合成。
+- 内置 PDF writer 当前以文字轮廓为可靠路径；尚未实现可验证的字体子集嵌入与 ToUnicode 映射。
 - 不宣称 full OME-TIFF、CZI、LIF、ND2、DM3/DM4、Bio-Formats、GPU 或 AI registration。
 - 不提供生成式填充、对象移除、clone stamp、content-aware fill 或 AI beautification。

@@ -1394,6 +1394,10 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <Button x:Name="InspectorTabButton" Grid.Column="0" Command="{Binding ShowInspectorTabCommand}" Content="检查器" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="8,0">
                             <Button.Style>
@@ -1436,6 +1440,70 @@
                                     <Setter Property="BorderThickness" Value="0,0,0,2" />
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding IsChannelsTabActive}" Value="True">
+                                            <Setter Property="Foreground" Value="#F5FBFF" />
+                                            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button x:Name="LinkedViewsTabButton" Grid.Column="3" Command="{Binding ShowLinkedViewsTabCommand}" Content="联动" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="8,0">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                                    <Setter Property="Background" Value="#171E27" />
+                                    <Setter Property="BorderBrush" Value="Transparent" />
+                                    <Setter Property="BorderThickness" Value="0,0,0,2" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLinkedViewsTabActive}" Value="True">
+                                            <Setter Property="Foreground" Value="#F5FBFF" />
+                                            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+</Button>
+                        <Button x:Name="RegistrationTabButton" Grid.Column="4" Command="{Binding ShowRegistrationTabCommand}" Content="配准" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="8,0">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                                    <Setter Property="Background" Value="#171E27" />
+                                    <Setter Property="BorderBrush" Value="Transparent" />
+                                    <Setter Property="BorderThickness" Value="0,0,0,2" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsRegistrationTabActive}" Value="True">
+                                            <Setter Property="Foreground" Value="#F5FBFF" />
+                                            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+</Button>
+                        <Button x:Name="RoiPropagationTabButton" Grid.Column="5" Command="{Binding ShowRoiPropagationTabCommand}" Content="ROI" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="8,0">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                                    <Setter Property="Background" Value="#171E27" />
+                                    <Setter Property="BorderBrush" Value="Transparent" />
+                                    <Setter Property="BorderThickness" Value="0,0,0,2" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsRoiPropagationTabActive}" Value="True">
+                                            <Setter Property="Foreground" Value="#F5FBFF" />
+                                            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button x:Name="PublishingPortabilityTabButton" Grid.Column="6" Command="{Binding ShowPublishingPortabilityTabCommand}" Content="发布" Background="#171E27" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="8,0">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                                    <Setter Property="Background" Value="#171E27" />
+                                    <Setter Property="BorderBrush" Value="Transparent" />
+                                    <Setter Property="BorderThickness" Value="0,0,0,2" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsPublishingPortabilityTabActive}" Value="True">
                                             <Setter Property="Foreground" Value="#F5FBFF" />
                                             <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
                                         </DataTrigger>
@@ -3169,6 +3237,13 @@
                                         <TextBox Margin="0,4,0,0" Text="{Binding SelectedExportProfile.HeightPixels, UpdateSourceTrigger=PropertyChanged}" />
                                     </StackPanel>
                                 </Grid>
+                                <TextBlock Margin="0,8,0,0" Text="PDF font strategy" Foreground="{StaticResource MutedBrush}" FontSize="9" />
+                                <ComboBox Margin="0,4,0,0"
+                                          ItemsSource="{Binding SelectedExportProfile.PdfFontStrategyChoices}"
+                                          SelectedItem="{Binding SelectedExportProfile.PdfFontStrategy, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Margin="0,4,0,0"
+                                           Text="{Binding SelectedExportProfile.PdfFontStrategyDescription}"
+                                           Foreground="#D9B991" FontSize="8" TextWrapping="Wrap" />
                                 <CheckBox Margin="0,8,0,0" IsChecked="{Binding SelectedExportProfile.WriteProvenance}" Content="生成溯源 JSON 与 HTML 报告" />
                                 <TextBlock Margin="0,6,0,0" Text="{Binding SelectedExportProfile.ValidationMessage}" Foreground="#80DDEA" FontSize="8" TextWrapping="Wrap" />
                             </StackPanel>
@@ -3472,6 +3547,22 @@
                                            Grid.Row="1"
                                            DataContext="{Binding MultiChannelWorkspace}"
                                            Visibility="{Binding DataContext.ChannelsTabVisibility, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                    <app:LinkedViewsInspector x:Name="LinkedViewsInspectorPanel"
+                                              Grid.Row="1"
+                                              DataContext="{Binding LinkedViewsWorkspace}"
+Visibility="{Binding DataContext.LinkedViewsTabVisibility, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                    <app:RegistrationWorkspace x:Name="RegistrationWorkspacePanel"
+                                               Grid.Row="1"
+                                               DataContext="{Binding RegistrationWorkspace}"
+Visibility="{Binding DataContext.RegistrationTabVisibility, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                    <app:RoiPropagationWorkspace x:Name="RoiPropagationWorkspacePanel"
+                                                 Grid.Row="1"
+                                                 DataContext="{Binding RoiPropagationWorkspace}"
+                                                 Visibility="{Binding DataContext.RoiPropagationTabVisibility, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                    <app:PublishingPortabilityWorkspace x:Name="PublishingPortabilityWorkspacePanel"
+                                                        Grid.Row="1"
+                                                        DataContext="{Binding PublishingPortabilityWorkspace}"
+                                                        Visibility="{Binding DataContext.PublishingPortabilityTabVisibility, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
                 </Grid>
             </Border>
 

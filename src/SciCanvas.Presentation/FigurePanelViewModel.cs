@@ -38,6 +38,7 @@ public sealed class FigurePanelViewModel : ObservableObject
     private ImageAdjustmentParameters _adjustments = new();
     private int _frameIndex;
     private Guid? _cropLinkGroupId;
+    private Guid? _compositeGroupId;
     private readonly int _figureDpi;
     private PanelFitMode _fitMode = PanelFitMode.Manual;
     private PixelRect64 _manualCropPixels;
@@ -231,6 +232,25 @@ public sealed class FigurePanelViewModel : ObservableObject
     public string CropLinkStatusText => CropLinkGroupId.HasValue
         ? $"关联裁剪 · {CropLinkGroupId.Value.ToString("N")[..8]}"
         : "独立裁剪";
+
+    public Guid? CompositeGroupId
+    {
+        get => _compositeGroupId;
+        set
+        {
+            if (SetProperty(ref _compositeGroupId, value))
+            {
+                OnPropertyChanged(nameof(IsComposite));
+                OnPropertyChanged(nameof(CompositeStatusText));
+            }
+        }
+    }
+
+    public bool IsComposite => CompositeGroupId.HasValue;
+
+    public string CompositeStatusText => CompositeGroupId is Guid groupId
+        ? $"Composite · {groupId.ToString("N")[..8]}"
+        : "Single source";
     public int FrameIndex
     {
         get => _frameIndex;
@@ -315,6 +335,30 @@ public sealed class FigurePanelViewModel : ObservableObject
     public string Channel { get => _adjustments.Channel; set => UpdateAdjustment(a => a with { Channel = value }); }
 
     public string AdjustmentStatusText => _adjustments.ValidationMessage;
+
+    /// <summary>
+    /// Applies a mapped crop to this panel while preserving its SourceAsset identity.
+    /// Cross-source linked views must use this method instead of ReplaceSource.
+    /// </summary>
+    public void ApplyLinkedCrop(PixelRect64 sourceRect)
+    {
+        if (!CropBoundsValidator.Validate(sourceRect, Source.Asset.Metadata.PixelSize).IsValid)
+        {
+            throw new InvalidOperationException("映射后的裁剪区域必须完全位于目标源图边界内。");
+        }
+
+        SourceRect = sourceRect;
+        _manualCropPixels = sourceRect;
+        _fitMode = PanelFitMode.Manual;
+        RefreshPreview();
+        OnPropertyChanged(nameof(SourceRect));
+        OnPropertyChanged(nameof(NormalizedCrop));
+        OnPropertyChanged(nameof(FitMode));
+        OnPropertyChanged(nameof(FitModeText));
+        OnPropertyChanged(nameof(AspectRatioText));
+        OnPropertyChanged(nameof(ScalePercent));
+        OnPropertyChanged(nameof(SizeStatusText));
+    }
 
     public void ReplaceSource(SourceAssetItemViewModel source, PixelRect64 sourceRect)
     {

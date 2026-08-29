@@ -7,9 +7,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
-    <Version>2.4.0-alpha.2</Version>
-    <AssemblyVersion>2.4.0.2</AssemblyVersion>
-    <FileVersion>2.4.0.2</FileVersion>
+    <Version>2.4.0-alpha</Version>
+    <AssemblyVersion>2.4.0.0</AssemblyVersion>
+    <FileVersion>2.4.0.0</FileVersion>
     <Product>SciCanvas</Product>
   </PropertyGroup>
 

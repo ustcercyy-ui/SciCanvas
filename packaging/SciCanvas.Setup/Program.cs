@@ -1,6 +1,3 @@
-using System.Diagnostics;
-using System.IO.Compression;
-using System.Reflection;
 using System.Windows.Forms;
 
 namespace SciCanvas.Setup;
@@ -8,76 +5,56 @@ namespace SciCanvas.Setup;
 internal static class Program
 {
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
-        string? extractionRoot = null;
+        ApplicationConfiguration.Initialize();
+
+        InstallerLaunchOptions launchOptions;
         try
         {
-            extractionRoot = Path.Combine(
-                Path.GetTempPath(),
-                "SciCanvasSetup",
-                Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(extractionRoot);
-
-            using Stream payload = Assembly.GetExecutingAssembly()
-                .GetManifestResourceStream("SciCanvas.Payload.zip")
-                ?? throw new InvalidOperationException("安装包内缺少 SciCanvas 发布内容。");
-            using var archive = new ZipArchive(payload, ZipArchiveMode.Read, leaveOpen: false);
-            foreach (ZipArchiveEntry entry in archive.Entries)
-            {
-                string targetPath = Path.GetFullPath(Path.Combine(extractionRoot, entry.FullName));
-                string root = Path.GetFullPath(extractionRoot + Path.DirectorySeparatorChar);
-                if (!targetPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new InvalidDataException("安装包包含无效的路径。");
-                }
-
-                if (string.IsNullOrEmpty(entry.Name))
-                {
-                    Directory.CreateDirectory(targetPath);
-                    continue;
-                }
-
-                Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-                entry.ExtractToFile(targetPath, overwrite: true);
-            }
-
-            string installScript = Path.Combine(extractionRoot, "Install-SciCanvas.cmd");
-            if (!File.Exists(installScript))
-            {
-                throw new InvalidDataException("安装包缺少安装脚本。");
-            }
-
-            using var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = Environment.GetEnvironmentVariable("COMSPEC") ?? "cmd.exe",
-                Arguments = $"/d /c call \"{installScript}\"",
-                WorkingDirectory = extractionRoot,
-                UseShellExecute = true,
-            });
-            process?.WaitForExit();
-            return process?.ExitCode ?? 1;
+            launchOptions = InstallerCommandLine.Parse(args);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
+        catch (ArgumentException exception)
         {
             MessageBox.Show(
-                $"SciCanvas 安装失败：{exception.Message}",
+                $"{exception.Message}\n\n{InstallerCommandLine.HelpText}",
                 "SciCanvas 安装程序",
                 MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
-            return 1;
+                MessageBoxIcon.Warning);
+            return 2;
         }
-        finally
+
+        if (launchOptions.ShowHelp)
         {
-            if (extractionRoot is not null)
+            MessageBox.Show(
+                InstallerCommandLine.HelpText,
+                "SciCanvas 安装程序",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return 0;
+        }
+
+        if (launchOptions.Silent)
+        {
+            try
             {
-                try
+                InstallerEngine.Install(launchOptions.Options);
+                if (launchOptions.Options.LaunchAfterInstall)
                 {
-                    Directory.Delete(extractionRoot, recursive: true);
+                    InstallerEngine.LaunchApplication(launchOptions.Options.InstallDirectory);
                 }
-                catch (IOException) { }
-                catch (UnauthorizedAccessException) { }
+
+                return 0;
+            }
+            catch (Exception exception)
+            {
+                InstallerEngine.TryWriteFailureLog(exception);
+                return 1;
             }
         }
+
+        using var installerForm = new InstallerForm(launchOptions.Options);
+        Application.Run(installerForm);
+        return installerForm.ExitCode;
     }
 }

@@ -170,6 +170,23 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
+                        <Grid Margin="0,2,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition />
+                                <ColumnDefinition Width="6" />
+                                <ColumnDefinition />
+                            </Grid.ColumnDefinitions>
+                            <Button Command="{Binding ApplySelectedGroupToPanelCommand}"
+                                    Content="设为所选 Panel Composite" />
+                            <Button Grid.Column="2"
+                                    Command="{Binding ClearPanelCompositeCommand}"
+                                    Content="恢复单源" />
+                        </Grid>
+                        <TextBlock Margin="0,0,0,8"
+                                   Text="Composite 只改变显示/导出；分析继续读取 raw channel plane。需配准的组会在 mapping 过期或缺失时阻止导出。"
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   FontSize="8"
+                                   TextWrapping="Wrap" />
                         <Button Command="{Binding RemoveSelectedGroupCommand}" Content="删除所选组" />
                     </StackPanel>
                 </StackPanel>

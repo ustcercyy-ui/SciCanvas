@@ -49,7 +49,11 @@ internal static class Program
 
             Directory.CreateDirectory(options.OutputDirectory);
             SourceAsset[] sources = await LoadAndVerifySourcesAsync(project.Sources);
-            FigureExportDocument baseDocument = BuildDocument(project, sources);
+            ProjectFigureExportContext exportContext = ProjectFigureExportBuilder.Create(project, sources);
+            FigureExportDocument baseDocument = exportContext.Document;
+            FontSubstitutionRule[] fontSubstitutions = project.FontSubstitutions
+                .Select(rule => new FontSubstitutionRule(rule.Requested, rule.Substitute).EnsureValid())
+                .ToArray();
             var exporter = new WpfFigureExporter();
             int completed = 0;
             List<string> failures = [];
@@ -58,7 +62,12 @@ internal static class Program
             {
                 try
                 {
-                    FigureExportDocument variant = profile.Apply(baseDocument);
+                    FigureExportDocument requestedVariant = profile.Apply(baseDocument);
+                    ResolvedFigureExportDocument resolved = FigureExportFontResolver.Resolve(
+                        requestedVariant,
+                        fontSubstitutions,
+                        SystemFontCatalog.Instance);
+                    FigureExportDocument variant = resolved.Document;
                     PanelLabelScheme labelScheme = PanelLabelGenerator.FromLegacySettings(
                         project.TemplateSnapshot?.PanelLabelSequence,
                         project.TemplateSnapshot?.ShowPanelLabels ?? true,
@@ -96,7 +105,10 @@ internal static class Program
                             preflight,
                             profile.Id,
                             profile.Name,
-                            sourceRevisions: project.Sources.ToDictionary(source => source.Id, source => source.SourceRevision));
+                            sourceRevisions: project.Sources.ToDictionary(source => source.Id, source => source.SourceRevision),
+                            fontResolutions: resolved.FontResolutions,
+                            linkGroups: exportContext.LinkGroups,
+                            rois: exportContext.Rois);
                         FigureProvenanceWriter.WriteJson(provenance, Path.ChangeExtension(targetPath, ".provenance.json"));
                         FigureProvenanceWriter.WriteHtml(provenance, Path.ChangeExtension(targetPath, ".export-report.html"));
                     }
@@ -167,105 +179,6 @@ internal static class Program
         return sources;
     }
 
-    private static FigureExportDocument BuildDocument(
-        SciCanvasProjectDocument project,
-        IReadOnlyList<SourceAsset> sources)
-    {
-        Dictionary<Guid, SourceAsset> sourceMap = sources.ToDictionary(source => source.Id);
-        IReadOnlyDictionary<Guid, ProjectScaleBarSnapshot> scaleBars =
-            project.TemplateSnapshot?.ScaleBars ?? new Dictionary<Guid, ProjectScaleBarSnapshot>();
-        FigurePanelExportItem[] panels = project.Layers
-            .OrderBy(layer => layer.ZIndex)
-            .Select(layer =>
-            {
-                if (!sourceMap.TryGetValue(layer.SourceAssetId, out SourceAsset? source))
-                {
-                    throw new InvalidDataException($"图层 {layer.Name} 引用了不存在的源图。");
-                }
-
-                PixelRect64 sourceRect = ToRect(layer.SourceRect);
-                var destination = new PixelRect64(
-                    Math.Max(0, (long)Math.Round(layer.Transform.X)),
-                    Math.Max(0, (long)Math.Round(layer.Transform.Y)),
-                    Math.Max(1, (long)Math.Round(sourceRect.Width * layer.Transform.ScaleX)),
-                    Math.Max(1, (long)Math.Round(sourceRect.Height * layer.Transform.ScaleY)));
-                FigureScaleBarExportSpec? scaleBar = scaleBars.TryGetValue(layer.Id, out ProjectScaleBarSnapshot? value) && value.Enabled
-                    ? new FigureScaleBarExportSpec(
-                        value.PhysicalUnitsPerSourcePixel,
-                        value.PhysicalLength,
-                        value.Unit,
-                        value.ShowLabel)
-                    : null;
-                ProjectImageAdjustmentSnapshot? adjustment = layer.Adjustments.FirstOrDefault();
-                return new FigurePanelExportItem(
-                    source,
-                    sourceRect,
-                    destination,
-                    layer.PanelLabel ?? string.Empty,
-                    layer.Visible,
-                    scaleBar,
-                    adjustment is null ? null : ToAdjustment(adjustment),
-                    layer.FrameIndex,
-                    IsInset: false,
-                    StyleOverride: ToStyleOverride(layer.StyleOverride));
-            })
-            .ToArray();
-
-        FigureAnnotationExportItem[] annotations = (project.TemplateSnapshot?.Annotations ?? [])
-            .OrderBy(annotation => annotation.ZIndex)
-            .Select(annotation => new FigureAnnotationExportItem(
-                annotation.Kind,
-                annotation.X,
-                annotation.Y,
-                annotation.EndX,
-                annotation.EndY,
-                annotation.Text,
-                annotation.StrokeColor,
-                annotation.FillColor,
-                annotation.FillOpacityPercent,
-                annotation.TextColor,
-                annotation.FontFamily,
-                annotation.FontSizePt,
-                annotation.StrokeWidthPt,
-                annotation.IsBold,
-                annotation.Visible,
-                annotation.ZIndex))
-            .ToArray();
-        string background = project.Canvas.BackgroundColor ?? project.Canvas.Background switch
-        {
-            "black" => "#FF000000",
-            "transparent" => "#00FFFFFF",
-            _ => "#FFFFFFFF",
-        };
-        ProjectGlobalStyleSnapshot? savedStyle = project.TemplateSnapshot?.GlobalStyle;
-        FigureGlobalStyle globalStyle = savedStyle is null
-            ? FigureGlobalStyle.Default
-            : new FigureGlobalStyle(
-                savedStyle.FontFamily,
-                savedStyle.FontSizePt,
-                savedStyle.StrokeWidthPt,
-                savedStyle.TextColor,
-                savedStyle.ShapeColor,
-                savedStyle.ScaleBarColor,
-                savedStyle.PanelLabelFontFamily,
-                savedStyle.PanelLabelFontSizePt,
-                savedStyle.PanelLabelTextColor,
-                savedStyle.PanelLabelIsBold,
-                savedStyle.ScaleBarLabelColor,
-                savedStyle.ScaleBarFontFamily,
-                savedStyle.ScaleBarFontSizePt,
-                savedStyle.ScaleBarLabelIsBold,
-                savedStyle.ScaleBarThicknessPt);
-        return new FigureExportDocument(
-            project.Canvas.Width,
-            project.Canvas.Height,
-            dpi: ResolveCanvasDpi(project),
-            panels,
-            annotations,
-            background,
-            globalStyle: globalStyle);
-    }
-
     private static StyleOverride? ToStyleOverride(ProjectPanelStyleOverrideSnapshot? snapshot)
     {
         if (snapshot is null)
@@ -332,7 +245,17 @@ internal static class Program
         snapshot.WidthPixels,
         snapshot.HeightPixels,
         snapshot.WriteProvenance,
-        snapshot.BitDepth ?? 8);
+        snapshot.BitDepth ?? 8,
+        ParsePdfFontStrategy(snapshot.PdfFontStrategy));
+
+    private static PdfFontStrategy ParsePdfFontStrategy(string? value) => value?.ToLowerInvariant() switch
+    {
+        "outlinetext" => PdfFontStrategy.OutlineText,
+        "embedsubsetwhenpermitted" => PdfFontStrategy.EmbedSubsetWhenPermitted,
+        "preferembedded" => PdfFontStrategy.PreferEmbeddedWithOutlineFallback,
+        "preferembeddedwithoutlinefallback" => PdfFontStrategy.PreferEmbeddedWithOutlineFallback,
+        _ => throw new InvalidDataException($"未知 PDF font strategy：{value}"),
+    };
 
     private static string SnapshotIdToKey(Guid id) => id switch
     {

@@ -20,6 +20,8 @@ public sealed record ChannelGroupMember(
     bool IsNameConfirmed,
     ChannelDisplaySettings DisplaySettings)
 {
+    public long? SourceRevision { get; init; }
+
     public ChannelGroupMember EnsureValid()
     {
         DisplaySettings.EnsureValid();

@@ -142,6 +142,17 @@ public sealed record RoiStatisticsResult : ScientificImageAnalysisResult
 
     public PixelRect64 Region { get; init; } = new(0, 0, 1, 1);
 
+    public Guid? RoiId { get; init; }
+
+    public Guid? ScientificChannelId { get; init; }
+
+    public Guid? LinkGroupId { get; init; }
+
+    public Guid? MappingId { get; init; }
+
+    /// <summary>Optional canonical polygon in absolute source-pixel coordinates.</summary>
+    public IReadOnlyList<MeasurementPoint> PolygonMask { get; init; } = [];
+
     public int SourceBitDepth { get; init; } = 8;
 
     public long PixelCount { get; init; }
@@ -162,8 +173,11 @@ public sealed record RoiStatisticsResult : ScientificImageAnalysisResult
     public bool IsValid =>
         HasValidProvenance &&
         SourceBitDepth is 8 or 16 &&
-        PixelCount == Region.Width * Region.Height &&
-        PixelCount > 0 &&
+        PixelCount > 0 && PixelCount <= Region.Width * Region.Height &&
+        (PolygonMask.Count == 0
+            ? PixelCount == Region.Width * Region.Height
+            : PolygonMask.Count >= 3 && PolygonMask.All(point =>
+                double.IsFinite(point.X) && double.IsFinite(point.Y))) &&
         double.IsFinite(Minimum) &&
         double.IsFinite(Maximum) &&
         double.IsFinite(Mean) &&

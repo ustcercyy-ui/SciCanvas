@@ -1,5 +1,13 @@
 namespace SciCanvas.Core.Export;
 
+public sealed record JournalPresetSourceMetadata(
+    string? SourceName = null,
+    string? SourceUrl = null,
+    DateTimeOffset? SourceUpdatedAt = null,
+    DateTimeOffset? CreatedAt = null,
+    string? Author = null,
+    string? Organization = null);
+
 /// <summary>
 /// Publisher-neutral submission constraints. Presets are data, not hard-coded
 /// journal claims, so future catalog updates do not change saved projects.
@@ -20,7 +28,12 @@ public sealed record JournalExportPreset
         string preferredFormat,
         IEnumerable<string> allowedFormats,
         string colorMode,
-        double? maximumFileSizeMb = null)
+        double? maximumFileSizeMb = null,
+        string? description = null,
+        IEnumerable<string>? fontRecommendations = null,
+        double? minimumLineWidthPt = null,
+        string? notes = null,
+        JournalPresetSourceMetadata? sourceMetadata = null)
     {
         Id = NormalizeRequired(id, nameof(id));
         Name = NormalizeRequired(name, nameof(name));
@@ -68,6 +81,23 @@ public sealed record JournalExportPreset
             throw new ArgumentOutOfRangeException(nameof(maximumFileSizeMb));
         }
 
+        if (description?.Length > 2048 || notes?.Length > 4096 ||
+            minimumLineWidthPt is double lineWidth &&
+            (!double.IsFinite(lineWidth) || lineWidth <= 0 || lineWidth > 100))
+        {
+            throw new ArgumentException("期刊预设的描述、备注或最小线宽无效。");
+        }
+
+        string[] recommendations = (fontRecommendations ?? [])
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (recommendations.Any(value => value.Length > 128))
+        {
+            throw new ArgumentException("字体建议名称不能超过 128 个字符。", nameof(fontRecommendations));
+        }
+
         FigureWidthMm = figureWidthMm;
         FigureHeightMm = figureHeightMm;
         MinimumDpi = minimumDpi;
@@ -75,6 +105,11 @@ public sealed record JournalExportPreset
         AllowedFormats = formats;
         ColorMode = normalizedColorMode;
         MaximumFileSizeMb = maximumFileSizeMb;
+        Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim();
+        FontRecommendations = Array.AsReadOnly(recommendations);
+        MinimumLineWidthPt = minimumLineWidthPt;
+        Notes = string.IsNullOrWhiteSpace(notes) ? null : notes.Trim();
+        SourceMetadata = sourceMetadata;
     }
 
     public string Id { get; }
@@ -94,6 +129,16 @@ public sealed record JournalExportPreset
     public string ColorMode { get; }
 
     public double? MaximumFileSizeMb { get; }
+
+    public string? Description { get; }
+
+    public IReadOnlyList<string> FontRecommendations { get; }
+
+    public double? MinimumLineWidthPt { get; }
+
+    public string? Notes { get; }
+
+    public JournalPresetSourceMetadata? SourceMetadata { get; }
 
     public FigureExportProfile CreateProfile(string? id = null, string? name = null, int bitDepth = 8)
     {

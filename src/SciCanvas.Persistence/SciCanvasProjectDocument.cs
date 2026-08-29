@@ -29,6 +29,10 @@ public sealed class SciCanvasProjectDocument
 
     public IReadOnlyList<ProjectExportProfileSnapshot> ExportProfiles { get; init; } = [];
 
+    public IReadOnlyList<ProjectJournalPresetSnapshot> JournalPresetSnapshots { get; init; } = [];
+
+    public IReadOnlyList<ProjectFontSubstitutionSnapshot> FontSubstitutions { get; init; } = [];
+
     public IReadOnlyList<ProjectCalibrationSnapshot> Calibrations { get; init; } = [];
 
     public IReadOnlyList<ProjectMeasurementSnapshot> Measurements { get; init; } = [];
@@ -36,6 +40,10 @@ public sealed class SciCanvasProjectDocument
     public IReadOnlyList<ProjectScientificAnalysisSnapshot> Analyses { get; init; } = [];
 
     public IReadOnlyList<ProjectMultiChannelAssetGroupSnapshot> MultiChannelGroups { get; init; } = [];
+
+    public IReadOnlyList<ProjectLinkGroupSnapshot> LinkGroups { get; init; } = [];
+
+    public IReadOnlyList<ProjectRoiSnapshot> Rois { get; init; } = [];
 
     public ProjectTemplateSnapshot? TemplateSnapshot { get; init; }
 
@@ -129,6 +137,8 @@ public sealed class ProjectChannelGroupMemberSnapshot
 
     public Guid AssetId { get; init; }
 
+    public long? SourceRevision { get; init; }
+
     public int FrameIndex { get; init; }
 
     public string Name { get; init; } = string.Empty;
@@ -152,6 +162,123 @@ public sealed class ProjectChannelGroupMemberSnapshot
     public double Gamma { get; init; } = 1;
 
     public bool Invert { get; init; }
+}
+
+public sealed class ProjectLinkGroupSnapshot
+{
+    public Guid Id { get; init; }
+
+    public string Name { get; init; } = string.Empty;
+
+    public Guid ReferenceAssetId { get; init; }
+
+    public IReadOnlyList<Guid> AssetIds { get; init; } = [];
+
+    public ProjectLinkSyncOptionsSnapshot SyncOptions { get; init; } = new();
+
+    public IReadOnlyList<ProjectSpatialMappingSnapshot> Mappings { get; init; } = [];
+}
+
+public sealed class ProjectLinkSyncOptionsSnapshot
+{
+    public bool Pan { get; init; }
+
+    public bool Zoom { get; init; }
+
+    public bool Crop { get; init; } = true;
+
+    public bool Roi { get; init; } = true;
+
+    public bool ColorScale { get; init; } = true;
+}
+
+public sealed class ProjectSpatialMappingSnapshot
+{
+    public Guid Id { get; init; }
+
+    public Guid SourceAssetId { get; init; }
+
+    public Guid TargetAssetId { get; init; }
+
+    public long SourceRevision { get; init; }
+
+    public long TargetRevision { get; init; }
+
+    public string Kind { get; init; } = "identity";
+
+    public IReadOnlyList<double> Matrix { get; init; } = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+
+    public string Origin { get; init; } = "userDeclaredIdentity";
+
+    public DateTimeOffset CreatedAt { get; init; }
+
+    public double? ResidualPixels { get; init; }
+
+    public IReadOnlyList<ProjectRegistrationLandmarkSnapshot> Landmarks { get; init; } = [];
+
+    public double? ResidualPhysical { get; init; }
+
+    public string? ResidualPhysicalUnit { get; init; }
+}
+
+public sealed class ProjectRegistrationLandmarkSnapshot
+{
+    public Guid Id { get; init; }
+
+    public double SourceX { get; init; }
+
+    public double SourceY { get; init; }
+
+    public double TargetX { get; init; }
+
+    public double TargetY { get; init; }
+}
+
+public sealed class ProjectRoiSnapshot
+{
+    public Guid Id { get; init; }
+
+    public Guid AssetId { get; init; }
+
+    public long SourceRevision { get; init; }
+
+    public string GeometryKind { get; init; } = "polygon";
+
+    public int FrameIndex { get; init; }
+
+    public IReadOnlyList<ProjectMeasurementPointSnapshot> SourceGeometry { get; init; } = [];
+
+    public ProjectRoiStyleSnapshot Style { get; init; } = new();
+
+    public ProjectRoiPropagationSnapshot? Propagation { get; init; }
+}
+
+public sealed class ProjectRoiStyleSnapshot
+{
+    public string StrokeColor { get; init; } = "#FF22C7E8";
+
+    public double StrokeWidth { get; init; } = 2;
+
+    public string FillColor { get; init; } = "#FF22C7E8";
+
+    public double FillOpacity { get; init; } = 0.12;
+
+    public string? Label { get; init; }
+
+    public string? LabelFont { get; init; } = "Arial";
+
+    public string? LabelColor { get; init; } = "#FF22C7E8";
+}
+
+public sealed class ProjectRoiPropagationSnapshot
+{
+    public Guid ReferenceRoiId { get; init; }
+
+    public Guid TargetRoiId { get; init; }
+
+    public Guid LinkGroupId { get; init; }
+
+    public Guid MappingId { get; init; }
 }
 public sealed class ProjectFingerprintSnapshot
 {
@@ -243,6 +370,8 @@ public sealed class ProjectImageLayerSnapshot
     public bool LockAspectRatio { get; init; } = true;
 
     public Guid? CropLinkGroupId { get; init; }
+
+    public Guid? CompositeGroupId { get; init; }
 
     public ProjectTransformSnapshot Transform { get; init; } = new();
 
@@ -401,6 +530,58 @@ public sealed class ProjectExportProfileSnapshot
     public string? JournalPresetId { get; init; }
 
     public bool WriteAuditReport { get; init; }
+
+    public string PdfFontStrategy { get; init; } = "outlineText";
+}
+
+public sealed class ProjectFontSubstitutionSnapshot
+{
+    public string Requested { get; init; } = string.Empty;
+
+    public string Substitute { get; init; } = string.Empty;
+}
+
+public sealed class ProjectJournalPresetSnapshot
+{
+    public string FormatVersion { get; init; } = "1.0";
+
+    public string Id { get; init; } = string.Empty;
+
+    public string Name { get; init; } = string.Empty;
+
+    public string? Description { get; init; }
+
+    public double FigureWidthMm { get; init; }
+
+    public double? FigureHeightMm { get; init; }
+
+    public int MinimumDpi { get; init; }
+
+    public string PreferredFormat { get; init; } = "tiff";
+
+    public IReadOnlyList<string> AllowedFormats { get; init; } = [];
+
+    public string ColorMode { get; init; } = "RGB";
+
+    public double? MaximumFileSizeMb { get; init; }
+
+    public IReadOnlyList<string> FontRecommendations { get; init; } = [];
+
+    public double? MinimumLineWidthPt { get; init; }
+
+    public string? Notes { get; init; }
+
+    public string? SourceName { get; init; }
+
+    public string? SourceUrl { get; init; }
+
+    public DateTimeOffset? SourceUpdatedAt { get; init; }
+
+    public DateTimeOffset? PresetCreatedAt { get; init; }
+
+    public string? Author { get; init; }
+
+    public string? Organization { get; init; }
 }
 
 public sealed class ProjectCalibrationSnapshot
@@ -579,6 +760,16 @@ public sealed class ProjectScientificAnalysisSnapshot
     public int SourceBitDepth { get; init; } = 8;
 
     public ProjectPixelRectSnapshot? Region { get; init; }
+
+    public Guid? RoiId { get; init; }
+
+    public Guid? ScientificChannelId { get; init; }
+
+    public Guid? LinkGroupId { get; init; }
+
+    public Guid? MappingId { get; init; }
+
+    public IReadOnlyList<ProjectMeasurementPointSnapshot> PolygonMask { get; init; } = [];
 
     public long? PixelCount { get; init; }
 
@@ -873,6 +1064,8 @@ public sealed class ProjectFigureScientificObjectSnapshot
 
     /// <summary>Invariant label|#AARRGGBB; label|#AARRGGBB pairs.</summary>
     public string ChannelEntries { get; init; } = string.Empty;
+
+    public Guid? ChannelId { get; init; }
 }
 public sealed class ProjectAuditEntrySnapshot
 {

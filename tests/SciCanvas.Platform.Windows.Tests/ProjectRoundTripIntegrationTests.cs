@@ -12,6 +12,7 @@ using SciCanvas.Persistence;
 using SciCanvas.Platform.Windows;
 using SciCanvas.Presentation;
 using SciCanvas.Templates;
+using LinkingLinkGroup = SciCanvas.Core.Linking.LinkGroup;
 
 namespace SciCanvas.Platform.Windows.Tests;
 
@@ -292,6 +293,8 @@ public sealed class ProjectRoundTripIntegrationTests
         colorbar.Maximum = 4095;
         colorbar.Unit = "a.u.";
         colorbar.Colormap = "magma";
+        Guid colorbarChannelId = Guid.NewGuid();
+        colorbar.ChannelId = colorbarChannelId;
         original.Figure.AddChannelLegendCommand.Execute(null);
         FigureScientificObjectViewModel legend = Assert.IsType<FigureScientificObjectViewModel>(
             original.Figure.SelectedScientificObject);
@@ -320,11 +323,74 @@ public sealed class ProjectRoundTripIntegrationTests
             item => item.Kind == FigureScientificObjectKind.Colorbar);
         Assert.Equal(4095, restoredColorbar.Maximum);
         Assert.Equal("magma", restoredColorbar.Colormap);
+        Assert.Equal(colorbarChannelId, restoredColorbar.ChannelId);
         FigureScientificObjectViewModel restoredLegend = restored.Figure.ScientificObjects.Single(
             item => item.Kind == FigureScientificObjectKind.ChannelLegend);
         Assert.Equal(2, restoredLegend.ChannelEntries.Count);
         Assert.Equal("DAPI", restoredLegend.ChannelEntries[0].Label);
     }
+    [Fact]
+    public async Task SaveThenOpen_RestoresCompositePanelAndChannelSourceRevisions()
+    {
+        using var workspace = new TestWorkspace();
+        string referencePath = Path.Combine(workspace.Root, "HAADF.png");
+        string titaniumPath = Path.Combine(workspace.Root, "Ti.png");
+        string projectPath = Path.Combine(workspace.Root, "composite.scicanvas");
+        CreatePng(referencePath, 20, 16);
+        CreatePng(titaniumPath, 20, 15);
+        MainWindowViewModel original = CreateViewModel();
+        SourceAsset referenceAsset = await CreateReader().ImportAsync(referencePath);
+        SourceAsset titaniumAsset = await CreateReader().ImportAsync(titaniumPath);
+        var reference = new SourceAssetItemViewModel(
+            referenceAsset,
+            await new WpfImagePreviewLoader().LoadAsync(referencePath, 1400));
+        var titanium = new SourceAssetItemViewModel(
+            titaniumAsset,
+            await new WpfImagePreviewLoader().LoadAsync(titaniumPath, 1400));
+        reference.RestoreSourceRevision(3);
+        titanium.RestoreSourceRevision(4);
+        original.Sources.Add(reference);
+        original.Sources.Add(titanium);
+        Guid groupId = Guid.NewGuid();
+
+        Guid referenceChannelId = Guid.NewGuid();
+        Guid titaniumChannelId = Guid.NewGuid();
+        ChannelGroupMember referenceMember = new(
+            referenceChannelId, reference.Asset.Id, 0, "HAADF", "reference", "#FFFFFFFF",
+            ChannelNameOrigin.User, true,
+            new ChannelDisplaySettings(referenceChannelId, true, "#FFFFFFFF", 1, 0, 255, 1, false))
+        { SourceRevision = 3 };
+        ChannelGroupMember titaniumMember = new(
+            titaniumChannelId, titanium.Asset.Id, 0, "Ti", null, "#FFFF0000",
+            ChannelNameOrigin.User, true,
+            new ChannelDisplaySettings(titaniumChannelId, true, "#FFFF0000", 1, 0, 255, 1, false))
+        { SourceRevision = 4 };
+        var group = new MultiChannelAssetGroup(
+            groupId,
+            "EDS",
+            reference.Asset.Id,
+            [referenceMember, titaniumMember],
+            SameFieldOfViewConfirmed: true).EnsureValid();
+        original.MultiChannelWorkspace.Restore([group]);
+        FigurePanelViewModel panel = Assert.IsType<FigurePanelViewModel>(
+            original.Figure.AddPanel(reference, new PixelRect64(0, 0, 20, 16)));
+        panel.CompositeGroupId = groupId;
+
+        await original.SaveProjectToPathAsync(projectPath);
+        Assert.True(original.LastError is null, original.LastError);
+        Assert.True(File.Exists(projectPath));
+        MainWindowViewModel restored = CreateViewModel();
+        await restored.OpenProjectFromPathAsync(projectPath);
+
+        Assert.True(restored.LastError is null, restored.LastError);
+        Assert.Equal(groupId, Assert.Single(restored.Figure.Panels).CompositeGroupId);
+        MultiChannelAssetGroup restoredGroup = Assert.Single(restored.MultiChannelWorkspace.CreateModels());
+        Assert.Equal([3L, 4L], restoredGroup.Members.Select(member => member.SourceRevision!.Value).Order().ToArray());
+        string json = await File.ReadAllTextAsync(projectPath);
+        Assert.Contains("\"schemaVersion\": \"2.4\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"compositeGroupId\"", json, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task OpenProject_WhenSourceChanged_RefusesWithoutReplacingCurrentState()
     {
@@ -952,6 +1018,64 @@ public sealed class ProjectRoundTripIntegrationTests
         Assert.Equal(0.65, restoredTitanium.DisplaySettings.Opacity);
     }
 
+    [Fact]
+    public async Task LinkGroup_SaveOpenAndUndoRedo_PreservesCrossAssetIdentityMappings()
+    {
+        using var workspace = new TestWorkspace();
+        string referencePath = Path.Combine(workspace.Root, "reference.png");
+        string targetPath = Path.Combine(workspace.Root, "target.png");
+        string projectPath = Path.Combine(workspace.Root, "linked-views.scicanvas");
+        CreatePng(referencePath, 40, 30);
+        CreatePng(targetPath, 40, 30);
+
+        MainWindowViewModel original = CreateViewModel();
+        SourceAsset referenceAsset = await CreateReader().ImportAsync(referencePath);
+        SourceAsset targetAsset = await CreateReader().ImportAsync(targetPath);
+        var reference = new SourceAssetItemViewModel(
+            referenceAsset,
+            await new WpfImagePreviewLoader().LoadAsync(referencePath, 1400));
+        var target = new SourceAssetItemViewModel(
+            targetAsset,
+            await new WpfImagePreviewLoader().LoadAsync(targetPath, 1400));
+        original.Sources.Add(reference);
+        original.Sources.Add(target);
+        FigurePanelViewModel referencePanel = Assert.IsType<FigurePanelViewModel>(
+            original.Figure.AddPanel(reference, new PixelRect64(2, 3, 20, 15)));
+        FigurePanelViewModel targetPanel = Assert.IsType<FigurePanelViewModel>(
+            original.Figure.AddPanel(target, new PixelRect64(2, 3, 20, 15)));
+        await original.SaveProjectToPathAsync(projectPath);
+        Assert.False(original.IsDirty);
+
+        original.Figure.SelectPanel(targetPanel, toggle: false);
+        original.Figure.SelectPanel(referencePanel, toggle: true);
+        original.Figure.LinkSelectedPanelCropsCommand.Execute(null);
+
+        LinkingLinkGroup created = Assert.Single(original.Figure.LinkGroups);
+        Assert.Equal(referenceAsset.Id, created.ReferenceAssetId);
+        Assert.True(original.IsDirty);
+        original.UndoCommand.Execute(null);
+        Assert.Empty(original.Figure.LinkGroups);
+        Assert.All(original.Figure.Panels, panel => Assert.Null(panel.CropLinkGroupId));
+
+        original.RedoCommand.Execute(null);
+        LinkingLinkGroup redone = Assert.Single(original.Figure.LinkGroups);
+        Assert.Equal(created.Id, redone.Id);
+        Assert.All(original.Figure.Panels, panel => Assert.Equal(created.Id, panel.CropLinkGroupId));
+        await original.SaveProjectToPathAsync(projectPath);
+
+        SciCanvasProjectDocument saved = await new JsonProjectStore().LoadAsync(projectPath);
+        Assert.Equal(created.Id, Assert.Single(saved.LinkGroups).Id);
+        MainWindowViewModel restored = CreateViewModel();
+        await restored.OpenProjectFromPathAsync(projectPath);
+
+        Assert.Null(restored.LastError);
+        LinkingLinkGroup restoredGroup = Assert.Single(restored.Figure.CreateLinkGroupModels());
+        Assert.Equal(created.Id, restoredGroup.Id);
+        Assert.Equal(referenceAsset.Id, restoredGroup.ReferenceAssetId);
+        Assert.All(restored.Figure.Panels, panel => Assert.Equal(created.Id, panel.CropLinkGroupId));
+        Assert.Contains(restored.Figure.Panels, panel => panel.Source.Asset.Id == referenceAsset.Id);
+        Assert.Contains(restored.Figure.Panels, panel => panel.Source.Asset.Id == targetAsset.Id);
+    }
     private static MultiChannelAssetGroup CreateMultiChannelGroup(
         Guid referenceAssetId,
         Guid titaniumAssetId)

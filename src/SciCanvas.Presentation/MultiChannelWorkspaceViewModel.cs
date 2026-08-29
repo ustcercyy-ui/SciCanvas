@@ -24,10 +24,14 @@ public sealed class MultiChannelWorkspaceViewModel : ObservableObject
     private string _groupName = "EDS Map Group 1";
     private string _workflowStatus = "从项目内已只读导入的源图创建多文件 EDS 通道组。";
     private bool _suppressChanges;
+    private FigureCanvasViewModel? _figure;
 
-    public MultiChannelWorkspaceViewModel(ObservableCollection<SourceAssetItemViewModel> projectSources)
+    public MultiChannelWorkspaceViewModel(
+        ObservableCollection<SourceAssetItemViewModel> projectSources,
+        FigureCanvasViewModel? figure = null)
     {
         _projectSources = projectSources ?? throw new ArgumentNullException(nameof(projectSources));
+        _figure = figure;
         StartEdsGroupWizardCommand = new RelayCommand(StartWizard, () => AvailableSources.Count >= 2);
         NextWizardStepCommand = new RelayCommand(NextStep, CanAdvance);
         PreviousWizardStepCommand = new RelayCommand(PreviousStep, () => IsWizardOpen && WizardStep > 1);
@@ -35,6 +39,8 @@ public sealed class MultiChannelWorkspaceViewModel : ObservableObject
         ConfirmSuggestedNamesCommand = new RelayCommand(ConfirmSuggestedNames, CanConfirmNames);
         CreateGroupCommand = new RelayCommand(CreateGroup, CanCreateGroup);
         RemoveSelectedGroupCommand = new RelayCommand(RemoveSelectedGroup, () => SelectedGroup is not null);
+        ApplySelectedGroupToPanelCommand = new RelayCommand(ApplySelectedGroupToPanel, () => SelectedGroup is not null);
+        ClearPanelCompositeCommand = new RelayCommand(ClearPanelComposite);
         SynchronizeSources();
     }
 
@@ -60,6 +66,13 @@ public sealed class MultiChannelWorkspaceViewModel : ObservableObject
 
     public RelayCommand RemoveSelectedGroupCommand { get; }
 
+    public RelayCommand ApplySelectedGroupToPanelCommand { get; }
+
+    public RelayCommand ClearPanelCompositeCommand { get; }
+
+    public void AttachFigure(FigureCanvasViewModel figure) =>
+        _figure = figure ?? throw new ArgumentNullException(nameof(figure));
+
     public MultiChannelAssetGroupViewModel? SelectedGroup
     {
         get => _selectedGroup;
@@ -68,6 +81,7 @@ public sealed class MultiChannelWorkspaceViewModel : ObservableObject
             if (SetProperty(ref _selectedGroup, value))
             {
                 RemoveSelectedGroupCommand.NotifyCanExecuteChanged();
+                ApplySelectedGroupToPanelCommand.NotifyCanExecuteChanged();
                 OnPropertyChanged(nameof(SelectedGroupVisibility));
             }
         }
@@ -395,6 +409,44 @@ public sealed class MultiChannelWorkspaceViewModel : ObservableObject
         RaiseChanged();
     }
 
+    private void ApplySelectedGroupToPanel()
+    {
+        if (SelectedGroup is not { } selected)
+        {
+            return;
+        }
+
+        if (_figure?.SelectedPanel is not { } panel)
+        {
+            WorkflowStatus = "请先在 Figure 中选择一个属于该多通道组的 Panel。";
+            return;
+        }
+
+        MultiChannelAssetGroup model = selected.ToModel();
+        if (!model.Members.Any(member => member.AssetId == panel.Source.Asset.Id))
+        {
+            WorkflowStatus = $"Panel {panel.Label} 的源素材不属于 {model.Name}，未创建 composite。";
+            return;
+        }
+
+        panel.CompositeGroupId = model.Id;
+        WorkflowStatus = $"Panel {panel.Label} 已设为 {model.Name} composite；导出将从 raw planes 重建伪彩合成。";
+        RaiseChanged();
+    }
+
+    private void ClearPanelComposite()
+    {
+        if (_figure?.SelectedPanel is not { } panel)
+        {
+            WorkflowStatus = "请先在 Figure 中选择 Panel。";
+            return;
+        }
+
+        panel.CompositeGroupId = null;
+        WorkflowStatus = $"Panel {panel.Label} 已恢复为 single-source display。";
+        RaiseChanged();
+    }
+
     private void RemoveSelectedGroup()
     {
         if (SelectedGroup is not { } selected)
@@ -405,6 +457,13 @@ public sealed class MultiChannelWorkspaceViewModel : ObservableObject
         int index = Groups.IndexOf(selected);
         selected.Changed -= OnGroupChanged;
         Groups.Remove(selected);
+        if (_figure is not null)
+        {
+            foreach (FigurePanelViewModel panel in _figure.Panels.Where(panel => panel.CompositeGroupId == selected.Id))
+            {
+                panel.CompositeGroupId = null;
+            }
+        }
         SelectedGroup = Groups.ElementAtOrDefault(Math.Clamp(index, 0, Math.Max(0, Groups.Count - 1)));
         WorkflowStatus = $"已移除多通道组 {selected.Name}；源素材未修改。";
         NotifyGroupStateChanged();
@@ -729,6 +788,7 @@ public sealed class ChannelGroupMemberViewModel : ObservableObject
         ChannelId = model.ChannelId;
         AssetId = model.AssetId;
         FrameIndex = model.FrameIndex;
+        SourceRevision = model.SourceRevision ?? source.SourceRevision;
         _name = model.Name;
         _role = model.Role ?? string.Empty;
         _color = model.Color;
@@ -751,6 +811,8 @@ public sealed class ChannelGroupMemberViewModel : ObservableObject
     public Guid AssetId { get; }
 
     public int FrameIndex { get; }
+
+    public long SourceRevision { get; }
 
     private ChannelNameOrigin _nameOrigin;
 
@@ -851,7 +913,10 @@ public sealed class ChannelGroupMemberViewModel : ObservableObject
             normalizedColor,
             NameOrigin,
             IsNameConfirmed,
-            display).EnsureValid();
+            display)
+        {
+            SourceRevision = this.SourceRevision,
+        }.EnsureValid();
     }
 
     private void SetAndNotify<T>(ref T storage, T value, [System.Runtime.CompilerServices.CallerMemberName] string? propertyName = null)

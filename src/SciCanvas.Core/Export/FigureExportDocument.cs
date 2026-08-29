@@ -53,11 +53,16 @@ public sealed record FigurePanelExportItem(
     bool IsInset = false,
     StyleOverride? StyleOverride = null,
     Guid PanelId = default,
-    IReadOnlyList<FigureScaleBarExportSpec>? ScaleBars = null)
+    IReadOnlyList<FigureScaleBarExportSpec>? ScaleBars = null,
+    IReadOnlyList<FigureChannelLayerExportItem>? ChannelLayers = null)
 {
     public IReadOnlyList<FigureScaleBarExportSpec> EffectiveScaleBars => ScaleBars is { Count: > 0 }
         ? ScaleBars
         : ScaleBar is null ? [] : [ScaleBar];
+
+    public IReadOnlyList<FigureChannelLayerExportItem> EffectiveChannelLayers => ChannelLayers ?? [];
+
+    public bool IsComposite => EffectiveChannelLayers.Count > 0;
 }
 
 public sealed record FigureAnnotationExportItem
@@ -281,7 +286,8 @@ public sealed record FigureExportDocument
         int bitDepth = 8,
         FigureGlobalStyle? globalStyle = null,
         IReadOnlyList<FigureMeasurementOverlayExportItem>? measurementOverlays = null,
-        IReadOnlyList<FigureScientificObjectExportItem>? scientificObjects = null)
+        IReadOnlyList<FigureScientificObjectExportItem>? scientificObjects = null,
+        PdfFontStrategy pdfFontStrategy = PdfFontStrategy.OutlineText)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(widthPixels);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(heightPixels);
@@ -302,6 +308,12 @@ public sealed record FigureExportDocument
         GlobalStyle = globalStyle ?? FigureGlobalStyle.Default;
         MeasurementOverlays = measurementOverlays ?? [];
         ScientificObjects = scientificObjects ?? [];
+        if (!Enum.IsDefined(pdfFontStrategy))
+        {
+            throw new ArgumentOutOfRangeException(nameof(pdfFontStrategy));
+        }
+
+        PdfFontStrategy = pdfFontStrategy;
         GlobalStyle.EnsureValid();
     }
 
@@ -324,4 +336,6 @@ public sealed record FigureExportDocument
     public int BitDepth { get; }
 
     public FigureGlobalStyle GlobalStyle { get; }
+
+    public PdfFontStrategy PdfFontStrategy { get; }
 }

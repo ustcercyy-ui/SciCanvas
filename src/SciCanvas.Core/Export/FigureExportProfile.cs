@@ -17,7 +17,8 @@ public sealed record FigureExportProfile
         int? widthPixels = null,
         int? heightPixels = null,
         bool writeProvenance = true,
-        int bitDepth = 8)
+        int bitDepth = 8,
+        PdfFontStrategy pdfFontStrategy = PdfFontStrategy.OutlineText)
     {
         Id = NormalizeRequired(id, nameof(id));
         Name = NormalizeRequired(name, nameof(name));
@@ -50,8 +51,14 @@ public sealed record FigureExportProfile
         Scale = scale;
         WidthPixels = widthPixels;
         HeightPixels = heightPixels;
+        if (!Enum.IsDefined(pdfFontStrategy))
+        {
+            throw new ArgumentOutOfRangeException(nameof(pdfFontStrategy));
+        }
+
         WriteProvenance = writeProvenance;
         BitDepth = bitDepth;
+        PdfFontStrategy = pdfFontStrategy;
     }
 
     public string Id { get; }
@@ -71,6 +78,8 @@ public sealed record FigureExportProfile
     public bool WriteProvenance { get; }
 
     public int BitDepth { get; }
+
+    public PdfFontStrategy PdfFontStrategy { get; }
 
     public string Extension => $".{Format}";
 
@@ -105,7 +114,10 @@ public sealed record FigureExportProfile
             annotations,
             source.BackgroundColor,
             BitDepth,
-            source.GlobalStyle);
+            source.GlobalStyle,
+            source.MeasurementOverlays,
+            source.ScientificObjects,
+            PdfFontStrategy);
     }
 
     public static IReadOnlyList<FigureExportProfile> BuiltIns { get; } =

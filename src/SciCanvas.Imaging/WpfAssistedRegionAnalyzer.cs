@@ -192,7 +192,6 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
 
         AssistedRegionCandidate[] ordered = candidates
             .OrderByDescending(candidate => candidate.AreaPixels)
-            .Take(options.MaximumCandidates)
             .Select((candidate, index) => candidate with { Id = index + 1 })
             .ToArray();
         return new AssistedRegionAnalysisResult(

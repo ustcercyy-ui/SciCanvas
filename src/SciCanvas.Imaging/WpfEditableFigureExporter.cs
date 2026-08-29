@@ -43,8 +43,7 @@ internal static class WpfEditableFigureExporter
         {
             cancellationToken.ThrowIfCancellationRequested();
             WpfFigureExporter.ValidatePanel(panel, document);
-            BitmapSource cropped = WpfFigureExporter.LoadExactCrop(panel.Source.OriginalPath, panel.SourceRect, panel.FrameIndex);
-            cropped = WpfImageAdjustmentProcessor.Apply(cropped, panel.Adjustments);
+            BitmapSource cropped = WpfFigureExporter.LoadPanelImage(panel, cancellationToken);
             Rect imageRect = WpfFigureExporter.CalculateContainedRect(
                 cropped.PixelWidth,
                 cropped.PixelHeight,
@@ -422,6 +421,12 @@ internal static class WpfEditableFigureExporter
         string targetPath,
         CancellationToken cancellationToken)
     {
+        if (document.PdfFontStrategy == PdfFontStrategy.EmbedSubsetWhenPermitted)
+        {
+            throw new NotSupportedException(
+                "Strict PDF font embedding is unavailable: the current writer does not implement reliable subsetting and ToUnicode maps.");
+        }
+
         var pdf = new PdfDocumentBuilder();
         int catalogObject = pdf.AddObject(null);
         int pagesObject = pdf.AddObject(null);
@@ -455,8 +460,7 @@ internal static class WpfEditableFigureExporter
         {
             cancellationToken.ThrowIfCancellationRequested();
             WpfFigureExporter.ValidatePanel(panel, document);
-            BitmapSource cropped = WpfFigureExporter.LoadExactCrop(panel.Source.OriginalPath, panel.SourceRect, panel.FrameIndex);
-            cropped = WpfImageAdjustmentProcessor.Apply(cropped, panel.Adjustments);
+            BitmapSource cropped = WpfFigureExporter.LoadPanelImage(panel, cancellationToken);
             Rect imageRect = WpfFigureExporter.CalculateContainedRect(cropped.PixelWidth, cropped.PixelHeight, panel.DestinationRect);
             FigureGlobalStyle panelStyle = document.GlobalStyle.ResolvePanelOverride(panel.StyleOverride);
             int imageObject = pdf.AddObject(BuildPdfImage(cropped));

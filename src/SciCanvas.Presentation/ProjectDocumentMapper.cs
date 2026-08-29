@@ -3,7 +3,14 @@ using SciCanvas.Core.Channels;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
-using SciCanvas.Core.Science;
+using LinkGroup = SciCanvas.Core.Linking.LinkGroup;
+using LinkSyncOptions = SciCanvas.Core.Linking.LinkSyncOptions;
+using SpatialMapping = SciCanvas.Core.Linking.SpatialMapping;
+using SpatialMappingKind = SciCanvas.Core.Linking.SpatialMappingKind;
+using SpatialMappingOrigin = SciCanvas.Core.Linking.SpatialMappingOrigin;
+using SpatialMatrix3x3 = SciCanvas.Core.Linking.SpatialMatrix3x3;
+using RegistrationLandmarkPair = SciCanvas.Core.Linking.RegistrationLandmarkPair;
+using SpatialPoint = SciCanvas.Core.Linking.SpatialPoint;using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
 using SciCanvas.Core.Workspace;
 using SciCanvas.Persistence;
@@ -26,7 +33,11 @@ internal static class ProjectDocumentMapper
         IReadOnlyList<ProjectAuditEntrySnapshot>? auditTrail = null,
         IReadOnlyList<FigureExportProfile>? exportProfiles = null,
         int minimumEffectiveDpi = 300,
-        IReadOnlyList<MultiChannelAssetGroup>? multiChannelGroups = null)
+        IReadOnlyList<MultiChannelAssetGroup>? multiChannelGroups = null,
+        IReadOnlyList<LinkGroup>? linkGroups = null,
+        IReadOnlyList<RoiObject>? rois = null,
+        IReadOnlyList<JournalExportPreset>? journalPresetSnapshots = null,
+        IReadOnlyList<FontSubstitutionRule>? fontSubstitutions = null)
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
         ProjectPixelRectSnapshot? activeCrop = crop.TryGetCrop(out PixelRect64 cropRect)
@@ -111,6 +122,21 @@ internal static class ProjectDocumentMapper
                     Resampling = null,
                     JournalPresetId = figure.Template.PublisherProfileId,
                     WriteAuditReport = true,
+                    PdfFontStrategy = ToPdfFontStrategyKey(profile.PdfFontStrategy),
+                })
+                .ToArray(),
+            JournalPresetSnapshots = (journalPresetSnapshots ?? [])
+                .Select(ToSnapshot)
+                .ToArray(),
+            FontSubstitutions = (fontSubstitutions ?? [])
+                .Select(rule =>
+                {
+                    rule.EnsureValid();
+                    return new ProjectFontSubstitutionSnapshot
+                    {
+                        Requested = rule.RequestedFontFamily.Trim(),
+                        Substitute = rule.SubstituteFontFamily.Trim(),
+                    };
                 })
                 .ToArray(),
             Calibrations = sources.Select(source =>
@@ -181,6 +207,12 @@ internal static class ProjectDocumentMapper
             MultiChannelGroups = (multiChannelGroups ?? [])
                 .Select(ToSnapshot)
                 .ToArray(),
+            LinkGroups = (linkGroups ?? [])
+                .Select(ToSnapshot)
+                .ToArray(),
+            Rois = (rois ?? [])
+                .Select(ToSnapshot)
+                .ToArray(),
             TemplateSnapshot = new ProjectTemplateSnapshot
             {
                 TemplateId = figure.Template.Id,
@@ -246,6 +278,7 @@ internal static class ProjectDocumentMapper
                         Unit = scientificObject.Unit,
                         Colormap = scientificObject.Colormap,
                         ChannelEntries = scientificObject.ChannelEntriesText,
+                        ChannelId = scientificObject.ChannelId,
                     })
                     .ToArray(),                MeasurementOverlays = figure.MeasurementOverlays
                     .OrderBy(overlay => overlay.ZIndex)
@@ -509,6 +542,80 @@ internal static class ProjectDocumentMapper
             _ => throw new InvalidDataException($"未知图像分析类型：{snapshot.Kind}"),
         };
 
+    public static JournalExportPreset ToJournalPreset(ProjectJournalPresetSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (!string.Equals(snapshot.FormatVersion, JournalPresetPortability.CurrentFormatVersion, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException($"不支持的 journal preset snapshot formatVersion：{snapshot.FormatVersion}");
+        }
+
+        JournalPresetSourceMetadata? source = snapshot.SourceName is null && snapshot.SourceUrl is null &&
+                                              snapshot.SourceUpdatedAt is null && snapshot.PresetCreatedAt is null &&
+                                              snapshot.Author is null && snapshot.Organization is null
+            ? null
+            : new JournalPresetSourceMetadata(
+                snapshot.SourceName,
+                snapshot.SourceUrl,
+                snapshot.SourceUpdatedAt,
+                snapshot.PresetCreatedAt,
+                snapshot.Author,
+                snapshot.Organization);
+        return new JournalExportPreset(
+            snapshot.Id,
+            snapshot.Name,
+            snapshot.FigureWidthMm,
+            snapshot.FigureHeightMm,
+            snapshot.MinimumDpi,
+            snapshot.PreferredFormat,
+            snapshot.AllowedFormats,
+            snapshot.ColorMode,
+            snapshot.MaximumFileSizeMb,
+            snapshot.Description,
+            snapshot.FontRecommendations,
+            snapshot.MinimumLineWidthPt,
+            snapshot.Notes,
+            source);
+    }
+
+    public static FontSubstitutionRule ToFontSubstitution(ProjectFontSubstitutionSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        return new FontSubstitutionRule(snapshot.Requested, snapshot.Substitute).EnsureValid();
+    }
+
+    private static ProjectJournalPresetSnapshot ToSnapshot(JournalExportPreset preset) => new()
+    {
+        FormatVersion = JournalPresetPortability.CurrentFormatVersion,
+        Id = preset.Id,
+        Name = preset.Name,
+        Description = preset.Description,
+        FigureWidthMm = preset.FigureWidthMm,
+        FigureHeightMm = preset.FigureHeightMm,
+        MinimumDpi = preset.MinimumDpi,
+        PreferredFormat = preset.PreferredFormat,
+        AllowedFormats = preset.AllowedFormats.ToArray(),
+        ColorMode = preset.ColorMode,
+        MaximumFileSizeMb = preset.MaximumFileSizeMb,
+        FontRecommendations = preset.FontRecommendations.ToArray(),
+        MinimumLineWidthPt = preset.MinimumLineWidthPt,
+        Notes = preset.Notes,
+        SourceName = preset.SourceMetadata?.SourceName,
+        SourceUrl = preset.SourceMetadata?.SourceUrl,
+        SourceUpdatedAt = preset.SourceMetadata?.SourceUpdatedAt,
+        PresetCreatedAt = preset.SourceMetadata?.CreatedAt,
+        Author = preset.SourceMetadata?.Author,
+        Organization = preset.SourceMetadata?.Organization,
+    };
+
+    private static string ToPdfFontStrategyKey(PdfFontStrategy strategy) => strategy switch
+    {
+        PdfFontStrategy.OutlineText => "outlineText",
+        PdfFontStrategy.EmbedSubsetWhenPermitted => "embedSubsetWhenPermitted",
+        PdfFontStrategy.PreferEmbeddedWithOutlineFallback => "preferEmbeddedWithOutlineFallback",
+        _ => throw new ArgumentOutOfRangeException(nameof(strategy)),
+    };
+
     private static Guid GetStableExportProfileId(string profileId)
     {
         Guid? builtIn = profileId switch
@@ -580,6 +687,7 @@ internal static class ProjectDocumentMapper
         FrameIndex = panel.FrameIndex,
         LockAspectRatio = panel.IsAspectRatioLocked,
         CropLinkGroupId = panel.CropLinkGroupId,
+        CompositeGroupId = panel.CompositeGroupId,
         Transform = new ProjectTransformSnapshot
         {
             X = panel.X,
@@ -704,6 +812,15 @@ internal static class ProjectDocumentMapper
             Validity = ToSnapshot(roi.Validity),
             SourceBitDepth = roi.SourceBitDepth,
             Region = ToSnapshot(roi.Region),
+            RoiId = roi.RoiId,
+            ScientificChannelId = roi.ScientificChannelId,
+            LinkGroupId = roi.LinkGroupId,
+            MappingId = roi.MappingId,
+            PolygonMask = roi.PolygonMask.Select(point => new ProjectMeasurementPointSnapshot
+            {
+                X = point.X,
+                Y = point.Y,
+            }).ToArray(),
             PixelCount = roi.PixelCount,
             Minimum = roi.Minimum,
             Maximum = roi.Maximum,
@@ -759,7 +876,7 @@ internal static class ProjectDocumentMapper
             ThresholdNormalized = particles.Options.ThresholdNormalized,
             AppliedThresholdNormalized = particles.AppliedThresholdNormalized,
             MinimumAreaPixels = particles.Options.MinimumAreaPixels,
-            MaximumCandidates = particles.Options.MaximumCandidates,
+            MaximumCandidates = null,
             ForegroundPixelCount = particles.ForegroundPixelCount,
             TotalPixelCount = particles.TotalPixelCount,
             Particles = particles.Candidates.Select(candidate => new ProjectParticleSnapshot
@@ -806,6 +923,13 @@ internal static class ProjectDocumentMapper
             Validity = ToAnalysisValidity(snapshot.Validity),
             SourceBitDepth = snapshot.SourceBitDepth,
             Region = ToPixelRect(region),
+            RoiId = snapshot.RoiId,
+            ScientificChannelId = snapshot.ScientificChannelId,
+            LinkGroupId = snapshot.LinkGroupId,
+            MappingId = snapshot.MappingId,
+            PolygonMask = (snapshot.PolygonMask ?? [])
+                .Select(point => new MeasurementPoint(point.X, point.Y))
+                .ToArray(),
             PixelCount = pixelCount,
             Minimum = snapshot.Minimum ?? 0,
             Maximum = snapshot.Maximum ?? 0,
@@ -855,8 +979,7 @@ internal static class ProjectDocumentMapper
             ToPixelRect(region),
             snapshot.UseAutomaticThreshold ?? true,
             snapshot.ThresholdNormalized ?? 0.5,
-            snapshot.MinimumAreaPixels ?? 16,
-            snapshot.MaximumCandidates ?? 1000);
+            snapshot.MinimumAreaPixels ?? 16);
         AssistedRegionCandidate[] candidates = snapshot.Particles.Select(particle =>
             new AssistedRegionCandidate(
                 particle.Id,
@@ -1059,6 +1182,7 @@ internal static class ProjectDocumentMapper
             {
                 ChannelId = member.ChannelId,
                 AssetId = member.AssetId,
+                SourceRevision = member.SourceRevision,
                 FrameIndex = member.FrameIndex,
                 Name = member.Name,
                 Role = member.Role,
@@ -1115,9 +1239,215 @@ internal static class ProjectDocumentMapper
                         _ => throw new InvalidDataException("工程包含未知的通道名称来源。"),
                     },
                     member.IsNameConfirmed,
-                    display);
+                    display)
+                {
+                    SourceRevision = member.SourceRevision,
+                };
             }).ToArray(),
             snapshot.SameFieldOfViewConfirmed).EnsureValid();
+    }
+    internal static ProjectLinkGroupSnapshot ToSnapshot(LinkGroup group)
+    {
+        group.EnsureValid();
+        return new ProjectLinkGroupSnapshot
+        {
+            Id = group.Id,
+            Name = group.Name,
+            ReferenceAssetId = group.ReferenceAssetId,
+            AssetIds = group.AssetIds.ToArray(),
+            SyncOptions = new ProjectLinkSyncOptionsSnapshot
+            {
+                Pan = group.SyncOptions.HasFlag(LinkSyncOptions.Pan),
+                Zoom = group.SyncOptions.HasFlag(LinkSyncOptions.Zoom),
+                Crop = group.SyncOptions.HasFlag(LinkSyncOptions.Crop),
+                Roi = group.SyncOptions.HasFlag(LinkSyncOptions.Roi),
+                ColorScale = group.SyncOptions.HasFlag(LinkSyncOptions.ColorScale),
+            },
+            Mappings = group.Mappings.Select(mapping => new ProjectSpatialMappingSnapshot
+            {
+                Id = mapping.Id,
+                SourceAssetId = mapping.SourceAssetId,
+                TargetAssetId = mapping.TargetAssetId,
+                SourceRevision = mapping.SourceRevision,
+                TargetRevision = mapping.TargetRevision,
+                Kind = mapping.Kind switch
+                {
+                    SpatialMappingKind.Identity => "identity",
+                    SpatialMappingKind.Translation => "translation",
+                    SpatialMappingKind.Rigid => "rigid",
+                    SpatialMappingKind.Affine => "affine",
+                    _ => throw new InvalidDataException("未知 SpatialMapping 类型。"),
+                },
+                Matrix =
+                [
+                    mapping.Matrix.M11, mapping.Matrix.M12, mapping.Matrix.M13,
+                    mapping.Matrix.M21, mapping.Matrix.M22, mapping.Matrix.M23,
+                    mapping.Matrix.M31, mapping.Matrix.M32, mapping.Matrix.M33,
+                ],
+                Origin = mapping.Origin switch
+                {
+                    SpatialMappingOrigin.UserDeclaredIdentity => "userDeclaredIdentity",
+                    SpatialMappingOrigin.UserDeclaredTranslation => "userDeclaredTranslation",
+                    SpatialMappingOrigin.ManualLandmarks => "manualLandmarks",
+                    SpatialMappingOrigin.ImportedMetadata => "importedMetadata",
+                    _ => throw new InvalidDataException("未知 SpatialMapping 来源。"),
+                },
+                CreatedAt = mapping.CreatedAt,
+                ResidualPixels = mapping.ResidualPixels,
+                Landmarks = mapping.EffectiveLandmarks.Select(landmark => new ProjectRegistrationLandmarkSnapshot
+                {
+                    Id = landmark.Id,
+                    SourceX = landmark.SourcePoint.X,
+                    SourceY = landmark.SourcePoint.Y,
+                    TargetX = landmark.TargetPoint.X,
+                    TargetY = landmark.TargetPoint.Y,
+                }).ToArray(),
+                ResidualPhysical = mapping.ResidualPhysical,
+                ResidualPhysicalUnit = mapping.ResidualPhysicalUnit,
+            }).ToArray(),
+        };
+    }
+
+    internal static LinkGroup ToLinkGroup(ProjectLinkGroupSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        LinkSyncOptions syncOptions = LinkSyncOptions.None;
+        if (snapshot.SyncOptions.Pan) syncOptions |= LinkSyncOptions.Pan;
+        if (snapshot.SyncOptions.Zoom) syncOptions |= LinkSyncOptions.Zoom;
+        if (snapshot.SyncOptions.Crop) syncOptions |= LinkSyncOptions.Crop;
+        if (snapshot.SyncOptions.Roi) syncOptions |= LinkSyncOptions.Roi;
+        if (snapshot.SyncOptions.ColorScale) syncOptions |= LinkSyncOptions.ColorScale;
+
+        SpatialMapping[] mappings = snapshot.Mappings.Select(mapping =>
+        {
+            if (mapping.Matrix.Count != 9)
+            {
+                throw new InvalidDataException("SpatialMapping matrix 必须包含 9 个 row-major 数值。");
+            }
+
+            double[] matrix = mapping.Matrix.ToArray();
+            return new SpatialMapping(
+                mapping.Id,
+                mapping.SourceAssetId,
+                mapping.TargetAssetId,
+                mapping.SourceRevision,
+                mapping.TargetRevision,
+                mapping.Kind?.ToLowerInvariant() switch
+                {
+                    "identity" => SpatialMappingKind.Identity,
+                    "translation" => SpatialMappingKind.Translation,
+                    "rigid" => SpatialMappingKind.Rigid,
+                    "affine" => SpatialMappingKind.Affine,
+                    _ => throw new InvalidDataException("工程包含未知 SpatialMapping 类型。"),
+                },
+                new SpatialMatrix3x3(
+                    matrix[0], matrix[1], matrix[2],
+                    matrix[3], matrix[4], matrix[5],
+                    matrix[6], matrix[7], matrix[8]),
+                mapping.Origin?.ToLowerInvariant() switch
+                {
+                    "userdeclaredidentity" => SpatialMappingOrigin.UserDeclaredIdentity,
+                    "userdeclaredtranslation" => SpatialMappingOrigin.UserDeclaredTranslation,
+                    "manuallandmarks" => SpatialMappingOrigin.ManualLandmarks,
+                    "importedmetadata" => SpatialMappingOrigin.ImportedMetadata,
+                    _ => throw new InvalidDataException("工程包含未知 SpatialMapping 来源。"),
+                },
+                mapping.CreatedAt,
+                mapping.ResidualPixels,
+                (mapping.Landmarks ?? [])
+                    .Select(landmark => new RegistrationLandmarkPair(
+                        landmark.Id,
+                        new SpatialPoint(landmark.SourceX, landmark.SourceY),
+                        new SpatialPoint(landmark.TargetX, landmark.TargetY)))
+                    .ToArray(),
+                mapping.ResidualPhysical,
+                mapping.ResidualPhysicalUnit).EnsureValid();
+        }).ToArray();
+
+        return new LinkGroup(
+            snapshot.Id,
+            snapshot.Name,
+            snapshot.ReferenceAssetId,
+            snapshot.AssetIds.ToArray(),
+            syncOptions,
+            mappings).EnsureValid();
+    }
+
+    internal static ProjectRoiSnapshot ToSnapshot(RoiObject roi)
+    {
+        roi.EnsureValid();
+        return new ProjectRoiSnapshot
+        {
+            Id = roi.Id,
+            AssetId = roi.AssetId!.Value,
+            SourceRevision = roi.SourceRevision!.Value,
+            GeometryKind = roi.GeometryKind.ToString().ToLowerInvariant(),
+            FrameIndex = roi.FrameIndex,
+            SourceGeometry = roi.SourceGeometry.Select(point => new ProjectMeasurementPointSnapshot
+            {
+                X = point.X,
+                Y = point.Y,
+            }).ToArray(),
+            Style = new ProjectRoiStyleSnapshot
+            {
+                StrokeColor = roi.Style.StrokeColor,
+                StrokeWidth = roi.Style.StrokeWidth,
+                FillColor = roi.Style.FillColor,
+                FillOpacity = roi.Style.FillOpacity,
+                Label = roi.Style.Label,
+                LabelFont = roi.Style.LabelFont,
+                LabelColor = roi.Style.LabelColor,
+            },
+            Propagation = roi.Propagation is null
+                ? null
+                : new ProjectRoiPropagationSnapshot
+                {
+                    ReferenceRoiId = roi.Propagation.ReferenceRoiId,
+                    TargetRoiId = roi.Propagation.TargetRoiId,
+                    LinkGroupId = roi.Propagation.LinkGroupId,
+                    MappingId = roi.Propagation.MappingId,
+                },
+        };
+    }
+
+    internal static RoiObject ToRoiObject(ProjectRoiSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ProjectRoiStyleSnapshot style = snapshot.Style ?? new ProjectRoiStyleSnapshot();
+        var roi = new RoiObject
+        {
+            Id = snapshot.Id,
+            AssetId = snapshot.AssetId,
+            SourceRevision = snapshot.SourceRevision,
+            GeometryKind = snapshot.GeometryKind?.ToLowerInvariant() switch
+            {
+                "rectangle" => RoiGeometryKind.Rectangle,
+                "ellipse" => RoiGeometryKind.Ellipse,
+                "polygon" => RoiGeometryKind.Polygon,
+                "polyline" => RoiGeometryKind.Polyline,
+                _ => throw new InvalidDataException("工程包含未知 canonical ROI geometry kind。"),
+            },
+            FrameIndex = snapshot.FrameIndex,
+            SourceGeometry = (snapshot.SourceGeometry ?? [])
+                .Select(point => new MeasurementPoint(point.X, point.Y))
+                .ToArray(),
+            Style = new RoiStyle(
+                style.StrokeColor,
+                style.StrokeWidth,
+                style.FillColor,
+                style.FillOpacity,
+                style.Label,
+                style.LabelFont,
+                style.LabelColor),
+            Propagation = snapshot.Propagation is null
+                ? null
+                : new RoiPropagationProvenance(
+                    snapshot.Propagation.ReferenceRoiId,
+                    snapshot.Propagation.TargetRoiId,
+                    snapshot.Propagation.LinkGroupId,
+                    snapshot.Propagation.MappingId),
+        };
+        return roi.EnsureValid();
     }
     private static string ToCalibrationOriginKey(CalibrationOrigin origin) => origin switch
     {

@@ -110,6 +110,23 @@ public static class FigurePreflight
         configuration = (configuration ?? new FigurePreflightConfiguration()).Validate();
         List<FigurePreflightIssue> issues = [];
 
+        if (context.EffectiveTargetFormat == "pdf" &&
+            document.PdfFontStrategy == PdfFontStrategy.EmbedSubsetWhenPermitted)
+        {
+            issues.Add(new FigurePreflightIssue(
+                FigurePreflightSeverity.Error,
+                "PDF_FONT_EMBEDDING_UNAVAILABLE",
+                "Strict PDF font embedding is unavailable in the current writer; choose OutlineText or the explicit outline-fallback strategy."));
+        }
+        else if (context.EffectiveTargetFormat == "pdf" &&
+                 document.PdfFontStrategy == PdfFontStrategy.PreferEmbeddedWithOutlineFallback)
+        {
+            issues.Add(new FigurePreflightIssue(
+                FigurePreflightSeverity.Warning,
+                "PDF_FONT_OUTLINE_FALLBACK",
+                "The current PDF writer cannot reliably subset/embed fonts with ToUnicode; text will be outlined and the fallback is reported."));
+        }
+
         if (TryGetAlpha(document.BackgroundColor, out byte backgroundAlpha) &&
             backgroundAlpha < byte.MaxValue)
         {

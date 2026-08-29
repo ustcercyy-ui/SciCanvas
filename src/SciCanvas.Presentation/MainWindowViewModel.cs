@@ -71,6 +71,10 @@ public sealed class MainWindowViewModel : ObservableObject
     private WorkspaceMode _workspaceMode = WorkspaceMode.Crop;
     private bool _isLayersTabActive;
     private bool _isChannelsTabActive;
+    private bool _isLinkedViewsTabActive;
+    private bool _isRegistrationTabActive;
+    private bool _isRoiPropagationTabActive;
+    private bool _isPublishingPortabilityTabActive;
     private Guid _projectId = Guid.NewGuid();
     private DateTimeOffset _projectCreatedAt = DateTimeOffset.UtcNow;
     private string? _projectPath;
@@ -171,8 +175,14 @@ public sealed class MainWindowViewModel : ObservableObject
         _customCanvasWidth = _figure.CanvasWidth;
         _customCanvasHeight = _figure.CanvasHeight;
         Sources.CollectionChanged += OnSourcesCollectionChanged;
-        MultiChannelWorkspace = new MultiChannelWorkspaceViewModel(Sources);
+        MultiChannelWorkspace = new MultiChannelWorkspaceViewModel(Sources, _figure);
         MultiChannelWorkspace.Changed += OnMultiChannelWorkspaceChanged;
+        LinkedViewsWorkspace = new LinkedViewsWorkspaceViewModel(_figure);
+        RegistrationWorkspace = new RegistrationWorkspaceViewModel(_figure);
+        RoiPropagationWorkspace = new RoiPropagationWorkspaceViewModel(Sources, MultiChannelWorkspace, _figure);
+        RoiPropagationWorkspace.Changed += OnRoiPropagationWorkspaceChanged;
+        PublishingPortabilityWorkspace = new PublishingPortabilityWorkspaceViewModel(_figure);
+        PublishingPortabilityWorkspace.Changed += OnPublishingPortabilityWorkspaceChanged;
         foreach (FigureExportProfile profile in FigureExportProfile.BuiltIns)
         {
             var editor = new ExportProfileEditorViewModel(profile);
@@ -253,11 +263,19 @@ public sealed class MainWindowViewModel : ObservableObject
         ShowFigureWorkspaceCommand = new RelayCommand(() => WorkspaceMode = WorkspaceMode.Figure);
         ShowInspectorTabCommand = new RelayCommand(() =>
         {
+            IsPublishingPortabilityTabActive = false;
+            IsRoiPropagationTabActive = false;
+            IsRegistrationTabActive = false;
+            IsLinkedViewsTabActive = false;
             IsChannelsTabActive = false;
             IsLayersTabActive = false;
         });
         ShowLayersTabCommand = new RelayCommand(() => IsLayersTabActive = true);
         ShowChannelsTabCommand = new RelayCommand(() => IsChannelsTabActive = true);
+        ShowLinkedViewsTabCommand = new RelayCommand(() => IsLinkedViewsTabActive = true);
+        ShowRegistrationTabCommand = new RelayCommand(() => IsRegistrationTabActive = true);
+        ShowRoiPropagationTabCommand = new RelayCommand(() => IsRoiPropagationTabActive = true);
+        ShowPublishingPortabilityTabCommand = new RelayCommand(() => IsPublishingPortabilityTabActive = true);
         SelectCropToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Crop);
         SelectCalibrationToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Calibration);
         SelectLengthToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Length);
@@ -378,6 +396,14 @@ public sealed class MainWindowViewModel : ObservableObject
     public ObservableCollection<SourceAssetItemViewModel> Sources { get; } = [];
 
     public MultiChannelWorkspaceViewModel MultiChannelWorkspace { get; }
+
+    public LinkedViewsWorkspaceViewModel LinkedViewsWorkspace { get; }
+
+    public RegistrationWorkspaceViewModel RegistrationWorkspace { get; }
+
+    public RoiPropagationWorkspaceViewModel RoiPropagationWorkspace { get; }
+
+    public PublishingPortabilityWorkspaceViewModel PublishingPortabilityWorkspace { get; }
 
     public ObservableCollection<SourceAssetItemViewModel> AssetsView { get; } = [];
 
@@ -733,6 +759,14 @@ public sealed class MainWindowViewModel : ObservableObject
     public RelayCommand ShowLayersTabCommand { get; }
 
     public RelayCommand ShowChannelsTabCommand { get; }
+
+    public RelayCommand ShowLinkedViewsTabCommand { get; }
+
+    public RelayCommand ShowRegistrationTabCommand { get; }
+
+    public RelayCommand ShowRoiPropagationTabCommand { get; }
+
+    public RelayCommand ShowPublishingPortabilityTabCommand { get; }
     public RelayCommand SelectCropToolCommand { get; }
     public RelayCommand SelectCalibrationToolCommand { get; }
     public RelayCommand SelectLengthToolCommand { get; }
@@ -1020,52 +1054,79 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public bool IsFigureWorkspaceActive => WorkspaceMode == WorkspaceMode.Figure;
 
-    public bool IsLayersTabActive
+public bool IsLayersTabActive
     {
         get => _isLayersTabActive;
-        set
-        {
-            if (!value && !_isLayersTabActive && _isChannelsTabActive)
-            {
-                IsChannelsTabActive = false;
-                return;
-            }
-
-            if (SetProperty(ref _isLayersTabActive, value))
-            {
-                if (value && _isChannelsTabActive)
-                {
-                    _isChannelsTabActive = false;
-                    OnPropertyChanged(nameof(IsChannelsTabActive));
-                }
-
-                NotifyInspectorTabStateChanged();
-            }
-        }
+        set => SetExclusiveInspectorTab(ref _isLayersTabActive, value, nameof(IsLayersTabActive));
     }
 
     public bool IsChannelsTabActive
     {
         get => _isChannelsTabActive;
-        set
-        {
-            if (SetProperty(ref _isChannelsTabActive, value))
-            {
-                if (value && _isLayersTabActive)
-                {
-                    _isLayersTabActive = false;
-                    OnPropertyChanged(nameof(IsLayersTabActive));
-                }
-
-                NotifyInspectorTabStateChanged();
-            }
-        }
+        set => SetExclusiveInspectorTab(ref _isChannelsTabActive, value, nameof(IsChannelsTabActive));
     }
 
-    public bool IsInspectorTabActive => !IsLayersTabActive && !IsChannelsTabActive;
+    public bool IsLinkedViewsTabActive
+    {
+        get => _isLinkedViewsTabActive;
+        set => SetExclusiveInspectorTab(ref _isLinkedViewsTabActive, value, nameof(IsLinkedViewsTabActive));
+    }
+
+    public bool IsRegistrationTabActive
+    {
+        get => _isRegistrationTabActive;
+        set => SetExclusiveInspectorTab(ref _isRegistrationTabActive, value, nameof(IsRegistrationTabActive));
+    }
+
+    public bool IsRoiPropagationTabActive
+    {
+        get => _isRoiPropagationTabActive;
+        set => SetExclusiveInspectorTab(ref _isRoiPropagationTabActive, value, nameof(IsRoiPropagationTabActive));
+    }
+
+    public bool IsPublishingPortabilityTabActive
+    {
+        get => _isPublishingPortabilityTabActive;
+        set => SetExclusiveInspectorTab(
+            ref _isPublishingPortabilityTabActive,
+            value,
+            nameof(IsPublishingPortabilityTabActive));
+    }
+
+    private void SetExclusiveInspectorTab(ref bool field, bool value, string propertyName)
+    {
+        if (field == value)
+        {
+            return;
+        }
+
+        field = value;
+        OnPropertyChanged(propertyName);
+        if (value)
+        {
+            _isLayersTabActive = propertyName == nameof(IsLayersTabActive);
+            _isChannelsTabActive = propertyName == nameof(IsChannelsTabActive);
+            _isLinkedViewsTabActive = propertyName == nameof(IsLinkedViewsTabActive);
+            _isRegistrationTabActive = propertyName == nameof(IsRegistrationTabActive);
+            _isRoiPropagationTabActive = propertyName == nameof(IsRoiPropagationTabActive);
+            _isPublishingPortabilityTabActive = propertyName == nameof(IsPublishingPortabilityTabActive);
+            OnPropertyChanged(nameof(IsLayersTabActive));
+            OnPropertyChanged(nameof(IsChannelsTabActive));
+            OnPropertyChanged(nameof(IsLinkedViewsTabActive));
+            OnPropertyChanged(nameof(IsRegistrationTabActive));
+            OnPropertyChanged(nameof(IsRoiPropagationTabActive));
+            OnPropertyChanged(nameof(IsPublishingPortabilityTabActive));
+        }
+
+        NotifyInspectorTabStateChanged();
+    }
+
+    public bool IsInspectorTabActive =>
+        !IsLayersTabActive && !IsChannelsTabActive && !IsLinkedViewsTabActive &&
+        !IsRegistrationTabActive && !IsRoiPropagationTabActive && !IsPublishingPortabilityTabActive;
 
     public Visibility InspectorTabVisibility =>
-        IsLayersTabActive || IsChannelsTabActive ? Visibility.Collapsed : Visibility.Visible;
+        IsInspectorTabActive ? Visibility.Visible : Visibility.Collapsed;
 
     public Visibility LayersTabVisibility =>
         IsLayersTabActive ? Visibility.Visible : Visibility.Collapsed;
@@ -1073,12 +1134,28 @@ public sealed class MainWindowViewModel : ObservableObject
     public Visibility ChannelsTabVisibility =>
         IsChannelsTabActive ? Visibility.Visible : Visibility.Collapsed;
 
+    public Visibility LinkedViewsTabVisibility =>
+        IsLinkedViewsTabActive ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility RegistrationTabVisibility =>
+        IsRegistrationTabActive ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility RoiPropagationTabVisibility =>
+        IsRoiPropagationTabActive ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility PublishingPortabilityTabVisibility =>
+        IsPublishingPortabilityTabActive ? Visibility.Visible : Visibility.Collapsed;
+
     private void NotifyInspectorTabStateChanged()
     {
         OnPropertyChanged(nameof(IsInspectorTabActive));
         OnPropertyChanged(nameof(InspectorTabVisibility));
         OnPropertyChanged(nameof(LayersTabVisibility));
         OnPropertyChanged(nameof(ChannelsTabVisibility));
+        OnPropertyChanged(nameof(LinkedViewsTabVisibility));
+        OnPropertyChanged(nameof(RegistrationTabVisibility));
+        OnPropertyChanged(nameof(RoiPropagationTabVisibility));
+        OnPropertyChanged(nameof(PublishingPortabilityTabVisibility));
     }
     public string WorkspaceModeText => WorkspaceMode == WorkspaceMode.Crop ? "裁剪视图" : "拼版视图";
 
@@ -2414,7 +2491,6 @@ public sealed class MainWindowViewModel : ObservableObject
         UseAutomaticRegionThreshold,
         RegionThresholdPercent / 100,
         MinimumRegionAreaPixels,
-        MaximumCandidates: 1000,
         AnalysisChannel);
 
     private async Task AnalyzeParticleBatchAsync()
@@ -2503,7 +2579,7 @@ public sealed class MainWindowViewModel : ObservableObject
                     ["automaticThreshold"] = recipe.UseAutomaticThreshold,
                     ["thresholdNormalized"] = recipe.ThresholdNormalized,
                     ["minimumAreaPixels"] = recipe.MinimumAreaPixels,
-                    ["maximumCandidates"] = recipe.MaximumCandidates,
+                    ["resultLimit"] = "unlimited",
                     ["queueCount"] = items.Length,
                     ["completedCount"] = completed,
                     ["particleCount"] = totalParticles,
@@ -2900,7 +2976,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 return;
             }
 
-            FigureExportDocument exportDocument = Figure.CreateExportDocument();
+            FigureExportDocument exportDocument = Figure.CreateExportDocument(MultiChannelWorkspace.CreateModels(), Sources);
             FigurePreflightResult preflight = UpdateFigureQc(exportDocument);
             if (preflight.HasErrors)
             {
@@ -2911,6 +2987,9 @@ public sealed class MainWindowViewModel : ObservableObject
                 return;
             }
 
+            ResolvedFigureExportDocument resolvedExport =
+                PublishingPortabilityWorkspace.ResolveFonts(exportDocument);
+            exportDocument = resolvedExport.Document;
             StatusMessage = $"正在以原始像素渲染 {Figure.Panels.Count} 个面板…";
             await _figureExporter.ExportAsync(exportDocument, decision.NormalizedTargetPath);
             string provenancePath = Path.ChangeExtension(decision.NormalizedTargetPath, ".provenance.json");
@@ -2922,7 +3001,10 @@ public sealed class MainWindowViewModel : ObservableObject
                 Sources.Select(item => item.Asset).ToArray(),
                 preflight,
                 sourceRevisions: Sources.ToDictionary(item => item.Asset.Id, item => item.SourceRevision),
-                analyses: Sources.SelectMany(item => item.AnalysisResults));
+                analyses: Sources.SelectMany(item => item.AnalysisResults),
+                fontResolutions: resolvedExport.FontResolutions,
+                linkGroups: Figure.LinkGroups,
+                rois: RoiPropagationWorkspace.CreateModels());
             try
             {
                 FigureProvenanceWriter.WriteJson(provenance, provenancePath);
@@ -2975,7 +3057,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 }
             }
 
-            FigureExportDocument exportDocument = Figure.CreateExportDocument();
+            FigureExportDocument exportDocument = Figure.CreateExportDocument(MultiChannelWorkspace.CreateModels(), Sources);
             FigurePreflightResult qc = UpdateFigureQc(exportDocument);
             if (qc.HasErrors)
             {
@@ -2986,6 +3068,9 @@ public sealed class MainWindowViewModel : ObservableObject
                 return;
             }
 
+            ResolvedFigureExportDocument resolvedSubmission =
+                PublishingPortabilityWorkspace.ResolveFonts(exportDocument);
+            exportDocument = resolvedSubmission.Document;
             var auditEntry = new ProjectAuditEntrySnapshot
             {
                 Timestamp = DateTimeOffset.UtcNow,
@@ -2998,7 +3083,7 @@ public sealed class MainWindowViewModel : ObservableObject
                     ["warningCount"] = qc.Issues.Count(issue => issue.Severity == FigurePreflightSeverity.Warning),
                 },
             };
-            string version = typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "2.4.0-alpha.1";
+            string version = typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "2.4.0-alpha";
             SubmissionPackageResult result = await _submissionPackageBuilder.BuildAsync(
                 new SubmissionPackageRequest(
                     targetDirectory,
@@ -3006,7 +3091,10 @@ public sealed class MainWindowViewModel : ObservableObject
                     Sources.ToArray(),
                     qc,
                     _auditTrail.Concat([auditEntry]).ToArray(),
-                    version));
+                    version,
+                    FontResolutions: resolvedSubmission.FontResolutions,
+                    LinkGroups: Figure.LinkGroups.ToArray(),
+                    Rois: RoiPropagationWorkspace.CreateModels()));
             _auditTrail.Add(auditEntry);
             StatusMessage = $"投稿包完成 · {result.CreatedFiles.Count} 个文件 · {result.WarningCount} 个 warning · 原图未复制或修改";
         }
@@ -3145,7 +3233,7 @@ public sealed class MainWindowViewModel : ObservableObject
             .Select(panel => panel.Source.Asset)
             .DistinctBy(source => source.Id)
             .ToArray();
-        FigureExportDocument baseDocument = Figure.CreateExportDocument();
+        FigureExportDocument baseDocument = Figure.CreateExportDocument(MultiChannelWorkspace.CreateModels(), Sources);
         HashSet<string> plannedPaths = new(StringComparer.OrdinalIgnoreCase);
         List<string> errors = [];
         List<string> warnings = [];
@@ -3189,6 +3277,9 @@ public sealed class MainWindowViewModel : ObservableObject
                             .Select(issue => issue.Message)));
                     }
 
+                    ResolvedFigureExportDocument resolvedVariant =
+                        PublishingPortabilityWorkspace.ResolveFonts(variant);
+                    variant = resolvedVariant.Document;
                     string requestedPath = CreateFigureVariantTargetPath(
                         folder,
                         Figure.Template.Id,
@@ -3222,7 +3313,10 @@ public sealed class MainWindowViewModel : ObservableObject
                             sourceRevisions: Sources.ToDictionary(item => item.Asset.Id, item => item.SourceRevision),
                             analyses: Sources
                                 .Where(item => figureSources.Any(source => source.Id == item.Asset.Id))
-                                .SelectMany(item => item.AnalysisResults));
+                                .SelectMany(item => item.AnalysisResults),
+                            fontResolutions: resolvedVariant.FontResolutions,
+                            linkGroups: Figure.LinkGroups,
+                            rois: RoiPropagationWorkspace.CreateModels());
                         try
                         {
                             FigureProvenanceWriter.WriteJson(
@@ -3311,6 +3405,8 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             Sources.Clear();
             MultiChannelWorkspace.Restore([]);
+            RoiPropagationWorkspace.Restore([]);
+            PublishingPortabilityWorkspace.Restore([], []);
             BatchCropQueue.Clear();
             SelectedBatchCrop = null;
             OnPropertyChanged(nameof(BatchCropQueueSummary));
@@ -3390,7 +3486,11 @@ public sealed class MainWindowViewModel : ObservableObject
                 _auditTrail,
                 CreateValidatedExportProfiles(),
                 FigureQcMinimumDpi,
-                MultiChannelWorkspace.CreateModels());
+                MultiChannelWorkspace.CreateModels(),
+                Figure.CreateLinkGroupModels(),
+                RoiPropagationWorkspace.CreateModels(),
+                PublishingPortabilityWorkspace.CreatePresetModels(),
+                PublishingPortabilityWorkspace.CreateSubstitutionModels());
 
             string? previousProjectPath = _projectPath;
             await _projectStore.SaveAsync(normalizedPath, document);
@@ -3816,6 +3916,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
                 restored.Label = layer.PanelLabel ?? restored.Label;
                 restored.CropLinkGroupId = layer.CropLinkGroupId;
+                restored.CompositeGroupId = layer.CompositeGroupId;
                 restored.RestoreWorkspaceState(
                     ProjectDocumentMapper.ParsePanelFitMode(layer.FitMode),
                     layer.RotationDegrees,
@@ -3845,6 +3946,12 @@ public sealed class MainWindowViewModel : ObservableObject
 
                 layerIndex++;
             }
+
+            Figure.RestoreLinkGroups(document.LinkGroups.Select(ProjectDocumentMapper.ToLinkGroup));
+            RoiPropagationWorkspace.Restore(document.Rois.Select(ProjectDocumentMapper.ToRoiObject));
+            PublishingPortabilityWorkspace.Restore(
+                document.JournalPresetSnapshots.Select(ProjectDocumentMapper.ToJournalPreset),
+                document.FontSubstitutions.Select(ProjectDocumentMapper.ToFontSubstitution));
 
             ProjectTemplateSnapshot? editor = document.TemplateSnapshot;
             ProjectGlobalStyleSnapshot? globalStyle = editor?.GlobalStyle;
@@ -3916,7 +4023,8 @@ public sealed class MainWindowViewModel : ObservableObject
                     scientificObject.Maximum,
                     scientificObject.Unit,
                     scientificObject.Colormap,
-                    scientificObject.ChannelEntries);
+                    scientificObject.ChannelEntries,
+                    scientificObject.ChannelId);
             }
             foreach (ProjectMeasurementOverlaySnapshot overlaySnapshot in
                      (editor?.MeasurementOverlays ?? []).OrderBy(item => item.ZIndex))
@@ -4119,7 +4227,8 @@ public sealed class MainWindowViewModel : ObservableObject
                 scientificObject.Maximum,
                 scientificObject.Unit,
                 scientificObject.Colormap,
-                scientificObject.ChannelEntries);
+                scientificObject.ChannelEntries,
+                    scientificObject.ChannelId);
             try
             {
                 _ = candidate.CreateExportItem();
@@ -4259,6 +4368,10 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private void OnMultiChannelWorkspaceChanged(object? sender, EventArgs e) => MarkDirty();
 
+    private void OnRoiPropagationWorkspaceChanged(object? sender, EventArgs e) => MarkDirty();
+
+    private void OnPublishingPortabilityWorkspaceChanged(object? sender, EventArgs e) => MarkDirty();
+
     private void RefreshAssetLibrary()
     {
         SourceAssetItemViewModel[] visible = Sources.Where(FilterAsset).ToArray();
@@ -4343,7 +4456,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private void HarmonizeFigureStyle()
     {
-        FigureExportDocument before = Figure.CreateExportDocument();
+        FigureExportDocument before = Figure.CreateExportDocument(MultiChannelWorkspace.CreateModels(), Sources);
         FigureGlobalStyle style = before.GlobalStyle;
         int changed = before.Annotations.Count(annotation => annotation.IsVisible &&
             (annotation.Kind == "text"
@@ -4376,7 +4489,7 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         try
         {
-            FigureExportDocument document = Figure.CreateExportDocument();
+            FigureExportDocument document = Figure.CreateExportDocument(MultiChannelWorkspace.CreateModels(), Sources);
             FigurePreflightResult result = FigureAssistance.Review(
                 document,
                 Sources.Select(source => source.Asset).ToArray(),
@@ -4428,7 +4541,7 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         try
         {
-            FigureExportDocument document = Figure.CreateExportDocument();
+            FigureExportDocument document = Figure.CreateExportDocument(MultiChannelWorkspace.CreateModels(), Sources);
             FigurePreflightResult result = UpdateFigureQc(document);
             LastError = result.HasErrors
                 ? string.Join(Environment.NewLine, result.Issues
@@ -4833,6 +4946,7 @@ public sealed class MainWindowViewModel : ObservableObject
                     panel.Adjustments,
                     panel.IsAspectRatioLocked,
                     panel.CropLinkGroupId,
+                    panel.CompositeGroupId,
                     panel.FitMode,
                     panel.RotationDegrees,
                     panel.ReplacementValidity,
@@ -4882,7 +4996,8 @@ public sealed class MainWindowViewModel : ObservableObject
                     scientificObject.Maximum,
                     scientificObject.Unit,
                     scientificObject.Colormap,
-                    scientificObject.ChannelEntriesText))
+                    scientificObject.ChannelEntriesText,
+                    scientificObject.ChannelId))
                 .ToArray(),
             Figure.Guides
                 .Select(guide => new GuideHistorySnapshot(
@@ -4929,7 +5044,11 @@ public sealed class MainWindowViewModel : ObservableObject
             Sources.SelectMany(source => source.AnalysisResults.Select(result =>
                     new AnalysisHistorySnapshot(source.Asset.Id, result)))
                 .ToArray(),
-            MultiChannelWorkspace.CreateModels());
+            MultiChannelWorkspace.CreateModels(),
+            Figure.CreateLinkGroupModels(),
+            RoiPropagationWorkspace.CreateModels(),
+            PublishingPortabilityWorkspace.CreatePresetModels(),
+            PublishingPortabilityWorkspace.CreateSubstitutionModels());
     }
 
     private void RestoreHistorySnapshot(EditorHistorySnapshot snapshot)
@@ -4992,12 +5111,19 @@ public sealed class MainWindowViewModel : ObservableObject
                 restored.ScaleBarShowLabel = panelSnapshot.ScaleBarShowLabel;
                 restored.ShowScaleBar = panelSnapshot.ShowScaleBar;
                 restored.CropLinkGroupId = panelSnapshot.CropLinkGroupId;
+                restored.CompositeGroupId = panelSnapshot.CompositeGroupId;
                 restored.RestoreWorkspaceState(
                     panelSnapshot.FitMode,
                     panelSnapshot.RotationDegrees,
                     panelSnapshot.ReplacementValidity);
                 restored.RestoreStyleOverride(panelSnapshot.StyleOverride);
             }
+
+            Figure.RestoreLinkGroups(snapshot.LinkGroups ?? []);
+            RoiPropagationWorkspace.Restore(snapshot.Rois ?? []);
+            PublishingPortabilityWorkspace.Restore(
+                snapshot.JournalPresets ?? [],
+                snapshot.FontSubstitutions ?? []);
 
             foreach (AnnotationHistorySnapshot annotation in
                      snapshot.Annotations.OrderBy(item => item.ZIndex))
@@ -5046,7 +5172,8 @@ public sealed class MainWindowViewModel : ObservableObject
                     scientificObject.Maximum,
                     scientificObject.Unit,
                     scientificObject.Colormap,
-                    scientificObject.ChannelEntriesText);
+                    scientificObject.ChannelEntriesText,
+                    scientificObject.ChannelId);
             }
             foreach (GuideHistorySnapshot guide in snapshot.Guides)
             {
@@ -5179,7 +5306,11 @@ public sealed class MainWindowViewModel : ObservableObject
         before.Measurements.Select(measurement => measurement.Id)
             .SequenceEqual(after.Measurements.Select(measurement => measurement.Id)) &&
         before.Analyses.Select(analysis => analysis.Result.Id)
-            .SequenceEqual(after.Analyses.Select(analysis => analysis.Result.Id));
+            .SequenceEqual(after.Analyses.Select(analysis => analysis.Result.Id)) &&
+        (before.LinkGroups ?? []).Select(group => group.Id)
+            .SequenceEqual((after.LinkGroups ?? []).Select(group => group.Id)) &&
+        (before.Rois ?? []).Select(roi => roi.Id)
+            .SequenceEqual((after.Rois ?? []).Select(roi => roi.Id));
 
     private void RefreshHistoryState()
     {
@@ -5234,7 +5365,11 @@ public sealed class MainWindowViewModel : ObservableObject
                 _auditTrail,
                 CreateValidatedExportProfiles(),
                 FigureQcMinimumDpi,
-                MultiChannelWorkspace.CreateModels());
+                MultiChannelWorkspace.CreateModels(),
+                Figure.CreateLinkGroupModels(),
+                RoiPropagationWorkspace.CreateModels(),
+                PublishingPortabilityWorkspace.CreatePresetModels(),
+                PublishingPortabilityWorkspace.CreateSubstitutionModels());
 
             await _projectRecoveryStore.SaveAsync(_projectId, _projectPath, document);
             AutosaveStatusText = $"自动保存 {DateTime.Now:HH:mm:ss}";
@@ -5378,6 +5513,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 ?? throw new InvalidOperationException($"无法迁移面板 {panel.Label} 到新模板。");
             restored.Label = panel.Label;
             restored.CropLinkGroupId = panel.CropLinkGroupId;
+            restored.CompositeGroupId = panel.CompositeGroupId;
             restored.RestoreWorkspaceState(
                 panel.FitMode,
                 panel.RotationDegrees,
@@ -5457,7 +5593,8 @@ public sealed class MainWindowViewModel : ObservableObject
                 scientificObject.Maximum,
                 scientificObject.Unit,
                 scientificObject.Colormap,
-                scientificObject.ChannelEntriesText);
+                scientificObject.ChannelEntriesText,
+                    scientificObject.ChannelId);
         }
         migrated.SelectedScientificObject = selectedScientificObjectId is Guid scientificObjectId
             ? migrated.ScientificObjects.FirstOrDefault(item => item.Id == scientificObjectId)
@@ -5595,6 +5732,11 @@ public sealed class MainWindowViewModel : ObservableObject
         Figure = next;
         Figure.DocumentChanged += OnFigureDocumentChanged;
         Figure.EditCompleted += OnFigureEditCompleted;
+        LinkedViewsWorkspace.AttachFigure(Figure);
+        RegistrationWorkspace.AttachFigure(Figure);
+        RoiPropagationWorkspace.AttachFigure(Figure);
+        MultiChannelWorkspace.AttachFigure(Figure);
+        PublishingPortabilityWorkspace.AttachFigure(Figure);
         RefreshAssetUsageCounts();
         FigureQcIssues.Clear();
         SelectedFigureQcIssue = null;

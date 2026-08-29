@@ -268,15 +268,25 @@ public sealed class ProjectDocumentMapperTests
             AnalyzedAt = DateTimeOffset.Parse("2026-08-26T08:00:00Z"),
             SourceBitDepth = 16,
             Region = new PixelRect64(2, 3, 2, 2),
-            PixelCount = 4,
+            RoiId = Guid.NewGuid(),
+            ScientificChannelId = Guid.NewGuid(),
+            LinkGroupId = Guid.NewGuid(),
+            MappingId = Guid.NewGuid(),
+            PolygonMask =
+            [
+                new MeasurementPoint(2, 3),
+                new MeasurementPoint(4, 3),
+                new MeasurementPoint(2, 5),
+            ],
+            PixelCount = 3,
             Minimum = 7,
             Maximum = 65535,
             Mean = 20000,
             StandardDeviation = 100,
             IntegratedIntensity = 80000,
             Histogram = new IntensityHistogram(
-                [new IntensityHistogramBin(0, 65535, 4)],
-                4,
+                [new IntensityHistogramBin(0, 65535, 3)],
+                3,
                 7,
                 65535),
         };
@@ -301,8 +311,7 @@ public sealed class ProjectDocumentMapperTests
                 new PixelRect64(10, 10, 10, 10),
                 UseAutomaticThreshold: false,
                 ThresholdNormalized: 0.6,
-                MinimumAreaPixels: 2,
-                MaximumCandidates: 50),
+                MinimumAreaPixels: 2),
             [
                 new AssistedRegionCandidate(
                     1,
@@ -344,7 +353,14 @@ public sealed class ProjectDocumentMapperTests
         RoiStatisticsResult restoredRoi = Assert.IsType<RoiStatisticsResult>(
             ProjectDocumentMapper.ToAnalysis(Assert.Single(document.Analyses, item => item.Kind == "roiStatistics")));
         Assert.Equal(65535, restoredRoi.Maximum);
-        Assert.Equal(new PixelRect64(2, 3, 2, 2), restoredRoi.Region);
+Assert.Equal(new PixelRect64(2, 3, 2, 2), restoredRoi.Region);
+        Assert.Equal(3, restoredRoi.PixelCount);
+        Assert.Equal(roi.RoiId, restoredRoi.RoiId);
+        Assert.Equal(roi.ScientificChannelId, restoredRoi.ScientificChannelId);
+        Assert.Equal(roi.LinkGroupId, restoredRoi.LinkGroupId);
+        Assert.Equal(roi.MappingId, restoredRoi.MappingId);
+        Assert.Equal(roi.PolygonMask, restoredRoi.PolygonMask);
+        Assert.True(restoredRoi.IsValid);
         IntensityProfileResult restoredProfile = Assert.IsType<IntensityProfileResult>(
             ProjectDocumentMapper.ToAnalysis(Assert.Single(document.Analyses, item => item.Kind == "lineProfile")));
         Assert.Equal(65535, restoredProfile.Samples[1].RawIntensity);

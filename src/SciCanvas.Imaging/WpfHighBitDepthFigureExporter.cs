@@ -85,10 +85,7 @@ internal static class WpfHighBitDepthFigureExporter
         FigurePanelExportItem panel,
         ushort[] canvas)
     {
-        BitmapSource crop = WpfFigureExporter.LoadExactCrop(
-            panel.Source.OriginalPath,
-            panel.SourceRect,
-            panel.FrameIndex);
+        BitmapSource crop = WpfFigureExporter.LoadPanelImage(panel);
         var converted = new FormatConvertedBitmap(crop, PixelFormats.Rgb48, null, 0);
         converted.Freeze();
         int sourceStride = checked(converted.PixelWidth * 6);

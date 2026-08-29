@@ -2,8 +2,19 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
+using SciCanvas.Core.Channels;
+using SciCanvas.Core.Cropping;
 using SciCanvas.Core.Export;
-using SciCanvas.Core.Geometry;
+using LinkGroup = SciCanvas.Core.Linking.LinkGroup;
+using LinkSyncOptions = SciCanvas.Core.Linking.LinkSyncOptions;
+using SpatialMapping = SciCanvas.Core.Linking.SpatialMapping;
+using SpatialMappingKind = SciCanvas.Core.Linking.SpatialMappingKind;
+using SpatialMappingOrigin = SciCanvas.Core.Linking.SpatialMappingOrigin;
+using SpatialMatrix3x3 = SciCanvas.Core.Linking.SpatialMatrix3x3;
+using RegistrationLandmarkPair = SciCanvas.Core.Linking.RegistrationLandmarkPair;
+using SpatialMappingRevisionState = SciCanvas.Core.Linking.SpatialMappingRevisionState;
+using SpatialRegistrationResult = SciCanvas.Core.Linking.SpatialRegistrationResult;
+using SpatialRegistrationSolver = SciCanvas.Core.Linking.SpatialRegistrationSolver;using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Science;
 using SciCanvas.Core.Workspace;
 using SciCanvas.Imaging;
@@ -58,7 +69,9 @@ public sealed class FigureCanvasViewModel : ObservableObject
     private double _scaleBarFontSizePt = FigureGlobalStyle.Default.EffectiveScaleBarFontSizePt;
     private bool _scaleBarLabelIsBold = FigureGlobalStyle.Default.ScaleBarLabelIsBold;
     private double _scaleBarThicknessPt = FigureGlobalStyle.Default.EffectiveScaleBarThicknessPt;
-    private bool _isSynchronizingLinkedCrops;
+    private bool _isSynchronizingLinkedViews;
+    private bool _isUpdatingLinkGroupMembership;
+    private string _linkSynchronizationStatusText = "尚未创建跨素材联动组。";
     private ScientificColorEntryViewModel? _selectedScientificColor;
     private ScientificColorApplicationTarget _scientificColorApplicationTarget;
     private FigureAnnotationStyle? _copiedAnnotationStyle;
@@ -66,6 +79,8 @@ public sealed class FigureCanvasViewModel : ObservableObject
     public event EventHandler? DocumentChanged;
 
     public event EventHandler? EditCompleted;
+
+    public event EventHandler? LinkGroupsChanged;
 
     public FigureCanvasViewModel(FigureTemplateDefinition template)
     {
@@ -230,6 +245,14 @@ public sealed class FigureCanvasViewModel : ObservableObject
     public ObservableCollection<FigureGuideViewModel> Guides { get; } = [];
 
     public ObservableCollection<ScientificColorEntryViewModel> ScientificColors { get; } = [];
+
+    public ObservableCollection<LinkGroup> LinkGroups { get; } = [];
+
+    public string LinkSynchronizationStatusText
+    {
+        get => _linkSynchronizationStatusText;
+        private set => SetProperty(ref _linkSynchronizationStatusText, value);
+    }
 
     public RelayCommand RemoveSelectedCommand { get; }
 
@@ -1382,6 +1405,9 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
         Panels.Clear();
         SelectedPanel = null;
+        LinkGroups.Clear();
+        LinkGroupsChanged?.Invoke(this, EventArgs.Empty);
+        LinkSynchronizationStatusText = "当前没有跨素材联动组。";
         foreach (FigureAnnotationViewModel annotation in Annotations)
         {
             annotation.PropertyChanged -= OnAnnotationPropertyChanged;
@@ -1421,7 +1447,9 @@ public sealed class FigureCanvasViewModel : ObservableObject
         panel.Y = Math.Clamp(y, 0, Math.Max(0, CanvasHeight - panel.Height));
     }
 
-    public FigureExportDocument CreateExportDocument()
+    public FigureExportDocument CreateExportDocument(
+        IReadOnlyList<MultiChannelAssetGroup>? multiChannelGroups = null,
+        IReadOnlyCollection<SourceAssetItemViewModel>? sources = null)
     {
         FigurePanelExportItem[] panels = Panels
             .OrderBy(panel => panel.ZIndex)
@@ -1437,7 +1465,8 @@ public sealed class FigureCanvasViewModel : ObservableObject
                 panel.IsInset,
                 panel.StyleOverride,
                 panel.Id,
-                panel.CreateScaleBarExportSpecs()))
+                panel.CreateScaleBarExportSpecs(),
+                CreateChannelLayers(panel, multiChannelGroups, sources)))
             .ToArray();
         FigureAnnotationExportItem[] annotations = Annotations
             .OrderBy(annotation => annotation.ZIndex)
@@ -1457,6 +1486,81 @@ public sealed class FigureCanvasViewModel : ObservableObject
             globalStyle: GlobalStyle,
             measurementOverlays: MeasurementOverlays.Select(overlay => overlay.CreateExportItem()).ToArray(),
             scientificObjects: scientificObjects);
+    }
+
+    private IReadOnlyList<FigureChannelLayerExportItem> CreateChannelLayers(
+        FigurePanelViewModel panel,
+        IReadOnlyList<MultiChannelAssetGroup>? multiChannelGroups,
+        IReadOnlyCollection<SourceAssetItemViewModel>? sources)
+    {
+        if (panel.CompositeGroupId is not Guid groupId)
+        {
+            return [];
+        }
+
+        MultiChannelAssetGroup group = multiChannelGroups?.SingleOrDefault(item => item.Id == groupId)
+            ?? throw new InvalidOperationException(
+                $"Composite panel {panel.Label} references missing multi-channel group {groupId}.");
+        SourceAssetItemViewModel[] availableSources = sources?.ToArray()
+            ?? throw new InvalidOperationException("Composite export requires the project source collection.");
+        group.EnsureValid(availableSources.Select(item => item.Asset.Id).ToHashSet());
+        if (!group.Members.Any(member => member.AssetId == panel.Source.Asset.Id))
+        {
+            throw new InvalidOperationException(
+                $"Composite panel {panel.Label} source does not belong to group {group.Name}.");
+        }
+
+        LinkGroup? linkGroup = LinkGroups.FirstOrDefault(link =>
+            link.ContainsAsset(panel.Source.Asset.Id) &&
+            group.Members.All(member => link.ContainsAsset(member.AssetId)));
+        if (!group.SameFieldOfViewConfirmed && linkGroup is null)
+        {
+            throw new InvalidOperationException(
+                $"Composite group {group.Name} requires a LinkGroup with current SpatialMappings before export.");
+        }
+
+        if (linkGroup is not null)
+        {
+            IReadOnlyDictionary<Guid, long> revisions = availableSources
+                .Where(item => linkGroup.ContainsAsset(item.Asset.Id))
+                .ToDictionary(item => item.Asset.Id, item => item.SourceRevision);
+            if (!linkGroup.AreMappingsCurrent(revisions))
+            {
+                throw new InvalidOperationException(
+                    $"Composite group {group.Name} has stale SpatialMappings; review registration before export.");
+            }
+        }
+
+        return group.Members.Select(member =>
+        {
+            SourceAssetItemViewModel source = availableSources.Single(item => item.Asset.Id == member.AssetId);
+            PixelRect64 sourceRect = member.AssetId == panel.Source.Asset.Id || linkGroup is null
+                ? panel.SourceRect
+                : linkGroup.MapCrop(panel.Source.Asset.Id, member.AssetId, panel.SourceRect);
+            ScientificSampleType sampleType = source.Asset.Metadata.BitsPerChannel <= 8
+                ? ScientificSampleType.UInt8
+                : ScientificSampleType.UInt16;
+            ScientificChannelSourceKind sourceKind = source.Asset.Metadata.Channels == 1
+                ? ScientificChannelSourceKind.ExternalAsset
+                : ScientificChannelSourceKind.InterleavedComponent;
+            var selector = new ScientificChannelDescriptor(
+                member.ChannelId,
+                Index: 0,
+                member.Name,
+                sourceKind,
+                sampleType,
+                source.Asset.Metadata.BitsPerChannel,
+                Role: member.Role,
+                DefaultColor: member.Color).EnsureValid();
+            return new FigureChannelLayerExportItem(
+                group.Id,
+                source.Asset,
+                source.SourceRevision,
+                sourceRect,
+                member.FrameIndex,
+                selector,
+                member.DisplaySettings).EnsureValid();
+        }).ToArray();
     }
 
     public FigureAdditionalScaleBarViewModel AddAdditionalScaleBar()
@@ -1730,12 +1834,13 @@ public sealed class FigureCanvasViewModel : ObservableObject
         double maximum,
         string unit,
         string colormap,
-        string channelEntriesText)
+        string channelEntriesText,
+        Guid? channelId = null)
     {
         var scientificObject = new FigureScientificObjectViewModel(kind, CanvasWidth, CanvasHeight, Dpi, zIndex, id);
         scientificObject.Restore(pointsText, label, strokeColor, fillColor, fillOpacityPercent, textColor,
             fontFamily, fontSizePt, strokeWidthPt, isBold, isVisible, isLocked, minimum, maximum, unit,
-            colormap, channelEntriesText);
+            colormap, channelEntriesText, channelId);
         scientificObject.PropertyChanged += OnScientificObjectPropertyChanged;
         ScientificObjects.Add(scientificObject);
         SelectedScientificObject = scientificObject;
@@ -2522,33 +2627,335 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
     private bool CanLinkSelectedPanelCrops() =>
         SelectedPanelCount >= 2 &&
-        SelectedPanels.All(panel => !panel.IsLocked) &&
-        SelectedPanels.Select(panel => panel.Source.Asset.Id).Distinct().Count() == 1;
+        SelectedPanels.All(panel => !panel.IsLocked && !panel.IsCropLinked);
 
     private void LinkSelectedPanelCrops()
     {
-        if (!CanLinkSelectedPanelCrops())
+        if (!CanLinkSelectedPanelCrops() || SelectedPanel is not FigurePanelViewModel reference)
         {
             return;
         }
 
+        FigurePanelViewModel[] selected = SelectedPanels.ToArray();
+        Guid[] assetIds = selected
+            .Select(panel => panel.Source.Asset.Id)
+            .Distinct()
+            .ToArray();
         Guid groupId = Guid.NewGuid();
-        foreach (FigurePanelViewModel panel in SelectedPanels)
+        _isUpdatingLinkGroupMembership = true;
+        try
         {
-            panel.CropLinkGroupId = groupId;
+            foreach (FigurePanelViewModel panel in selected)
+            {
+                panel.CropLinkGroupId = groupId;
+            }
+        }
+        finally
+        {
+            _isUpdatingLinkGroupMembership = false;
         }
 
+        if (assetIds.Length > 1)
+        {
+            DateTimeOffset createdAt = DateTimeOffset.UtcNow;
+            SpatialMapping[] mappings = assetIds
+                .Where(assetId => assetId != reference.Source.Asset.Id)
+                .Select(targetAssetId =>
+                {
+                    FigurePanelViewModel target = selected.First(panel => panel.Source.Asset.Id == targetAssetId);
+                    return SpatialMapping.CreateIdentity(
+                        reference.Source.Asset.Id,
+                        targetAssetId,
+                        reference.Source.SourceRevision,
+                        target.Source.SourceRevision,
+                        createdAt);
+                })
+                .ToArray();
+            var group = new LinkGroup(
+                groupId,
+                $"联动组 {LinkGroups.Count + 1}",
+                reference.Source.Asset.Id,
+                Array.AsReadOnly(assetIds),
+                LinkSyncOptions.Crop | LinkSyncOptions.Roi | LinkSyncOptions.ColorScale,
+                Array.AsReadOnly(mappings)).EnsureValid();
+            LinkGroups.Add(group);
+            LinkGroupsChanged?.Invoke(this, EventArgs.Empty);
+            DocumentChanged?.Invoke(this, EventArgs.Empty);
+            LinkSynchronizationStatusText =
+                $"已创建跨素材联动组；参考素材 {reference.Source.DisplayName}，映射来源为用户声明的 Identity。";
+            SynchronizeLinkedCrop(reference);
+            SynchronizeLinkedColorScale(reference);
+        }
+        else
+        {
+            DocumentChanged?.Invoke(this, EventArgs.Empty);
+            LinkSynchronizationStatusText = "已创建同素材裁剪联动；各面板继续引用原素材。";
+        }
+
+        LinkSelectedPanelCropsCommand.NotifyCanExecuteChanged();
+        UnlinkSelectedPanelCropsCommand.NotifyCanExecuteChanged();
         EditCompleted?.Invoke(this, EventArgs.Empty);
     }
 
     private void UnlinkSelectedPanelCrops()
     {
-        foreach (FigurePanelViewModel panel in SelectedPanels)
+        Guid[] affectedGroupIds = SelectedPanels
+            .Select(panel => panel.CropLinkGroupId)
+            .OfType<Guid>()
+            .Distinct()
+            .ToArray();
+        _isUpdatingLinkGroupMembership = true;
+        try
         {
-            panel.CropLinkGroupId = null;
+            foreach (FigurePanelViewModel panel in SelectedPanels)
+            {
+                panel.CropLinkGroupId = null;
+            }
+
+            foreach (Guid groupId in affectedGroupIds)
+            {
+                int groupIndex = FindLinkGroupIndex(groupId);
+                if (groupIndex < 0)
+                {
+                    continue;
+                }
+
+                LinkGroup group = LinkGroups[groupIndex];
+                Guid[] remainingAssetIds = Panels
+                    .Where(panel => panel.CropLinkGroupId == groupId)
+                    .Select(panel => panel.Source.Asset.Id)
+                    .Distinct()
+                    .ToArray();
+                if (remainingAssetIds.Length < 2 || !remainingAssetIds.Contains(group.ReferenceAssetId))
+                {
+                    foreach (FigurePanelViewModel remaining in Panels.Where(panel => panel.CropLinkGroupId == groupId))
+                    {
+                        remaining.CropLinkGroupId = null;
+                    }
+
+                    LinkGroups.RemoveAt(groupIndex);
+                    continue;
+                }
+
+                LinkGroups[groupIndex] = (group with
+                {
+                    AssetIds = Array.AsReadOnly(remainingAssetIds),
+                    Mappings = Array.AsReadOnly(group.Mappings
+                        .Where(mapping => remainingAssetIds.Contains(mapping.TargetAssetId))
+                        .ToArray()),
+                }).EnsureValid();
+            }
+        }
+        finally
+        {
+            _isUpdatingLinkGroupMembership = false;
+        }
+
+        if (affectedGroupIds.Length > 0)
+        {
+            LinkGroupsChanged?.Invoke(this, EventArgs.Empty);
+            DocumentChanged?.Invoke(this, EventArgs.Empty);
+            LinkSynchronizationStatusText = LinkGroups.Count == 0
+                ? "当前没有跨素材联动组。"
+                : "已更新联动组成员。";
+        }
+
+        LinkSelectedPanelCropsCommand.NotifyCanExecuteChanged();
+        UnlinkSelectedPanelCropsCommand.NotifyCanExecuteChanged();
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    public IReadOnlyList<LinkGroup> CreateLinkGroupModels() =>
+        LinkGroups
+            .Select(group => group with
+            {
+                AssetIds = Array.AsReadOnly(group.AssetIds.ToArray()),
+                Mappings = Array.AsReadOnly(group.Mappings.ToArray()),
+            })
+            .ToArray();
+
+    public void RestoreLinkGroups(IEnumerable<LinkGroup> groups)
+    {
+        ArgumentNullException.ThrowIfNull(groups);
+        LinkGroups.Clear();
+        HashSet<Guid> availableAssetIds = Panels
+            .Select(panel => panel.Source.Asset.Id)
+            .ToHashSet();
+        foreach (LinkGroup group in groups)
+        {
+            LinkGroups.Add(group.EnsureValid(availableAssetIds));
+        }
+
+        LinkGroupsChanged?.Invoke(this, EventArgs.Empty);
+        LinkSynchronizationStatusText = LinkGroups.Count == 0
+            ? "当前没有跨素材联动组。"
+            : $"已恢复 {LinkGroups.Count} 个跨素材联动组。";
+    }
+
+    public void UpdateLinkIdentity(Guid groupId, Guid targetAssetId)
+    {
+        int groupIndex = FindLinkGroupIndex(groupId);
+        if (groupIndex < 0)
+        {
+            throw new InvalidOperationException("找不到待更新的联动组。");
+        }
+
+        LinkGroup group = LinkGroups[groupIndex];
+        SpatialMapping current = group.Mappings.Single(mapping => mapping.TargetAssetId == targetAssetId);
+        (long sourceRevision, long targetRevision) = GetCurrentMappingRevisions(current);
+        SpatialMapping replacement = SpatialMapping.CreateIdentity(
+            current.SourceAssetId,
+            current.TargetAssetId,
+            sourceRevision,
+            targetRevision,
+            DateTimeOffset.UtcNow,
+            current.Id);
+        LinkGroups[groupIndex] = group.ReplaceMapping(replacement).EnsureValid();
+        LinkGroupsChanged?.Invoke(this, EventArgs.Empty);
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+        LinkSynchronizationStatusText = "已重置为用户声明的 Identity 映射。";
+
+        FigurePanelViewModel? reference = Panels.FirstOrDefault(panel =>
+            panel.CropLinkGroupId == groupId &&
+            panel.Source.Asset.Id == group.ReferenceAssetId);
+        if (reference is not null)
+        {
+            SynchronizeLinkedCrop(reference);
         }
 
         EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+    public void UpdateLinkTranslation(Guid groupId, Guid targetAssetId, double offsetX, double offsetY)
+    {
+        int groupIndex = FindLinkGroupIndex(groupId);
+        if (groupIndex < 0)
+        {
+            throw new InvalidOperationException("找不到待更新的联动组。");
+        }
+
+        LinkGroup group = LinkGroups[groupIndex];
+        SpatialMapping current = group.Mappings.Single(mapping => mapping.TargetAssetId == targetAssetId);
+        (long sourceRevision, long targetRevision) = GetCurrentMappingRevisions(current);
+        SpatialMapping replacement = SpatialMapping.CreateTranslation(
+            current.SourceAssetId,
+            current.TargetAssetId,
+            sourceRevision,
+            targetRevision,
+            offsetX,
+            offsetY,
+            DateTimeOffset.UtcNow,
+            current.Id);
+        LinkGroups[groupIndex] = group.ReplaceMapping(replacement).EnsureValid();
+        LinkGroupsChanged?.Invoke(this, EventArgs.Empty);
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+        LinkSynchronizationStatusText =
+            $"已更新平移映射：X={offsetX.ToString("0.###", CultureInfo.InvariantCulture)} px，Y={offsetY.ToString("0.###", CultureInfo.InvariantCulture)} px。";
+
+        FigurePanelViewModel? reference = Panels.FirstOrDefault(panel =>
+            panel.CropLinkGroupId == groupId &&
+            panel.Source.Asset.Id == group.ReferenceAssetId);
+        if (reference is not null)
+        {
+            SynchronizeLinkedCrop(reference);
+        }
+
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    public SpatialRegistrationResult UpdateLinkRegistration(
+        Guid groupId,
+        Guid targetAssetId,
+        SpatialMappingKind kind,
+        IReadOnlyList<RegistrationLandmarkPair> landmarkPairs)
+    {
+        int groupIndex = FindLinkGroupIndex(groupId);
+        if (groupIndex < 0)
+        {
+            throw new InvalidOperationException("找不到待配准的联动组。");
+        }
+
+        LinkGroup group = LinkGroups[groupIndex];
+        SpatialMapping current = group.Mappings.Single(mapping => mapping.TargetAssetId == targetAssetId);
+        (long sourceRevision, long targetRevision) = GetCurrentMappingRevisions(current);
+        SourceAssetItemViewModel targetSource = Panels
+            .Select(panel => panel.Source)
+            .First(source => source.Asset.Id == current.TargetAssetId);
+        SpatialRegistrationResult result = SpatialRegistrationSolver.Solve(
+            current.SourceAssetId,
+            current.TargetAssetId,
+            sourceRevision,
+            targetRevision,
+            kind,
+            landmarkPairs,
+            DateTimeOffset.UtcNow,
+            targetSource.Calibration.Calibration,
+            current.Id);
+        LinkGroups[groupIndex] = group.ReplaceMapping(result.Mapping).EnsureValid();
+        LinkGroupsChanged?.Invoke(this, EventArgs.Empty);
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+        string physical = result.RmsPhysical is double value
+            ? $" · RMS {value.ToString("0.###", CultureInfo.InvariantCulture)} {result.PhysicalUnit}"
+            : string.Empty;
+        LinkSynchronizationStatusText =
+            $"{kind} registration 已更新 · {result.PointResiduals.Count} pairs · RMS {result.RmsPixels.ToString("0.###", CultureInfo.InvariantCulture)} px{physical}";
+
+        FigurePanelViewModel? reference = Panels.FirstOrDefault(panel =>
+            panel.CropLinkGroupId == groupId &&
+            panel.Source.Asset.Id == group.ReferenceAssetId);
+        if (reference is not null)
+        {
+            SynchronizeLinkedCrop(reference);
+        }
+
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+        return result;
+    }
+
+    public SpatialMappingRevisionState GetLinkMappingRevisionState(Guid groupId, Guid targetAssetId)
+    {
+        LinkGroup group = LinkGroups.Single(group => group.Id == groupId);
+        SpatialMapping mapping = group.Mappings.Single(item => item.TargetAssetId == targetAssetId);
+        (long sourceRevision, long targetRevision) = GetCurrentMappingRevisions(mapping);
+        return mapping.GetRevisionState(sourceRevision, targetRevision);
+    }
+
+    private (long SourceRevision, long TargetRevision) GetCurrentMappingRevisions(SpatialMapping mapping)
+    {
+        long sourceRevision = Panels
+            .Select(panel => panel.Source)
+            .First(source => source.Asset.Id == mapping.SourceAssetId)
+            .SourceRevision;
+        long targetRevision = Panels
+            .Select(panel => panel.Source)
+            .First(source => source.Asset.Id == mapping.TargetAssetId)
+            .SourceRevision;
+        return (sourceRevision, targetRevision);
+    }
+    public void UpdateLinkSyncOptions(Guid groupId, LinkSyncOptions syncOptions)
+    {
+        int groupIndex = FindLinkGroupIndex(groupId);
+        if (groupIndex < 0)
+        {
+            throw new InvalidOperationException("找不到待更新的联动组。");
+        }
+
+        LinkGroups[groupIndex] = (LinkGroups[groupIndex] with { SyncOptions = syncOptions }).EnsureValid();
+        LinkGroupsChanged?.Invoke(this, EventArgs.Empty);
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private int FindLinkGroupIndex(Guid groupId)
+    {
+        for (int index = 0; index < LinkGroups.Count; index++)
+        {
+            if (LinkGroups[index].Id == groupId)
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 
     private static bool IsInsetSlot(string slotId) =>
@@ -2733,6 +3140,155 @@ public sealed class FigureCanvasViewModel : ObservableObject
         DocumentChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    private void SynchronizeLinkedCrop(FigurePanelViewModel changedPanel)
+    {
+        if (changedPanel.CropLinkGroupId is not Guid groupId || _isSynchronizingLinkedViews)
+        {
+            return;
+        }
+
+        _isSynchronizingLinkedViews = true;
+        try
+        {
+            LinkGroup? group = LinkGroups.FirstOrDefault(candidate => candidate.Id == groupId);
+            if (group is null)
+            {
+                foreach (FigurePanelViewModel linked in Panels.Where(panel =>
+                             !ReferenceEquals(panel, changedPanel) &&
+                             panel.CropLinkGroupId == groupId &&
+                             panel.Source.Asset.Id == changedPanel.Source.Asset.Id &&
+                             !panel.IsLocked))
+                {
+                    linked.ApplyLinkedCrop(changedPanel.SourceRect);
+                }
+
+                LinkSynchronizationStatusText = "同素材裁剪已同步。";
+                return;
+            }
+
+            if (!group.SyncOptions.HasFlag(LinkSyncOptions.Crop))
+            {
+                LinkSynchronizationStatusText = "当前联动组未启用裁剪同步。";
+                return;
+            }
+
+            Dictionary<Guid, long> revisions = Panels
+                .Where(panel => group.ContainsAsset(panel.Source.Asset.Id))
+                .GroupBy(panel => panel.Source.Asset.Id)
+                .ToDictionary(items => items.Key, items => items.First().Source.SourceRevision);
+            if (group.AssetIds.Any(assetId => !revisions.ContainsKey(assetId)) ||
+                !group.AreMappingsCurrent(revisions))
+            {
+                LinkSynchronizationStatusText = "联动映射已过期或缺少成员素材；已停止同步，请复核映射修订。";
+                return;
+            }
+
+            int synchronizedCount = 0;
+            int skippedCount = 0;
+            foreach (FigurePanelViewModel linked in Panels.Where(panel =>
+                         !ReferenceEquals(panel, changedPanel) &&
+                         panel.CropLinkGroupId == groupId &&
+                         !panel.IsLocked))
+            {
+                if (!group.ContainsAsset(changedPanel.Source.Asset.Id) ||
+                    !group.ContainsAsset(linked.Source.Asset.Id))
+                {
+                    skippedCount++;
+                    continue;
+                }
+
+                Guid originalAssetId = linked.Source.Asset.Id;
+                try
+                {
+                    PixelRect64 mapped = group.MapCrop(
+                        changedPanel.Source.Asset.Id,
+                        linked.Source.Asset.Id,
+                        changedPanel.SourceRect);
+                    if (!CropBoundsValidator.Validate(mapped, linked.Source.Asset.Metadata.PixelSize).IsValid)
+                    {
+                        skippedCount++;
+                        continue;
+                    }
+
+                    linked.ApplyLinkedCrop(mapped);
+                    if (linked.Source.Asset.Id != originalAssetId)
+                    {
+                        throw new InvalidOperationException("跨素材裁剪同步不得替换目标面板的 SourceAsset。");
+                    }
+
+                    synchronizedCount++;
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    skippedCount++;
+                }
+                catch (OverflowException)
+                {
+                    skippedCount++;
+                }
+            }
+
+            LinkSynchronizationStatusText = skippedCount == 0
+                ? $"已按 SpatialMapping 同步 {synchronizedCount} 个目标面板；各面板 SourceAsset 保持不变。"
+                : $"已同步 {synchronizedCount} 个目标面板，跳过 {skippedCount} 个越界或无映射目标。";
+        }
+        finally
+        {
+            _isSynchronizingLinkedViews = false;
+        }
+    }
+
+    private void SynchronizeLinkedColorScale(FigurePanelViewModel changedPanel)
+    {
+        if (changedPanel.CropLinkGroupId is not Guid groupId || _isSynchronizingLinkedViews)
+        {
+            return;
+        }
+
+        LinkGroup? group = LinkGroups.FirstOrDefault(candidate => candidate.Id == groupId);
+        if (group is null || !group.SyncOptions.HasFlag(LinkSyncOptions.ColorScale))
+        {
+            return;
+        }
+
+        Dictionary<Guid, long> revisions = Panels
+            .Where(panel => group.ContainsAsset(panel.Source.Asset.Id))
+            .GroupBy(panel => panel.Source.Asset.Id)
+            .ToDictionary(items => items.Key, items => items.First().Source.SourceRevision);
+        if (group.AssetIds.Any(assetId => !revisions.ContainsKey(assetId)) ||
+            !group.AreMappingsCurrent(revisions))
+        {
+            LinkSynchronizationStatusText = "联动映射已过期；颜色尺度同步已停止。";
+            return;
+        }
+
+        _isSynchronizingLinkedViews = true;
+        try
+        {
+            foreach (FigurePanelViewModel linked in Panels.Where(panel =>
+                         !ReferenceEquals(panel, changedPanel) &&
+                         panel.CropLinkGroupId == groupId &&
+                         !panel.IsLocked))
+            {
+                Guid originalAssetId = linked.Source.Asset.Id;
+                linked.Adjustments = linked.Adjustments with
+                {
+                    BlackPoint = changedPanel.BlackPoint,
+                    WhitePoint = changedPanel.WhitePoint,
+                };
+                if (linked.Source.Asset.Id != originalAssetId)
+                {
+                    throw new InvalidOperationException("颜色尺度同步不得替换目标面板的 SourceAsset。");
+                }
+            }
+
+            LinkSynchronizationStatusText = "已同步 BlackPoint / WhitePoint；各面板 SourceAsset 保持不变。";
+        }
+        finally
+        {
+            _isSynchronizingLinkedViews = false;
+        }
+    }
     private void OnPanelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(FigurePanelViewModel.Source) or
@@ -2767,7 +3323,11 @@ public sealed class FigureCanvasViewModel : ObservableObject
             nameof(FigurePanelViewModel.CropLinkGroupId) or
             nameof(FigurePanelViewModel.Label))
         {
-            DocumentChanged?.Invoke(this, EventArgs.Empty);
+            if (e.PropertyName != nameof(FigurePanelViewModel.CropLinkGroupId) ||
+                !_isUpdatingLinkGroupMembership)
+            {
+                DocumentChanged?.Invoke(this, EventArgs.Empty);
+            }
         }
 
         if (sender is FigurePanelViewModel overlayPanel &&
@@ -2789,26 +3349,18 @@ public sealed class FigureCanvasViewModel : ObservableObject
             NotifySelectedPanelStyleChanged();
         }
 
-        if (e.PropertyName == nameof(FigurePanelViewModel.SourceRect) &&
-            sender is FigurePanelViewModel changedPanel &&
-            changedPanel.CropLinkGroupId is Guid linkGroup &&
-            !_isSynchronizingLinkedCrops)
+        if (sender is FigurePanelViewModel linkedPanel &&
+            linkedPanel.CropLinkGroupId.HasValue &&
+            !_isSynchronizingLinkedViews)
         {
-            _isSynchronizingLinkedCrops = true;
-            try
+            if (e.PropertyName == nameof(FigurePanelViewModel.SourceRect))
             {
-                foreach (FigurePanelViewModel linked in Panels.Where(panel =>
-                             !ReferenceEquals(panel, changedPanel) &&
-                             panel.CropLinkGroupId == linkGroup &&
-                             !panel.IsLocked))
-                {
-                    linked.ReplaceSource(changedPanel.Source, changedPanel.SourceRect);
-                    linked.ApplySpatialCalibration(changedPanel.Source.Calibration.Calibration);
-                }
+                SynchronizeLinkedCrop(linkedPanel);
             }
-            finally
+            else if (e.PropertyName is nameof(FigurePanelViewModel.BlackPoint) or
+                     nameof(FigurePanelViewModel.WhitePoint))
             {
-                _isSynchronizingLinkedCrops = false;
+                SynchronizeLinkedColorScale(linkedPanel);
             }
         }
 

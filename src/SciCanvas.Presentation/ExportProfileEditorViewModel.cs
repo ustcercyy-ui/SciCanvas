@@ -14,6 +14,7 @@ public sealed class ExportProfileEditorViewModel : ObservableObject
     private int? _heightPixels;
     private int _bitDepth;
     private bool _writeProvenance;
+    private PdfFontStrategy _pdfFontStrategy;
 
     public ExportProfileEditorViewModel(FigureExportProfile profile)
     {
@@ -27,6 +28,7 @@ public sealed class ExportProfileEditorViewModel : ObservableObject
         _heightPixels = profile.HeightPixels;
         _bitDepth = profile.BitDepth;
         _writeProvenance = profile.WriteProvenance;
+        _pdfFontStrategy = profile.PdfFontStrategy;
     }
 
     public string Id { get; }
@@ -79,8 +81,25 @@ public sealed class ExportProfileEditorViewModel : ObservableObject
         set { if (SetProperty(ref _writeProvenance, value)) NotifyValidation(); }
     }
 
+    public IReadOnlyList<PdfFontStrategy> PdfFontStrategyChoices { get; } =
+        Enum.GetValues<PdfFontStrategy>();
+
+    public PdfFontStrategy PdfFontStrategy
+    {
+        get => _pdfFontStrategy;
+        set { if (SetProperty(ref _pdfFontStrategy, value)) NotifyValidation(); }
+    }
+
+    public string PdfFontStrategyDescription => PdfFontStrategy switch
+    {
+        PdfFontStrategy.OutlineText => "Appearance portable · text converted to outlines.",
+        PdfFontStrategy.EmbedSubsetWhenPermitted => "Strict embedding · preflight error when permission or writer support is unavailable.",
+        PdfFontStrategy.PreferEmbeddedWithOutlineFallback => "Prefer embedding · explicit QC warning and outline fallback when unavailable.",
+        _ => "Unknown PDF font strategy.",
+    };
+
     public string Summary => IsValid
-        ? $"{Format.ToUpperInvariant()} · {Dpi} dpi · {BitDepth}-bit"
+        ? $"{Format.ToUpperInvariant()} · {Dpi} dpi · {BitDepth}-bit · {PdfFontStrategy}"
         : "预设参数无效";
 
     public bool IsValid => TryCreate(out _, out _);
@@ -112,7 +131,8 @@ public sealed class ExportProfileEditorViewModel : ObservableObject
             snapshot.WidthPixels,
             snapshot.HeightPixels,
             snapshot.WriteProvenance,
-            snapshot.BitDepth ?? 8));
+            snapshot.BitDepth ?? 8,
+            ParsePdfFontStrategy(snapshot.PdfFontStrategy)));
     }
 
     private bool TryCreate(out FigureExportProfile? profile, out string? error)
@@ -128,7 +148,8 @@ public sealed class ExportProfileEditorViewModel : ObservableObject
                 WidthPixels,
                 HeightPixels,
                 WriteProvenance,
-                BitDepth);
+                BitDepth,
+                PdfFontStrategy);
             error = null;
             return true;
         }
@@ -146,7 +167,17 @@ public sealed class ExportProfileEditorViewModel : ObservableObject
         OnPropertyChanged(nameof(Summary));
         OnPropertyChanged(nameof(IsValid));
         OnPropertyChanged(nameof(ValidationMessage));
+        OnPropertyChanged(nameof(PdfFontStrategyDescription));
     }
+
+    private static PdfFontStrategy ParsePdfFontStrategy(string? value) =>
+        value?.Trim().ToLowerInvariant() switch
+        {
+            null or "" or "outlinetext" => PdfFontStrategy.OutlineText,
+            "embedsubsetwhenpermitted" => PdfFontStrategy.EmbedSubsetWhenPermitted,
+            "preferembeddedwithoutlinefallback" => PdfFontStrategy.PreferEmbeddedWithOutlineFallback,
+            _ => throw new InvalidDataException($"未知 PDF font strategy：{value}"),
+        };
 
     private static string StableIdToProfileKey(Guid id) => id switch
     {

@@ -59,7 +59,10 @@ public sealed record FigureScientificObjectExportItem(
     double Maximum = 1,
     string Unit = "",
     string Colormap = "viridis",
-    IReadOnlyList<FigureChannelLegendEntry>? ChannelLegendEntries = null)
+    IReadOnlyList<FigureChannelLegendEntry>? ChannelLegendEntries = null,
+    Guid? SourceAssetId = null,
+    long? SourceRevision = null,
+    Guid? ChannelId = null)
 {
     public IReadOnlyList<FigureChannelLegendEntry> EffectiveChannelLegendEntries =>
         ChannelLegendEntries ?? [];
@@ -77,7 +80,9 @@ public sealed record FigureScientificObjectExportItem(
             string.IsNullOrWhiteSpace(FontFamily) || FontFamily.Length > 128 ||
             !double.IsFinite(FontSizePt) || FontSizePt is < 4 or > 72 ||
             !double.IsFinite(StrokeWidthPt) || StrokeWidthPt is < 0.25 or > 10 ||
-            !Enum.IsDefined(Kind))
+            !Enum.IsDefined(Kind) ||
+            SourceAssetId == Guid.Empty || SourceRevision is < 1 || ChannelId == Guid.Empty ||
+            SourceAssetId.HasValue != SourceRevision.HasValue)
         {
             throw new InvalidOperationException("科研对象的样式或元数据无效。");
         }

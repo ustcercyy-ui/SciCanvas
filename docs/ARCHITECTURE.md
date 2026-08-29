@@ -522,3 +522,13 @@ public sealed record ExportContract(
 - ADR-005：预览缓存永不参与最终导出。
 - ADR-006：导出路径通过 File ID 防止源文件别名覆盖。
 - ADR-007：模板存储抽象布局，不存储论文图像。
+
+## 18. v2.4 科学对象与可复现出版边界
+
+- Core 保存 Canonical Scientific Objects、raw channel descriptors、LinkGroup/SpatialMapping、Canonical ROI 和字体/期刊预设快照；Presentation 只负责编辑状态与命令，Persistence 负责 schema `2.4` 校验和确定性迁移。
+- raw/display 严格分离：科研分析读取类型化 `ImagePlane`，显示合成只消费 `ChannelDisplaySettings`；source revision 是 analysis、mapping 与 export 的有效性边界。
+- `FigureExportDocument` 是 exporter 的不可变输入。Panel 的单源 crop 或显式 `FigureChannelLayerExportItem`、Scientific Objects 与 Measurement Overlays 在进入 exporter 前完成解析，exporter 不读取 ViewModel。
+- Preview、栅格、16-bit、SVG、PDF 和投稿包共享同一 export document 与科学参数；provenance 从该文档及显式 link/ROI/font resolution 快照生成。
+- 跨素材坐标映射统一使用 row-major 3×3 矩阵和 source-pixel geometry。revision stale 时禁止静默复用 registration、linked crop、ROI propagation 或跨通道统计。
+- 工程 writer 输出 schema `2.4`；migration pipeline 保留全部历史版本读取，并以幂等步骤执行 2.3→2.4 迁移。requested font 与 substitute font 分开持久化，fallback 不修改用户请求样式。
+- PDF 字体策略与实际 writer 能力分离：当前可靠实现为文字轮廓；缺少可验证 subset/ToUnicode 时严格嵌入被预检阻止，偏好嵌入策略只允许带原因回退。
