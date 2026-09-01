@@ -562,7 +562,7 @@ Phase 9 首次引入 schema `2.7`；当前 writer 为 `3.0`。`ProjectTabularDat
 
 `PlotObject` 位于 `SciCanvas.Core.Plotting`，由 `PlotKind / PlotDataBinding / PlotAxisDefinition / PlotTypography / PlotSeriesStyle` 组成。Line、Scatter、LineAndSymbol、ErrorBar、Histogram、BoxPlot、Heatmap 都以 DataAsset ID、source revision 与稳定列 ID 为科学身份；Heatmap 另存 value column，ErrorBar 以 `PlotErrorBarBinding` 明确保存 symmetric 单列或 asymmetric lower/upper 双列。Core 验证资产与 revision 相等、列归属和类型、轴范围、canonical `TextStyle`、颜色/宽度/marker 约束，并拒绝负误差及 log 轴非正原始值，因此 renderer 不需要静默删除不兼容数据。
 
-Presentation 的 `PlotWorkspaceViewModel` 独占 Plot 草稿、DataAsset/column 选择、X/Y axis editor、四类字体 editor、series style editor 和 create/update/remove 事务。App 的 `PlotWorkspace.xaml` 是独立 UserControl；`MainWindow.xaml` 只放置页签按钮与单个 host。`PlotPreviewControl` 从类型化行直接生成 WPF 矢量图元，覆盖折线/点/marker/误差条、确定性 histogram bins、按 category 分组的 quartile box、三列 heatmap；预览从来不生成或保存 screenshot。
+Presentation 的 `PlotWorkspaceViewModel` 独占 Plot 草稿、DataAsset/column 选择、X/Y axis editor、四类字体 editor、series style editor 和 create/update/remove 事务。App 的 `PlotWorkspace.xaml` 是独立 UserControl；`MainWindow.xaml` 只放置页签按钮与单个 host。`PlotPreviewControl` 生成冻结的 `PlotDataProjection` 后调用 Core `PlotSceneBuilder`，再把纯 scene 交给 `WpfPlotSceneRenderer`；它不再计算轴、刻度、histogram bins、quartile box 或 heatmap cell，也从来不生成或保存 screenshot。
 
 Phase 10 writer 引入 schema `2.8`。`ProjectPlotSnapshot` 和 `PlotSnapshotMapper` round-trip 数据身份、轴、四类 canonical typography 与 series style；`JsonProjectStore` 在写临时文件前重建严格 Core model，拒绝孤儿 DataAsset、过期 revision 和无效列。2.7→2.8 确定性新增空 Plot 集合并写审计项。MainWindow 以独立 Plot dirty flag 参与手动保存、工程恢复和 autosave，避免把 Plot 状态混入 Figure history；被 Plot 引用的 DataAsset 必须先移除关联 Plot。Phase 10 门禁为 Core 177/177、Windows/WPF 259/259，总计 436/436，solution build 0 warnings、0 errors。
 
@@ -578,10 +578,14 @@ Phase 10 writer 引入 schema `2.8`。`ProjectPlotSnapshot` 和 `PlotSnapshotMap
 
 `FigurePlotPanelExportItem` 位于 Core Export，保存稳定 Panel ID、不可变 PlotObject、冻结 `PlotDataProjection`、目标像素矩形、标签、可见性、ZIndex、Panel style override 和 Plot typography override。它不保存 WPF 控件、bitmap 或 DataAsset 的可变引用；创建时必须用绑定 revision 的 `TabularDataAsset` 重新投影。排版解析明确为 `Project → Figure → Panel → Plot Object`：Figure 的 canonical annotation style 为四类 Plot 字体的基线，Panel Annotation 可覆盖基线，Axis/Tick/Legend/Annotation 对象级字段再按成员覆盖。
 
-Imaging 的 `FigurePlotSceneBuilder` 是七种 Plot 的唯一几何生成入口，输出 line、rectangle、ellipse、polygon、text 等中立 primitive。`WpfPlotPanelRenderer` 消费它生成 PNG/TIFF；16-bit TIFF 把 Plot 作为 overlay 合成但不降低底层图像采样深度。SVG exporter 把 primitive 写成原生 XML 元素，PDF exporter 写 path/text operators 并复用 `PdfEmbeddedFontRegistry`，所以 Plot 和 Figure 标注共享同一 TrueType subset、许可检查、outline fallback 与实际字体结果记录。
+Core 的 `PlotSceneBuilder` 是七种 Plot 的唯一几何生成入口。它接收 `PlotObject + PlotDataProjection + PlotTypography + PlotRect + dpi`，输出不引用 `DrawingContext`、`Brush`、`Pen`、`FormattedText` 或 `RenderTargetBitmap` 的 `PlotScene`；允许的 primitive 为 line、polyline、rectangle、ellipse、polygon、text、heatmap cell 与 clip region。scene 同时公开 chart rect 与 canonical data-axis bounds。
+
+App preview 与 Figure raster 都由 `WpfPlotSceneRenderer` 消费同一 scene；PNG/TIFF 的 `WpfPlotPanelRenderer` 只是 Figure panel adapter，16-bit TIFF 把 Plot 作为 overlay 合成但不降低底层图像采样深度。SVG exporter 把 primitive 写成原生 XML 元素，PDF exporter 写 path/text operators 并复用 `PdfEmbeddedFontRegistry`。因此 Preview、Figure、PNG/TIFF、SVG 与 PDF 的轴、刻度、系列、误差条、histogram、box plot 和 heatmap 几何均来自同一数值源。
 
 Presentation 的 `FigurePlotPanelViewModel` 独立于图像 Panel 多选/裁剪/比例尺状态，拥有单选、拖动、缩放、锁定和 Figure 样式预览。`PlotWorkspaceViewModel` 通过显式回调添加 Panel，并在存在引用时禁用 Plot 删除。Figure 导出、Preflight、自动编号、重叠检查、字体检查、历史快照与纯 Plot Figure 启用条件都把 image panels 与 plot panels 视为同级 Figure 内容。
 
 Schema `3.0` 在 `ProjectTemplateSnapshot.PlotPanels` 中只保存 Plot 引用与 Figure 表现状态；DataAsset 和 Plot 仍在各自顶层 canonical collections。`JsonProjectStore`、GUI restore 与 CLI builder 都会重建 Plot/DataAsset model、核对 revision 并拒绝孤儿引用、重复 Panel ID、越界矩形和非法样式。2.9→3.0 迁移确定性新增空集合。Figure provenance 记录 Plot/DataAsset/revision、PlotKind、目标矩形、included/excluded/unplottable 行数、filter expression 与 ordered transforms。
 
-Phase 12 release commit `f84db228735f41f6ed82627d58afe135e12e5440` 的 GitHub Actions 实际结果为 Core 188/188、Windows/WPF 275/276，总计 463/464；Heatmap WPF preview 因 5 秒超时失败，solution build 为 0 warnings、0 errors。在后续 release commit 真实 green 前，不能把该次运行记录为 464/464 passed。
+PR 1 squash commit `f0d75b4d7d63c3f842d65007f9157a6286a6bc72` 的 `main` GitHub Actions run `33497600626` 已实际通过：Core 188/188、Windows/WPF 278/278，总计 466/466，solution build 为 0 warnings、0 errors。
+
+Canonical Plot Scene（PR 2）以 Core golden primitive tests 固定七类 Plot 的 axis bounds、major/minor ticks、series points、error endpoints、histogram bins、quartiles 与 heatmap cell bounds；Windows parity test 逐 primitive 比较 Preview/Figure，并检查 SVG tick coordinates 与 PDF series path coordinates。本地 Release gate 为 Core 204/204、Windows/WPF 279/279，总计 483/483，solution `-warnaserror` build 为 0 warnings、0 errors；远端 CI 状态不由本地结果代替。

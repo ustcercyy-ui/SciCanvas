@@ -118,51 +118,83 @@ internal static class WpfEditableFigureExporter
         FigurePlotPanelExportItem panel,
         FigureExportDocument document)
     {
-        FigurePlotScene scene = FigurePlotSceneBuilder.Build(panel, document.GlobalStyle, document.Dpi);
+        PlotScene scene = PlotSceneBuilder.Build(panel, document.GlobalStyle, document.Dpi);
         svg.Append(
             $"  <g id=\"plot-panel-{panel.PanelId:D}\" data-plot-vector=\"true\" " +
             $"data-plot-id=\"{panel.Plot.Id:D}\" data-data-asset-id=\"{panel.Plot.Data.DataAssetId:D}\" " +
             $"data-source-revision=\"{panel.Plot.Data.SourceRevision}\" data-plot-kind=\"{panel.Plot.PlotType}\">\n");
         foreach (PlotPrimitive primitive in scene.Primitives)
         {
-            switch (primitive)
-            {
-                case PlotLine line:
-                    Color lineColor = WpfFigureExporter.ParseColor(line.Stroke);
-                    string lineOpacity = lineColor.A < 255
-                        ? $" stroke-opacity=\"{F(lineColor.A / 255.0)}\""
-                        : string.Empty;
-                    svg.Append(
-                        $"    <line x1=\"{F(line.A.X)}\" y1=\"{F(line.A.Y)}\" " +
-                        $"x2=\"{F(line.B.X)}\" y2=\"{F(line.B.Y)}\" " +
-                        $"stroke=\"{ColorHex(lineColor)}\" stroke-width=\"{F(line.Width)}\"{SvgDash(line.Dash)}{lineOpacity}/>\n");
-                    break;
-                case PlotRectangle rectangle:
-                    AppendSvgPlotRectangle(svg, rectangle);
-                    break;
-                case PlotEllipse ellipse:
-                    AppendSvgPlotEllipse(svg, ellipse);
-                    break;
-                case PlotPolygon polygon:
-                    AppendSvgPlotPolygon(svg, polygon);
-                    break;
-                case PlotText text:
-                    Color textColor = WpfFigureExporter.ParseColor(text.Style.Color);
-                    string textOpacity = textColor.A < 255
-                        ? $" fill-opacity=\"{F(textColor.A / 255.0)}\""
-                        : string.Empty;
-                    svg.Append(
-                        $"    <text x=\"{F(text.X)}\" y=\"{F(text.Y)}\" " +
-                        $"font-family=\"{Escape(text.Style.FontFamily)}\" font-size=\"{F(text.FontPixels)}\" " +
-                        $"font-weight=\"{(text.Style.IsBold ? "700" : "400")}\" " +
-                        $"text-anchor=\"{SvgAnchor(text.Anchor)}\" dominant-baseline=\"hanging\" " +
-                        $"fill=\"{ColorHex(textColor)}\"{textOpacity}>{Escape(text.Value)}</text>\n");
-                    break;
-            }
+            AppendSvgPlotPrimitive(svg, primitive);
         }
         FigureGlobalStyle panelStyle = document.GlobalStyle.ResolvePanelOverride(panel.StyleOverride);
         AppendSvgPanelLabel(svg, panel.Label, panel.DestinationRect, document.Dpi, panelStyle);
         svg.Append("  </g>\n");
+    }
+
+    private static void AppendSvgPlotPrimitive(StringBuilder svg, PlotPrimitive primitive)
+    {
+        switch (primitive)
+        {
+            case PlotLine line:
+                Color lineColor = WpfFigureExporter.ParseColor(line.Stroke);
+                string lineOpacity = lineColor.A < 255
+                    ? $" stroke-opacity=\"{F(lineColor.A / 255.0)}\""
+                    : string.Empty;
+                svg.Append(
+                    $"    <line x1=\"{F(line.A.X)}\" y1=\"{F(line.A.Y)}\" " +
+                    $"x2=\"{F(line.B.X)}\" y2=\"{F(line.B.Y)}\" " +
+                    $"stroke=\"{ColorHex(lineColor)}\" stroke-width=\"{F(line.Width)}\"{SvgDash(line.Dash)}{lineOpacity}/>\n");
+                break;
+            case PlotPolyline polyline:
+                Color polylineColor = WpfFigureExporter.ParseColor(polyline.Stroke);
+                string polylineOpacity = polylineColor.A < 255
+                    ? $" stroke-opacity=\"{F(polylineColor.A / 255.0)}\""
+                    : string.Empty;
+                string points = string.Join(" ", polyline.Points.Select(point => $"{F(point.X)},{F(point.Y)}"));
+                svg.Append(
+                    $"    <polyline points=\"{points}\" fill=\"none\" stroke=\"{ColorHex(polylineColor)}\" " +
+                    $"stroke-width=\"{F(polyline.Width)}\"{SvgDash(polyline.Dash)}{polylineOpacity}/>\n");
+                break;
+            case PlotRectangle rectangle:
+                AppendSvgPlotRectangle(svg, rectangle);
+                break;
+            case PlotHeatmapCell cell:
+                AppendSvgPlotRectangle(svg, new PlotRectangle(cell.Bounds, cell.Fill));
+                break;
+            case PlotEllipse ellipse:
+                AppendSvgPlotEllipse(svg, ellipse);
+                break;
+            case PlotPolygon polygon:
+                AppendSvgPlotPolygon(svg, polygon);
+                break;
+            case PlotText text:
+                Color textColor = WpfFigureExporter.ParseColor(text.Style.Color);
+                string textOpacity = textColor.A < 255
+                    ? $" fill-opacity=\"{F(textColor.A / 255.0)}\""
+                    : string.Empty;
+                svg.Append(
+                    $"    <text x=\"{F(text.X)}\" y=\"{F(text.Y)}\" " +
+                    $"font-family=\"{Escape(text.Style.FontFamily)}\" font-size=\"{F(text.FontPixels)}\" " +
+                    $"font-weight=\"{(text.Style.IsBold ? "700" : "400")}\" " +
+                    $"text-anchor=\"{SvgAnchor(text.Anchor)}\" dominant-baseline=\"hanging\" " +
+                    $"fill=\"{ColorHex(textColor)}\"{textOpacity}>{Escape(text.Value)}</text>\n");
+                break;
+            case PlotClipRegion clip:
+                svg.Append(
+                    $"    <svg x=\"{F(clip.Bounds.X)}\" y=\"{F(clip.Bounds.Y)}\" " +
+                    $"width=\"{F(clip.Bounds.Width)}\" height=\"{F(clip.Bounds.Height)}\" " +
+                    $"viewBox=\"{F(clip.Bounds.X)} {F(clip.Bounds.Y)} {F(clip.Bounds.Width)} {F(clip.Bounds.Height)}\" " +
+                    "overflow=\"hidden\">\n");
+                foreach (PlotPrimitive child in clip.Primitives)
+                {
+                    AppendSvgPlotPrimitive(svg, child);
+                }
+                svg.Append("    </svg>\n");
+                break;
+            default:
+                throw new NotSupportedException($"Unsupported Plot primitive: {primitive.GetType().FullName}");
+        }
     }
 
     private static void AppendSvgPlotRectangle(StringBuilder svg, PlotRectangle item)
@@ -824,48 +856,14 @@ internal static class WpfEditableFigureExporter
         double pageHeight,
         PdfEmbeddedFontRegistry fonts)
     {
-        FigurePlotScene scene = FigurePlotSceneBuilder.Build(panel, document.GlobalStyle, document.Dpi);
+        PlotScene scene = PlotSceneBuilder.Build(panel, document.GlobalStyle, document.Dpi);
         content.Append(
             $"% SciCanvas vector plot panel={panel.PanelId:D} plot={panel.Plot.Id:D} " +
             $"dataAsset={panel.Plot.Data.DataAssetId:D} revision={panel.Plot.Data.SourceRevision} " +
             $"kind={panel.Plot.PlotType}\n");
         foreach (PlotPrimitive primitive in scene.Primitives)
         {
-            switch (primitive)
-            {
-                case PlotLine line:
-                    content.Append("q ");
-                    AppendPdfColor(content, WpfFigureExporter.ParseColor(line.Stroke), fill: false);
-                    content.Append($"{F(Math.Max(0.25, line.Width) * scale)} w ");
-                    AppendPdfDash(content, PlotDashName(line.Dash), scale);
-                    content.Append(
-                        $"{F(line.A.X * scale)} {F(pageHeight - line.A.Y * scale)} m " +
-                        $"{F(line.B.X * scale)} {F(pageHeight - line.B.Y * scale)} l S Q\n");
-                    break;
-                case PlotRectangle rectangle:
-                    AppendPdfPlotRectangle(content, rectangle, scale, pageHeight);
-                    break;
-                case PlotEllipse ellipse:
-                    AppendPdfPlotEllipse(content, ellipse, scale, pageHeight);
-                    break;
-                case PlotPolygon polygon:
-                    AppendPdfPlotPolygon(content, polygon, scale, pageHeight);
-                    break;
-                case PlotText text:
-                    AppendPdfText(
-                        content,
-                        text.Value,
-                        ResolvePdfPlotTextX(text),
-                        text.Y,
-                        text.FontPixels,
-                        text.Style.FontFamily,
-                        text.Style.IsBold,
-                        WpfFigureExporter.ParseColor(text.Style.Color),
-                        scale,
-                        pageHeight,
-                        fonts);
-                    break;
-            }
+            AppendPdfPlotPrimitive(content, primitive, scale, pageHeight, fonts);
         }
         FigureGlobalStyle panelStyle = document.GlobalStyle.ResolvePanelOverride(panel.StyleOverride);
         AppendPdfPanelLabel(
@@ -877,6 +875,83 @@ internal static class WpfEditableFigureExporter
             pageHeight,
             panelStyle,
             fonts);
+    }
+
+    private static void AppendPdfPlotPrimitive(
+        StringBuilder content,
+        PlotPrimitive primitive,
+        double scale,
+        double pageHeight,
+        PdfEmbeddedFontRegistry fonts)
+    {
+        switch (primitive)
+        {
+            case PlotLine line:
+                content.Append("q ");
+                AppendPdfColor(content, WpfFigureExporter.ParseColor(line.Stroke), fill: false);
+                content.Append($"{F(Math.Max(0.25, line.Width) * scale)} w ");
+                AppendPdfDash(content, PlotDashName(line.Dash), scale);
+                content.Append(
+                    $"{F(line.A.X * scale)} {F(pageHeight - line.A.Y * scale)} m " +
+                    $"{F(line.B.X * scale)} {F(pageHeight - line.B.Y * scale)} l S Q\n");
+                break;
+            case PlotPolyline polyline when polyline.Points.Count >= 2:
+                content.Append("q ");
+                AppendPdfColor(content, WpfFigureExporter.ParseColor(polyline.Stroke), fill: false);
+                content.Append($"{F(Math.Max(0.25, polyline.Width) * scale)} w ");
+                AppendPdfDash(content, PlotDashName(polyline.Dash), scale);
+                PlotPoint first = polyline.Points[0];
+                content.Append($"{F(first.X * scale)} {F(pageHeight - first.Y * scale)} m ");
+                foreach (PlotPoint point in polyline.Points.Skip(1))
+                {
+                    content.Append($"{F(point.X * scale)} {F(pageHeight - point.Y * scale)} l ");
+                }
+                content.Append("S Q\n");
+                break;
+            case PlotRectangle rectangle:
+                AppendPdfPlotRectangle(content, rectangle, scale, pageHeight);
+                break;
+            case PlotHeatmapCell cell:
+                AppendPdfPlotRectangle(content, new PlotRectangle(cell.Bounds, cell.Fill), scale, pageHeight);
+                break;
+            case PlotEllipse ellipse:
+                AppendPdfPlotEllipse(content, ellipse, scale, pageHeight);
+                break;
+            case PlotPolygon polygon:
+                AppendPdfPlotPolygon(content, polygon, scale, pageHeight);
+                break;
+            case PlotText text:
+                AppendPdfText(
+                    content,
+                    text.Value,
+                    ResolvePdfPlotTextX(text),
+                    text.Y,
+                    text.FontPixels,
+                    text.Style.FontFamily,
+                    text.Style.IsBold,
+                    WpfFigureExporter.ParseColor(text.Style.Color),
+                    scale,
+                    pageHeight,
+                    fonts);
+                break;
+            case PlotClipRegion clip:
+                content.Append("q ");
+                AppendPdfRect(
+                    content,
+                    clip.Bounds.X * scale,
+                    pageHeight - clip.Bounds.Bottom * scale,
+                    clip.Bounds.Width * scale,
+                    clip.Bounds.Height * scale);
+                content.Append("W n\n");
+                foreach (PlotPrimitive child in clip.Primitives)
+                {
+                    AppendPdfPlotPrimitive(content, child, scale, pageHeight, fonts);
+                }
+                content.Append("Q\n");
+                break;
+            default:
+                throw new NotSupportedException($"Unsupported Plot primitive: {primitive.GetType().FullName}");
+        }
     }
 
     private static void AppendPdfPlotRectangle(

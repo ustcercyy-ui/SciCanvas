@@ -146,7 +146,7 @@ CLI 退出码：`0` 成功、`2` 参数错误、`3` 工程或源图验证失败�
 - `SciCanvas.Core.Plotting.PlotObject` 是不可变、数据绑定的二维绘图对象，覆盖 Line、Scatter、Line + Symbol、Error Bar、Histogram、Box Plot 与 Heatmap；每个对象都保存 DataAsset ID、source revision 和稳定列 ID，不以截图充当科学数据。
 - X/Y 轴支持标题、单位、linear/log、显式 min/max、major tick interval 与 minor tick count。axis/tick/legend/annotation 四类字体直接复用 canonical `TextStyle`，series 独立保存线色、线宽、线型、marker 形状/大小/填充/描边。
 - Error Bar 明确区分 symmetric 与 asymmetric，并绑定一个或两个原始数值列。负误差、过期 revision、外部列、log 轴非正数据及触及非正数的 log error range 会在 Core 校验阶段失败；不会通过静默丢点让 Plot 通过。
-- `PlotWorkspaceViewModel` 与 `PlotWorkspace.xaml` 是独立工作区；WPF `PlotPreviewControl` 直接读取类型化行生成七类矢量预览。`MainWindow.xaml` 只保留第九个页签宿主，DataAsset 被 Plot 引用时不能先行移除。
+- `PlotWorkspaceViewModel` 与 `PlotWorkspace.xaml` 是独立工作区；WPF `PlotPreviewControl` 只负责生成 `PlotDataProjection`、请求 Core canonical scene 并通过 WPF adapter 绘制，不再自行计算轴、刻度、直方图区间、箱线图四分位数或热图单元格。`MainWindow.xaml` 只保留第九个页签宿主，DataAsset 被 Plot 引用时不能先行移除。
 - Phase 10 引入工程 schema `2.8`，round-trip 数据绑定、轴、字体和 series 样式；2.7→2.8 保留 DataAssets 并新增空 Plot 集合。Plot 使用独立脏标志参与手动保存、打开恢复和自动恢复副本。
 - Phase 10 门禁为 `436/436` tests（Core 177 + Windows/WPF 259），solution build 为 0 warnings、0 errors。
 
@@ -162,10 +162,11 @@ CLI 退出码：`0` 成功、`2` 参数错误、`3` 工程或源图验证失败�
 ## v2.5 Plot → Figure Native Panels
 
 - 已保存 Plot 可通过 Plot Workspace 的“添加到 Figure”直接成为 `FigurePlotPanelExportItem`，Figure 保存 Plot/DataAsset/revision 引用与冻结的投影快照，不生成或持久化 screenshot。画布支持选择、拖动、缩放、锁定、方向键微调、Delete、统一面板编号和撤销/重做。
-- Line、Scatter、Line + Symbol、Error Bar、Histogram、Box Plot、Heatmap 共用同一中立 Plot geometry scene。PNG、8-bit TIFF 与 16-bit TIFF 走高质量栅格路径；SVG 输出原生 line/rect/ellipse/polygon/text；PDF 输出直接 path/text operators，不嵌入 Plot raster image。
+- Line、Scatter、Line + Symbol、Error Bar、Histogram、Box Plot、Heatmap 共用 `SciCanvas.Core.Plotting.PlotSceneBuilder` 生成的纯 .NET canonical scene；scene 不含 WPF 类型。Preview、Figure、PNG、8-bit TIFF、16-bit TIFF、SVG 与 PDF 消费同一组几何图元；SVG 输出原生 line/polyline/rect/ellipse/polygon/text，PDF 输出直接 path/text operators，不嵌入 Plot raster image。
 - Plot 的 axis/tick/legend/annotation 遵循 `Project → Figure → Panel → Plot Object` 排版继承；Panel Label 也使用 Figure canonical style。PDF Plot 文字复用 Figure 的 embedded TrueType / outline fallback 策略，字体替换和实际结果继续进入 provenance。
 - 工程 writer 升级到 schema `3.0`，保存 Plot Panel 的稳定 ID、Plot ID、目标矩形、标签、可见/锁定、ZIndex、Panel style 与 Plot typography overrides。2.9→3.0 默认空 Plot Panel；加载会拒绝缺失 Plot/DataAsset、revision 不匹配、重复 ID、越界几何和非法样式。GUI、CLI、Preflight、投稿 provenance 均读取相同原生 Panel contract。
-- Phase 12 release commit `f84db228735f41f6ed82627d58afe135e12e5440` 的 GitHub Actions 实际结果为 `463/464` tests（Core `188/188`；Windows/WPF `275/276`），Heatmap WPF preview 因 `5 s` 超时失败；solution build 为 0 warnings、0 errors。在新的 release commit 真实 green 前不声明 `464/464` GitHub CI passed。
+- PR 1 squash commit `f0d75b4d7d63c3f842d65007f9157a6286a6bc72` 的 `main` GitHub Actions run `33497600626` 已实际通过：Core `188/188`、Windows/WPF `278/278`，合计 `466/466`，solution build 为 0 warnings、0 errors。
+- Canonical Plot Scene（PR 2）本地 Release gate 为 Core `204/204`、Windows/WPF `279/279`，合计 `483/483`，solution `-warnaserror` build 为 0 warnings、0 errors。GitHub CI 结果仅在对应远端 run 完成后报告。
 
 ## v2.4 Scientific Objects, Multichannel & Reproducible Publishing
 
