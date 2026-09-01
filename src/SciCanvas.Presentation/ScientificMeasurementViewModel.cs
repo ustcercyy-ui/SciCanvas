@@ -32,6 +32,8 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
     private bool _isLocked;
     private int _number;
     private readonly List<MeasurementPoint> _pathPoints;
+    private readonly double _sourceMaximumX;
+    private readonly double _sourceMaximumY;
 
     public ScientificMeasurementViewModel(
         Guid id,
@@ -44,7 +46,9 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
         SpatialCalibration? calibration,
         int number,
         IReadOnlyList<MeasurementPoint>? pathPoints = null,
-        long sourceRevision = 1)
+        long sourceRevision = 1,
+        double sourceWidth = double.PositiveInfinity,
+        double sourceHeight = double.PositiveInfinity)
     {
         Id = id == Guid.Empty ? Guid.NewGuid() : id;
         SourceAssetId = sourceAssetId;
@@ -56,9 +60,21 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
         _pointC = pointC;
         _calibration = calibration;
         _number = number;
+        _sourceMaximumX = double.IsFinite(sourceWidth) && sourceWidth > 0
+            ? Math.Max(0, sourceWidth - 1)
+            : double.PositiveInfinity;
+        _sourceMaximumY = double.IsFinite(sourceHeight) && sourceHeight > 0
+            ? Math.Max(0, sourceHeight - 1)
+            : double.PositiveInfinity;
         _pathPoints = kind == ScientificMeasurementKind.Polyline
             ? (pathPoints is { Count: >= 2 } ? pathPoints.ToList() : [pointA, pointB])
             : [];
+        SetHorizontalDirectionCommand = new RelayCommand(
+            () => DirectionAngleDegrees = 0,
+            () => IsLength && !IsLocked);
+        SetVerticalDirectionCommand = new RelayCommand(
+            () => DirectionAngleDegrees = 90,
+            () => IsLength && !IsLocked);
     }
 
     public event EventHandler? Changed;
@@ -93,6 +109,22 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
     public bool IsRectangle => Kind == ScientificMeasurementKind.RectangleRoi;
     public bool IsCircle => Kind == ScientificMeasurementKind.CircleRoi;
     public bool IsPolyline => Kind == ScientificMeasurementKind.Polyline;
+
+    public RelayCommand SetHorizontalDirectionCommand { get; }
+
+    public RelayCommand SetVerticalDirectionCommand { get; }
+
+    public Visibility DirectionEditorVisibility => IsLength
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+
+    public double DirectionAngleDegrees
+    {
+        get => IsLength
+            ? NormalizeAngle(Math.Atan2(Y2 - Y1, X2 - X1) * 180.0 / Math.PI)
+            : 0;
+        set => SetDirectionAngle(value);
+    }
 
     public Visibility FillStyleVisibility => Kind is ScientificMeasurementKind.RectangleRoi or
         ScientificMeasurementKind.CircleRoi
@@ -207,6 +239,8 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(SelectionHandleVisibility));
                 OnPropertyChanged(nameof(LayerStateText));
+                SetHorizontalDirectionCommand.NotifyCanExecuteChanged();
+                SetVerticalDirectionCommand.NotifyCanExecuteChanged();
                 Changed?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -697,6 +731,47 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
         NotifyGeometryChanged();
     }
 
+    public void SetDirectionAngle(double angleDegrees)
+    {
+        if (!IsLength || IsLocked || !double.IsFinite(angleDegrees))
+        {
+            return;
+        }
+
+        double length = Distance(_pointA, _pointB);
+        if (length < 0.001)
+        {
+            return;
+        }
+
+        double radians = NormalizeAngle(angleDegrees) * Math.PI / 180.0;
+        double cosine = Math.Cos(radians);
+        double sine = Math.Sin(radians);
+        double maximumLength = Math.Min(
+            Math.Abs(cosine) < 1e-9 ? double.PositiveInfinity : _sourceMaximumX / Math.Abs(cosine),
+            Math.Abs(sine) < 1e-9 ? double.PositiveInfinity : _sourceMaximumY / Math.Abs(sine));
+        length = Math.Min(length, maximumLength);
+
+        double centerX = (_pointA.X + _pointB.X) / 2;
+        double centerY = (_pointA.Y + _pointB.Y) / 2;
+        double halfX = cosine * length / 2;
+        double halfY = sine * length / 2;
+        double startX = centerX - halfX;
+        double startY = centerY - halfY;
+        double endX = centerX + halfX;
+        double endY = centerY + halfY;
+        double shiftX = double.IsFinite(_sourceMaximumX)
+            ? Math.Clamp(0, -Math.Min(startX, endX), _sourceMaximumX - Math.Max(startX, endX))
+            : 0;
+        double shiftY = double.IsFinite(_sourceMaximumY)
+            ? Math.Clamp(0, -Math.Min(startY, endY), _sourceMaximumY - Math.Max(startY, endY))
+            : 0;
+
+        _pointA = new MeasurementPoint(startX + shiftX, startY + shiftY);
+        _pointB = new MeasurementPoint(endX + shiftX, endY + shiftY);
+        NotifyGeometryChanged();
+    }
+
     public void RestoreVisualStyle(ScientificMeasurementVisualStyle? style)
     {
         style ??= ScientificMeasurementVisualStyle.Default;
@@ -803,6 +878,7 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
         OnPropertyChanged(nameof(PathPoints));
         OnPropertyChanged(nameof(LabelX));
         OnPropertyChanged(nameof(LabelY));
+        OnPropertyChanged(nameof(DirectionAngleDegrees));
         NotifyHandleGeometryChanged();
         OnPropertyChanged(nameof(LayerStateText));
         RefreshCalibration(_calibration);
@@ -843,6 +919,21 @@ public sealed class ScientificMeasurementViewModel : ObservableObject
 
     private static MeasurementPoint Translate(MeasurementPoint point, double deltaX, double deltaY) =>
         new(point.X + deltaX, point.Y + deltaY);
+
+    private static double NormalizeAngle(double value)
+    {
+        double normalized = value % 360;
+        if (normalized >= 180)
+        {
+            normalized -= 360;
+        }
+        else if (normalized < -180)
+        {
+            normalized += 360;
+        }
+
+        return normalized;
+    }
 
     private static string NormalizeLineStyle(string? value) => value?.Trim().ToLowerInvariant() switch
     {

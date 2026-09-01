@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SciCanvas.Core.Data;
 using SciCanvas.Core.Workspace;
 using SciCanvas.Core.Science;
 using LinkingLinkGroup = SciCanvas.Core.Linking.LinkGroup;
@@ -150,6 +151,84 @@ public sealed class JsonProjectStore : IProjectStore
             }
         }
 
+        if (document.DataAssets.Select(asset => asset.Id).Distinct().Count() !=
+            document.DataAssets.Count)
+        {
+            throw new InvalidDataException("工程包含重复的 TabularDataAsset ID。");
+        }
+
+        var tabularAssets = new Dictionary<Guid, TabularDataAsset>();
+        foreach (ProjectTabularDataAssetSnapshot asset in document.DataAssets)
+        {
+            try
+            {
+                tabularAssets.Add(asset.Id, TabularDataSnapshotMapper.ToModel(asset));
+            }
+            catch (Exception exception) when (exception is
+                ArgumentException or InvalidDataException or OverflowException)
+            {
+                throw new InvalidDataException(
+                    $"表格数据资产 {asset.Name} 的工程记录无效。",
+                    exception);
+            }
+        }
+
+        if (document.Plots.Select(plot => plot.Id).Distinct().Count() !=
+            document.Plots.Count)
+        {
+            throw new InvalidDataException("工程包含重复的 PlotObject ID。");
+        }
+
+        foreach (ProjectPlotSnapshot plot in document.Plots)
+        {
+            try
+            {
+                if (!tabularAssets.TryGetValue(
+                        plot.Data.DataAssetId,
+                        out TabularDataAsset? asset))
+                {
+                    throw new InvalidDataException("Plot 引用了不存在的 DataAsset。");
+                }
+
+                _ = PlotSnapshotMapper.ToModel(plot, asset);
+            }
+            catch (Exception exception) when (exception is
+                ArgumentException or InvalidDataException or InvalidOperationException or OverflowException)
+            {
+                throw new InvalidDataException(
+                    $"Plot {plot.Name} 的工程记录无效。",
+                    exception);
+            }
+        }
+
+        HashSet<Guid> plotIds = document.Plots.Select(plot => plot.Id).ToHashSet();
+        ProjectFigurePlotPanelSnapshot[] plotPanels =
+            document.TemplateSnapshot?.PlotPanels.ToArray() ?? [];
+        if (plotPanels.Select(panel => panel.Id).Distinct().Count() != plotPanels.Length ||
+            plotPanels.Select(panel => panel.Id)
+                .Intersect(document.Layers.Select(layer => layer.Id)).Any())
+        {
+            throw new InvalidDataException("工程包含重复的 Figure panel ID。");
+        }
+        foreach (ProjectFigurePlotPanelSnapshot panel in plotPanels)
+        {
+            ProjectPixelRectSnapshot rect = panel.DestinationRect;
+            bool geometryValid = rect.X >= 0 && rect.Y >= 0 && rect.Width > 0 && rect.Height > 0 &&
+                rect.Width <= document.Canvas.Width && rect.Height <= document.Canvas.Height &&
+                rect.X <= document.Canvas.Width - rect.Width &&
+                rect.Y <= document.Canvas.Height - rect.Height;
+            bool typographyValid = panel.TypographyOverride is null ||
+                IsValidPlotTypographyOverride(panel.TypographyOverride);
+            if (panel.Id == Guid.Empty || !plotIds.Contains(panel.PlotId) ||
+                !geometryValid || panel.Label is null || panel.Label.Trim().Length > 128 ||
+                panel.ZIndex < 0 ||
+                panel.StyleOverride is { } styleOverride && !IsValidPanelStyleOverride(styleOverride) ||
+                !typographyValid)
+            {
+                throw new InvalidDataException("工程包含无效或引用失效的 Figure Plot panel。");
+            }
+        }
+
         if (document.MultiChannelGroups.Select(group => group.Id).Distinct().Count() !=
             document.MultiChannelGroups.Count)
         {
@@ -168,6 +247,7 @@ public sealed class JsonProjectStore : IProjectStore
                 channelSources.TryGetValue(member.AssetId, out ProjectSourceSnapshot? source) &&
                 member.SourceRevision is long capturedRevision && capturedRevision >= 1 &&
                 member.FrameIndex >= 0 && member.FrameIndex < Math.Max(1, source.Metadata.FrameCount) &&
+                IsValidPlaneSelector(member.PlaneSelector, member.FrameIndex, source.Metadata) &&
                 !string.IsNullOrWhiteSpace(member.Name) && member.Name.Trim().Length <= 128 &&
                 (member.Role is null || member.Role.Length <= 128) &&
                 member.IsNameConfirmed &&
@@ -180,7 +260,15 @@ public sealed class JsonProjectStore : IProjectStore
             bool identitiesValid =
                 group.Members.Count(member => member.AssetId == group.ReferenceAssetId) == 1 &&
                 group.Members.Select(member => member.ChannelId).Distinct().Count() == group.Members.Count &&
-                group.Members.Select(member => (member.AssetId, member.FrameIndex)).Distinct().Count() ==
+                group.Members.Select(member => (
+                        member.AssetId,
+                        SourceKind: member.PlaneSelector!.SourceKind.ToLowerInvariant(),
+                        member.PlaneSelector.FrameIndex,
+                        member.PlaneSelector.ComponentIndex,
+                        member.PlaneSelector.ZIndex,
+                        member.PlaneSelector.CIndex,
+                        member.PlaneSelector.TIndex))
+                    .Distinct().Count() ==
                     group.Members.Count &&
                 group.Members.Select(member => member.Name.Trim())
                     .Distinct(StringComparer.OrdinalIgnoreCase).Count() == group.Members.Count;
@@ -198,6 +286,8 @@ public sealed class JsonProjectStore : IProjectStore
         Dictionary<Guid, long> sourceRevisions = document.Sources.ToDictionary(
             source => source.Id,
             source => source.SourceRevision);
+        Dictionary<Guid, ProjectSourceSnapshot> sourceSnapshotsById =
+            document.Sources.ToDictionary(source => source.Id);
         Dictionary<Guid, LinkingLinkGroup> validatedLinkGroups = [];
         foreach (ProjectLinkGroupSnapshot snapshot in document.LinkGroups)
         {
@@ -347,7 +437,8 @@ public sealed class JsonProjectStore : IProjectStore
             try
             {
                 if (!sourceRevisions.TryGetValue(snapshot.AssetId, out long currentRevision) ||
-                    snapshot.SourceRevision > currentRevision)
+                    snapshot.SourceRevision > currentRevision ||
+                    !sourceSnapshotsById.TryGetValue(snapshot.AssetId, out ProjectSourceSnapshot? roiSource))
                 {
                     throw new InvalidDataException("Canonical ROI 引用了不存在或未来的 source revision。");
                 }
@@ -370,6 +461,13 @@ public sealed class JsonProjectStore : IProjectStore
                     SourceGeometry = (snapshot.SourceGeometry ?? [])
                         .Select(point => new MeasurementPoint(point.X, point.Y))
                         .ToArray(),
+                    Validity = snapshot.Validity.State?.ToLowerInvariant() switch
+                    {
+                        "warning" => ScientificValidity.Warning(snapshot.Validity.Reasons.ToArray()),
+                        "invalid" => ScientificValidity.Invalid(snapshot.Validity.Reasons.ToArray()),
+                        "reviewrequired" => ScientificValidity.ReviewRequired(snapshot.Validity.Reasons.ToArray()),
+                        _ => ScientificValidity.Valid,
+                    },
                     Style = new RoiStyle(
                         roiStyleSnapshot.StrokeColor,
                         roiStyleSnapshot.StrokeWidth,
@@ -377,18 +475,44 @@ public sealed class JsonProjectStore : IProjectStore
                         roiStyleSnapshot.FillOpacity,
                         roiStyleSnapshot.Label,
                         roiStyleSnapshot.LabelFont,
-                        roiStyleSnapshot.LabelColor),
+                        roiStyleSnapshot.LabelColor,
+                        roiStyleSnapshot.LabelFontSizePt,
+                        roiStyleSnapshot.LabelIsBold),
                     Propagation = snapshot.Propagation is null
                         ? null
                         : new RoiPropagationProvenance(
                             snapshot.Propagation.ReferenceRoiId,
                             snapshot.Propagation.TargetRoiId,
                             snapshot.Propagation.LinkGroupId,
-                            snapshot.Propagation.MappingId),
+                            snapshot.Propagation.MappingId,
+                            snapshot.Propagation.TargetCoverageFraction),
                 };
                 roi.EnsureValid();
+                RoiGeometryValidationResult geometryValidation = RoiGeometryValidator.Validate(
+                    roi,
+                    roiSource.Metadata.Width,
+                    roiSource.Metadata.Height);
+                RoiBoundaryPolicyResult boundaryPolicy = RoiOutOfBoundsPolicy.Evaluate(
+                    geometryValidation,
+                    roi.Propagation is null ? RoiBoundaryRole.Reference : RoiBoundaryRole.Propagated,
+                    partialReferenceConfirmed:
+                        roi.Propagation is null && roi.Validity.State == ScientificValidityState.Warning);
+                if (!boundaryPolicy.CanPersist &&
+                    roi.Validity.State != ScientificValidityState.Invalid)
+                {
+                    throw new InvalidDataException(string.Join(" ", boundaryPolicy.Validity.Reasons));
+                }
+
                 if (roi.Propagation is { } propagation)
                 {
+                    if (Math.Abs(
+                            propagation.TargetCoverageFraction -
+                            geometryValidation.CoverageFraction) > 1e-9)
+                    {
+                        throw new InvalidDataException(
+                            "ROI propagation target coverage fraction 与 source geometry/image bounds 不一致。");
+                    }
+
                     if (!roiIds.Contains(propagation.ReferenceRoiId) ||
                         !validatedLinkGroups.TryGetValue(propagation.LinkGroupId, out LinkingLinkGroup? linkGroup) ||
                         !linkGroup.Mappings.Any(mapping =>
@@ -405,6 +529,46 @@ public sealed class JsonProjectStore : IProjectStore
                 throw new InvalidDataException("工程包含无效或不可追溯的 canonical ROI。", exception);
             }
         }
+
+        IReadOnlyList<ProjectRoiFigureProjectionSnapshot> roiProjections =
+            document.TemplateSnapshot?.RoiProjections ?? [];
+        if (roiProjections.Select(projection => projection.Id).Distinct().Count() != roiProjections.Count)
+        {
+            throw new InvalidDataException("工程包含重复的 ROI Figure Projection ID。");
+        }
+
+        if (roiProjections
+                .Select(projection => (projection.RoiId, projection.PanelId))
+                .Distinct()
+                .Count() != roiProjections.Count)
+        {
+            throw new InvalidDataException("同一 canonical ROI 在同一 Figure Panel 中只能有一个 Projection。");
+        }
+
+        HashSet<Guid> figureScientificObjectIds = (document.TemplateSnapshot?.ScientificObjects ?? [])
+            .Select(scientificObject => scientificObject.Id)
+            .ToHashSet();
+        IReadOnlyDictionary<Guid, ProjectRoiSnapshot> roisById = document.Rois.ToDictionary(roi => roi.Id);
+        IReadOnlyDictionary<Guid, ProjectImageLayerSnapshot> layersById = document.Layers.ToDictionary(layer => layer.Id);
+        foreach (ProjectRoiFigureProjectionSnapshot projection in roiProjections)
+        {
+            if (projection.Id == Guid.Empty || projection.RoiId == Guid.Empty ||
+                projection.PanelId == Guid.Empty || projection.AssetId == Guid.Empty ||
+                projection.SourceRevision < 1 || figureScientificObjectIds.Contains(projection.Id) ||
+                !roisById.TryGetValue(projection.RoiId, out ProjectRoiSnapshot? roi) ||
+                !layersById.TryGetValue(projection.PanelId, out ProjectImageLayerSnapshot? panel) ||
+                roi.AssetId != projection.AssetId || roi.SourceRevision != projection.SourceRevision ||
+                panel.SourceAssetId != projection.AssetId || panel.FrameIndex != roi.FrameIndex ||
+                !FitsPanelSourceRect(roi, panel.SourceRect) ||
+                (projection.StyleOverride is { } styleOverride &&
+                 !IsValidPanelStyleOverride(styleOverride)))
+            {
+                throw new InvalidDataException(
+                    "ROI Figure Projection 必须引用同一 canonical ROI、Panel、Asset、source revision 和 frame，" +
+                    "ROI 几何必须完全位于 Panel crop 内，局部样式必须有效，且不得复制 Figure object ID。");
+            }
+        }
+
         foreach (IGrouping<Guid, ProjectImageLayerSnapshot> linkedLayers in document.Layers
                      .Where(layer => layer.CropLinkGroupId.HasValue)
                      .GroupBy(layer => layer.CropLinkGroupId!.Value))
@@ -540,13 +704,25 @@ public sealed class JsonProjectStore : IProjectStore
                     region.X >= 0 && region.Y >= 0 && region.Width > 0 && region.Height > 0 &&
                     region.X + region.Width <= analysisSource.Metadata.Width &&
                     region.Y + region.Height <= analysisSource.Metadata.Height &&
-                    analysis.PixelCount == region.Width * region.Height;
+                    (analysis.PolygonMask.Count == 0
+                        ? analysis.PixelCount == region.Width * region.Height
+                        : analysis.PolygonMask.Count >= 3 &&
+                          analysis.PixelCount <= region.Width * region.Height);
+                bool coverageValid = double.IsFinite(analysis.CoverageFraction) &&
+                    analysis.CoverageFraction is >= 0 and <= 1 &&
+                    (analysis.Validity.State == "invalid"
+                        ? !analysis.ClippedToImage
+                        : analysis.ClippedToImage
+                            ? analysis.CoverageFraction is > 0 and < 1 &&
+                              analysis.Validity.State == "reviewrequired"
+                            : Math.Abs(analysis.CoverageFraction - 1) <= 1e-12);
                 bool histogramValid = analysis.Histogram.Count > 0 &&
                     analysis.Histogram.All(bin =>
                         double.IsFinite(bin.LowerBound) && double.IsFinite(bin.UpperBound) &&
                         bin.UpperBound >= bin.LowerBound && bin.Count >= 0) &&
                     analysis.Histogram.Sum(bin => bin.Count) == analysis.PixelCount;
-                if (!statisticsValid || !regionValid || !histogramValid || analysis.Samples.Count != 0)
+                if (!statisticsValid || !regionValid || !coverageValid ||
+                    !histogramValid || analysis.Samples.Count != 0)
                 {
                     throw new InvalidDataException("工程包含无效的 ROI 强度统计记录。");
                 }
@@ -586,6 +762,10 @@ public sealed class JsonProjectStore : IProjectStore
                     double.IsFinite(appliedThreshold) && appliedThreshold is >= 0 and <= 1 &&
                     analysis.MinimumAreaPixels is >= 1 and <= 10_000_000 &&
                     (analysis.MaximumCandidates is null or >= 1) &&
+                    (analysis.AnalysisMaxPixels is null or > 0) &&
+                    (analysis.AnalysisMaxComponentsSafety is null or > 0) &&
+                    (analysis.AnalysisMaxBoundaryPoints is null or >= 4) &&
+                    (analysis.AnalysisMemoryBudgetBytes is null or > 0) &&
                     analysis.ForegroundPixelCount is >= 0 &&
                     analysis.TotalPixelCount is > 0 &&
                     analysis.ForegroundPixelCount <= analysis.TotalPixelCount &&
@@ -713,24 +893,78 @@ public sealed class JsonProjectStore : IProjectStore
         }
     }
 
+    private static bool IsValidPlaneSelector(
+        ProjectChannelPlaneSelectorSnapshot? selector,
+        int legacyFrameIndex,
+        ProjectImageMetadataSnapshot metadata)
+    {
+        if (selector is null || selector.FrameIndex != legacyFrameIndex ||
+            selector.FrameIndex < 0 || selector.FrameIndex >= Math.Max(1, metadata.FrameCount) ||
+            selector.ComponentIndex is < 0 || selector.ZIndex is < 0 ||
+            selector.CIndex is < 0 || selector.TIndex is < 0)
+        {
+            return false;
+        }
+
+        return selector.SourceKind?.ToLowerInvariant() switch
+        {
+            "interleavedcomponent" =>
+                metadata.Channels > 1 &&
+                selector.ComponentIndex is int component &&
+                component < metadata.Channels,
+            "externalasset" or "frameplane" =>
+                metadata.Channels == 1 && selector.ComponentIndex is null,
+            _ => false,
+        };
+    }
+
     private static bool IsHexColor(string? value)
         => ScientificStyleColor.ValidateColor(value);
+
+    private static bool FitsPanelSourceRect(
+        ProjectRoiSnapshot roi,
+        ProjectPixelRectSnapshot panelSourceRect)
+    {
+        double left = panelSourceRect.X;
+        double top = panelSourceRect.Y;
+        double right = left + panelSourceRect.Width;
+        double bottom = top + panelSourceRect.Height;
+        return roi.SourceGeometry.Count > 0 &&
+               roi.SourceGeometry.All(point =>
+                   double.IsFinite(point.X) &&
+                   double.IsFinite(point.Y) &&
+                   point.X >= left &&
+                   point.X <= right &&
+                   point.Y >= top &&
+                   point.Y <= bottom);
+    }
 
     private static bool IsValidPanelStyleOverride(ProjectPanelStyleOverrideSnapshot style)
     {
         bool hasOverride = style.PanelLabel is not null ||
+                           style.Annotation is not null ||
                            style.ScaleBarText is not null ||
-                           style.ScaleBar is not null;
+                           style.ScaleBar is not null ||
+                           style.Shapes is not null;
         bool scaleBarValid = style.ScaleBar is null ||
             (style.ScaleBar.DefaultPosition is
                  "bottomLeft" or "bottomRight" or "topLeft" or "topRight" or "custom" &&
              double.IsFinite(style.ScaleBar.BarThicknessPt) &&
              style.ScaleBar.BarThicknessPt is >= 0.25 and <= 10 &&
              IsHexColor(style.ScaleBar.Color));
+        bool shapesValid = style.Shapes is null ||
+            (IsHexColor(style.Shapes.StrokeColor) &&
+             IsHexColor(style.Shapes.FillColor) &&
+             double.IsFinite(style.Shapes.FillOpacityPercent) &&
+             style.Shapes.FillOpacityPercent is >= 0 and <= 100 &&
+             double.IsFinite(style.Shapes.StrokeWidthPt) &&
+             style.Shapes.StrokeWidthPt is >= 0.25 and <= 10);
         return hasOverride &&
                IsValidTextStyle(style.PanelLabel) &&
+               IsValidTextStyle(style.Annotation) &&
                IsValidTextStyle(style.ScaleBarText) &&
-               scaleBarValid;
+               scaleBarValid &&
+               shapesValid;
     }
 
     private static bool IsValidTextStyle(ProjectTextStyleSnapshot? style) => style is null ||
@@ -739,6 +973,14 @@ public sealed class JsonProjectStore : IProjectStore
          double.IsFinite(style.FontSizePt) &&
          style.FontSizePt is >= 4 and <= 72 &&
          IsHexColor(style.Color));
+
+    private static bool IsValidPlotTypographyOverride(ProjectPlotTypographyOverrideSnapshot style)
+    {
+        bool hasOverride = style.Axis is not null || style.Tick is not null ||
+            style.Legend is not null || style.Annotation is not null;
+        return hasOverride && IsValidTextStyle(style.Axis) && IsValidTextStyle(style.Tick) &&
+            IsValidTextStyle(style.Legend) && IsValidTextStyle(style.Annotation);
+    }
 
     private static void TryDeleteTemporaryFile(string path)
     {

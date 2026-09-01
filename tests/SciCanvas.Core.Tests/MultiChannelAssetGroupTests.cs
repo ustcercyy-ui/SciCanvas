@@ -124,6 +124,62 @@ public sealed class MultiChannelAssetGroupTests
             new HashSet<Guid> { referenceAssetId }));
     }
 
+    [Fact]
+    public void EnsureValid_DistinguishesSameAssetFramesAndInterleavedComponents()
+    {
+        Guid referenceAssetId = Guid.NewGuid();
+        Guid targetAssetId = Guid.NewGuid();
+        ChannelGroupMember reference = CreateMember(
+            referenceAssetId, "Reference", "Reference", "#FFFFFFFF", 255);
+        ChannelGroupMember frame0 = CreateMember(
+            targetAssetId, "Frame 0", "Signal", "#FFFF0000", 255) with
+        {
+            PlaneSelector = ChannelPlaneSelector.FramePlane(0),
+        };
+        ChannelGroupMember frame1 = CreateMember(
+            targetAssetId, "Frame 1", "Signal", "#FF00FF00", 255) with
+        {
+            PlaneSelector = ChannelPlaneSelector.FramePlane(1),
+        };
+        var frameGroup = new MultiChannelAssetGroup(
+            Guid.NewGuid(),
+            "Two frames",
+            referenceAssetId,
+            [reference, frame0, frame1],
+            SameFieldOfViewConfirmed: true);
+
+        Assert.Same(frameGroup, frameGroup.EnsureValid());
+        Assert.NotEqual(frame0.PlaneRef, frame1.PlaneRef);
+
+        ChannelGroupMember component0 = frame0 with
+        {
+            PlaneSelector = ChannelPlaneSelector.InterleavedComponent(0, 0),
+            Name = "Red",
+        };
+        ChannelGroupMember component1 = frame1 with
+        {
+            PlaneSelector = ChannelPlaneSelector.InterleavedComponent(0, 1),
+            Name = "Green",
+        };
+        var componentGroup = frameGroup with
+        {
+            Members = [reference, component0, component1],
+        };
+
+        Assert.Same(componentGroup, componentGroup.EnsureValid());
+        Assert.NotEqual(component0.PlaneRef, component1.PlaneRef);
+        Assert.Throws<InvalidOperationException>(() =>
+            (componentGroup with
+            {
+                Members =
+                [
+                    reference,
+                    component0,
+                    component1 with { PlaneSelector = component0.PlaneSelector },
+                ],
+            }).EnsureValid());
+    }
+
     private static ChannelGroupMember CreateMember(
         Guid assetId,
         string name,
@@ -135,7 +191,7 @@ public sealed class MultiChannelAssetGroupTests
         return new ChannelGroupMember(
             channelId,
             assetId,
-            FrameIndex: 0,
+            ChannelPlaneSelector.ExternalAsset(frameIndex: 0),
             name,
             role,
             color,

@@ -75,6 +75,57 @@ public sealed class WpfImagePlaneReaderTests
     }
 
     [Fact]
+    public async Task ReadAsync_ExtractsAllThreeComponentsFromExactTwoPixelRgbFixture()
+    {
+        using var workspace = new TestWorkspace();
+        string path = Path.Combine(workspace.Root, "rgb-2x1.png");
+        CreatePng(
+            path,
+            width: 2,
+            height: 1,
+            PixelFormats.Rgb24,
+            new byte[] { 10, 20, 30, 40, 50, 60 },
+            stride: 6);
+        SourceAsset source = CreateSource(path, 2, 1, 3, 8, "Rgb24");
+        var reader = new WpfImagePlaneReader();
+
+        ImagePlane red = await reader.ReadAsync(
+            source,
+            new ImagePlaneRequest(
+                source.Id,
+                0,
+                CreateChannel(0, "R", ScientificChannelSourceKind.InterleavedComponent,
+                    ScientificSampleType.UInt8, 8, "#FFFF0000"),
+                new PixelRect64(0, 0, 2, 1),
+                SourceRevision: 4));
+        ImagePlane green = await reader.ReadAsync(
+            source,
+            new ImagePlaneRequest(
+                source.Id,
+                0,
+                CreateChannel(1, "G", ScientificChannelSourceKind.InterleavedComponent,
+                    ScientificSampleType.UInt8, 8, "#FF00FF00"),
+                new PixelRect64(0, 0, 2, 1),
+                SourceRevision: 4));
+        ImagePlane blue = await reader.ReadAsync(
+            source,
+            new ImagePlaneRequest(
+                source.Id,
+                0,
+                CreateChannel(2, "B", ScientificChannelSourceKind.InterleavedComponent,
+                    ScientificSampleType.UInt8, 8, "#FF0000FF"),
+                new PixelRect64(0, 0, 2, 1),
+                SourceRevision: 4));
+
+        Assert.Equal(new byte[] { 10, 40 }, Assert.IsType<UInt8ImagePlaneSamples>(red.RawSamples));
+        Assert.Equal(new byte[] { 20, 50 }, Assert.IsType<UInt8ImagePlaneSamples>(green.RawSamples));
+        Assert.Equal(new byte[] { 30, 60 }, Assert.IsType<UInt8ImagePlaneSamples>(blue.RawSamples));
+        Assert.Equal(
+            ChannelPlaneSelector.InterleavedComponent(0, 2),
+            blue.PlaneRef.Selector);
+    }
+
+    [Fact]
     public async Task ReadAsync_PreservesRgb48ComponentOrderAndPrecision()
     {
         using var workspace = new TestWorkspace();

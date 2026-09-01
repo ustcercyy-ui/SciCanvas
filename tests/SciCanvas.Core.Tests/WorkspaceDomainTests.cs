@@ -1,3 +1,4 @@
+using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
 using SciCanvas.Core.Science;
@@ -379,6 +380,60 @@ public sealed class WorkspaceDomainTests
     }
 
     [Fact]
+    public void QcEngine_FontAvailabilityIncludesMeasurementOverlayLabelFontAndLocation()
+    {
+        ScientificAsset asset = CreateAsset(calibrated: true);
+        Guid figureId = Guid.NewGuid();
+        FigurePanel panel = CreatePanel(asset.Id, new FigureRectMm(0, 0, 40, 40), figureId);
+        Guid overlayId = Guid.NewGuid();
+        Guid measurementId = Guid.NewGuid();
+        var overlay = new MeasurementOverlayObject
+        {
+            Id = overlayId,
+            AssetId = asset.Id,
+            PanelId = panel.Id,
+            SourceRevision = asset.Source.SourceRevision,
+            MeasurementId = measurementId,
+            SourceGeometry = new ScientificMeasurement(
+                measurementId,
+                asset.Id,
+                ScientificMeasurementKind.Length,
+                new MeasurementPoint(10, 10),
+                new MeasurementPoint(30, 30),
+                SourceRevision: asset.Source.SourceRevision),
+            Style = new FigureMeasurementOverlayStyle(
+                "#FFFFFFFF", 1, "solid", "#00000000", 0,
+                "#FFFFFFFF", "#FF000000", 6, true,
+                "#FFFFFFFF", "MissingOverlayFont_FontUsageCollector", 7, false, true),
+        };
+        var figure = new ScientificFigure(
+            figureId,
+            "Figure 1",
+            50,
+            50,
+            [panel],
+            [overlayId],
+            null,
+            DateTimeOffset.UtcNow);
+        ScientificProject project = CreateProject(
+            [asset],
+            figure,
+            objects: new Dictionary<Guid, ScientificObject> { [overlayId] = overlay });
+
+        QcResult issue = Assert.Single(
+            new QcEngine().Evaluate(
+                new QcContext(project, new QcConfiguration(), new FixedFontCatalog(["Arial"]))),
+            item =>
+                item.RuleId == "typography.font-availability" &&
+                item.Message.Contains("MissingOverlayFont_FontUsageCollector", StringComparison.Ordinal));
+
+        Assert.Equal(figureId, issue.FigureId);
+        Assert.Equal(panel.Id, issue.PanelId);
+        Assert.Equal(overlayId, issue.ObjectId);
+        Assert.Contains(nameof(FontUsageKind.MeasurementOverlayLabel), issue.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void QcEngine_DetectsExactDuplicateSourceContent()
     {
         ScientificAsset first = CreateAsset(calibrated: true);
@@ -482,6 +537,70 @@ public sealed class WorkspaceDomainTests
 
         Assert.Contains(issues, issue =>
             issue.RuleId == "integrity.source-revision" && issue.Severity == QcSeverity.Error);
+    }
+
+    [Fact]
+    public void ScientificProject_RoiFigureProjectionRequiresExactCanonicalReferences()
+    {
+        ScientificAsset asset = CreateAsset(calibrated: true);
+        Guid figureId = Guid.NewGuid();
+        FigurePanel panel = CreatePanel(asset.Id, new FigureRectMm(0, 0, 40, 30), figureId) with
+        {
+            FrameIndex = 2,
+        };
+        var roi = new RoiObject
+        {
+            Id = Guid.NewGuid(),
+            AssetId = asset.Id,
+            SourceRevision = asset.Source.SourceRevision,
+            FrameIndex = 2,
+            GeometryKind = RoiGeometryKind.Polygon,
+            SourceGeometry =
+            [
+                new MeasurementPoint(10, 10),
+                new MeasurementPoint(30, 10),
+                new MeasurementPoint(20, 30),
+            ],
+        };
+        var projection = new RoiFigureProjectionObject
+        {
+            Id = Guid.NewGuid(),
+            RoiId = roi.Id,
+            PanelId = panel.Id,
+            AssetId = asset.Id,
+            SourceRevision = asset.Source.SourceRevision,
+            ZIndex = 4,
+        };
+        var figure = new ScientificFigure(
+            figureId,
+            "Figure 1",
+            40,
+            30,
+            [panel],
+            [projection.Id],
+            null,
+            DateTimeOffset.UtcNow);
+        ScientificProject valid = CreateProject(
+            [asset],
+            figure,
+            objects: new Dictionary<Guid, ScientificObject>
+            {
+                [roi.Id] = roi,
+                [projection.Id] = projection,
+            });
+
+        valid.EnsureValid();
+
+        RoiFigureProjectionObject mismatched = projection with { SourceRevision = 2 };
+        ScientificProject invalid = valid with
+        {
+            ScientificObjects = new Dictionary<Guid, ScientificObject>
+            {
+                [roi.Id] = roi,
+                [mismatched.Id] = mismatched,
+            },
+        };
+        Assert.Throws<InvalidOperationException>(() => invalid.EnsureValid());
     }
 
     private static ScientificProject CreateProject(

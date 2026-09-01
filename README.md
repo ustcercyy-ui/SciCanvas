@@ -114,6 +114,7 @@ CLI 退出码：`0` 成功、`2` 参数错误、`3` 工程或源图验证失败�
 - 独立 Figure QC 面板检查源图完整性、有效 DPI、边界/重叠、标签、标尺、标注样式、背景和未保存状态，并可定位到问题面板。
 - 科研颜色字典在工程内固定“物理对象 → HEX 颜色”，支持名称唯一性和红绿色觉缺陷近似检查，可应用到选中标注或全局图形样式。
 - 可解释辅助区域分析直接读取原始像素，提供亮/暗颗粒、晶粒区域、孔隙、相区、裂纹和片层候选；记录 ROI、阈值、最小面积和算法版本。候选默认不写入测量，必须人工接受/拒绝后才能转换为等效直径、裂纹长度或片层宽度测量。
+- 粒子分析由 `AnalysisResourcePolicy` 约束 ROI 像素、峰值工作内存、候选连通域和单域凸包支持点；预算内返回全部结果，触及安全上限则以 `AnalysisTooComplex` 明确中止并建议提高 MinimumArea、调整 threshold 或缩小 ROI，绝不把部分结果伪装为完整科研结果。
 - 辅助布局、样式协调和科研诚信检查均使用明确规则并可撤销；软件不提供生成式填充、克隆、局部擦除或对象移除。
 - Figure 可继续输出 16-bit TIFF、PNG/JPEG、可编辑 PDF/SVG，并生成 provenance JSON / HTML 报告；CLI 使用相同工程与预检规则。
 
@@ -132,6 +133,40 @@ CLI 退出码：`0` 成功、`2` 参数错误、`3` 工程或源图验证失败�
 
 源图仍保持只读；辅助分析只生成可审计结果，不进行生成式填充、克隆、擦除或对象移除。
 
+## v2.5 Scientific Data Asset Foundation
+
+- `TabularDataAsset` 以稳定 ID、名称、可选只读来源路径/指纹、source revision、类型化列与行、完整导入元数据进入 Core；列角色支持 X、Y、YError、Category、Label 与 Other。
+- CSV/TSV 使用严格 UTF-8 / UTF-8 BOM、RFC 引号、自动分隔符检测和 Invariant numeric parsing；XLSX 直接读取 OOXML，支持工作表发现/选择、A1 范围和表头行，不依赖 Excel 安装或新增第三方包。
+- 导入遵循强制 `Preview → Confirm`：页面先显示列名、前几行、类型推断和从表头提取的单位；用户可复核类型、单位与角色，确认时重新读取并核对 SHA-256。来源在预览后或导入中变化时不会创建资产。
+- `ScientificDataWorkspace` 是独立 `UserControl`；当前工程 schema `3.0` 继续保存全部类型化单元格和导入选择。旧 2.6 及更早工程确定性迁移为空 DataAsset 集合，2.7+ 工程会原样保留 DataAsset。只有表格、没有图像的工程也会正确标脏和自动保存。
+- Phase 9 门禁为 `412/412` tests（Core 168 + Windows/WPF 244），solution build 为 0 warnings、0 errors。
+
+## v2.5 Plot Workspace Foundation
+
+- `SciCanvas.Core.Plotting.PlotObject` 是不可变、数据绑定的二维绘图对象，覆盖 Line、Scatter、Line + Symbol、Error Bar、Histogram、Box Plot 与 Heatmap；每个对象都保存 DataAsset ID、source revision 和稳定列 ID，不以截图充当科学数据。
+- X/Y 轴支持标题、单位、linear/log、显式 min/max、major tick interval 与 minor tick count。axis/tick/legend/annotation 四类字体直接复用 canonical `TextStyle`，series 独立保存线色、线宽、线型、marker 形状/大小/填充/描边。
+- Error Bar 明确区分 symmetric 与 asymmetric，并绑定一个或两个原始数值列。负误差、过期 revision、外部列、log 轴非正数据及触及非正数的 log error range 会在 Core 校验阶段失败；不会通过静默丢点让 Plot 通过。
+- `PlotWorkspaceViewModel` 与 `PlotWorkspace.xaml` 是独立工作区；WPF `PlotPreviewControl` 直接读取类型化行生成七类矢量预览。`MainWindow.xaml` 只保留第九个页签宿主，DataAsset 被 Plot 引用时不能先行移除。
+- Phase 10 引入工程 schema `2.8`，round-trip 数据绑定、轴、字体和 series 样式；2.7→2.8 保留 DataAssets 并新增空 Plot 集合。Plot 使用独立脏标志参与手动保存、打开恢复和自动恢复副本。
+- Phase 10 门禁为 `436/436` tests（Core 177 + Windows/WPF 259），solution build 为 0 warnings、0 errors。
+
+## v2.5 Plot Scientific Provenance
+
+- `PlotDataFilter` 同时保存稳定 column ID、受限 operator、canonical operand、可读 expression 与 excluded row count；Core 会从 DataAsset 重新执行 filter 并核对表达式和计数，文件中的自报数值不能绕过验证。
+- normalize-minmax、offset、log10 与 moving-average 都以 ordered `PlotDataTransform` 保存。moving average 明确记录 window/alignment，并用边缘部分窗口保持行数；Error Bar 的 Y 变换若需要未定义的误差传播会被拒绝。
+- `PlotDataProjector` 先执行 filter、再按列表执行 transforms，输出每行 source row index、original/projected value、included/excluded/unplottable 计数；它不修改 `TabularDataAsset`。显式 filter 可以有记录地排除 log 非正行，但变换后产生非正 log 值、空 Plot 或触及非正数的误差范围仍会阻止保存。
+- `PlotScientificProvenance` 完整记录 Plot/DataAsset/revision、X/Y/error/value columns、filter expression、excluded count、ordered transforms、PlotType、Style 和行数核算。WPF 七类预览统一消费该投影并显示数据核算摘要。
+- 工程 schema `2.9` 保存 filter 与 transforms；2.8→2.9 保留已有 Plot 并默认空 operations。工程保存/打开会拒绝被篡改的 expression/excluded count。
+- Phase 11 门禁为 `447/447` tests（Core 184 + Windows/WPF 263），solution build 为 0 warnings、0 errors。
+
+## v2.5 Plot → Figure Native Panels
+
+- 已保存 Plot 可通过 Plot Workspace 的“添加到 Figure”直接成为 `FigurePlotPanelExportItem`，Figure 保存 Plot/DataAsset/revision 引用与冻结的投影快照，不生成或持久化 screenshot。画布支持选择、拖动、缩放、锁定、方向键微调、Delete、统一面板编号和撤销/重做。
+- Line、Scatter、Line + Symbol、Error Bar、Histogram、Box Plot、Heatmap 共用同一中立 Plot geometry scene。PNG、8-bit TIFF 与 16-bit TIFF 走高质量栅格路径；SVG 输出原生 line/rect/ellipse/polygon/text；PDF 输出直接 path/text operators，不嵌入 Plot raster image。
+- Plot 的 axis/tick/legend/annotation 遵循 `Project → Figure → Panel → Plot Object` 排版继承；Panel Label 也使用 Figure canonical style。PDF Plot 文字复用 Figure 的 embedded TrueType / outline fallback 策略，字体替换和实际结果继续进入 provenance。
+- 工程 writer 升级到 schema `3.0`，保存 Plot Panel 的稳定 ID、Plot ID、目标矩形、标签、可见/锁定、ZIndex、Panel style 与 Plot typography overrides。2.9→3.0 默认空 Plot Panel；加载会拒绝缺失 Plot/DataAsset、revision 不匹配、重复 ID、越界几何和非法样式。GUI、CLI、Preflight、投稿 provenance 均读取相同原生 Panel contract。
+- Phase 12 门禁为 `464/464` tests（Core 188 + Windows/WPF 276），solution build 为 0 warnings、0 errors。
+
 ## v2.4 Scientific Objects, Multichannel & Reproducible Publishing
 
 `v2.4.0-alpha` 已完成路线图 PR1–PR12，工程 schema 正式升级为 `2.4`。
@@ -142,10 +177,11 @@ CLI 退出码：`0` 成功、`2` 参数错误、`3` 工程或源图验证失败�
 - Integrity QC 精确定位 Asset/Panel/Object/Measurement/Analysis/Channel/LinkGroup/Mapping，并新增 UInt8/UInt16 旋转/镜像 exact duplicate 检测。
 - Journal preset pack、显式字体替换和 PDF 字体策略进入 Publishing Portability 工作区；requested font 不会被 fallback 静默改写。
 - Export 与投稿包统一使用不可变 `FigureExportDocument`；provenance 记录 channels、registration、ROI propagation、colorbar/legend、font resolution 和 PDF 实际策略。
+- v2.5 Plot 开发前已完成架构分解：主 ViewModel 的 QC、导出、投稿包、工程 I/O 与科学分析进入五个协调器；Figure 的 Panel/Object/Link 状态进入三个独立模块；Inspector 与 Layers 进入独立 `UserControl`，`MainWindow.xaml` 仅保留页面宿主。
 - 辅助区域/颗粒分析已取消 1000 条候选截断，返回所有满足阈值和最小面积条件的连通区域。
-- 最终本地 Release 验证为 `305/305` tests（Core 129 + Windows 176），solution build 为 0 warnings、0 errors。
 
-当前限制包括：不宣称 full OME-TIFF/CZI/LIF/ND2/DM3/DM4/Bio-Formats；不猜测未保存的 interleaved RGB component；任意 affine warp 尚未作为像素重采样 composite；内置 PDF writer 当前可靠路径为文字轮廓，不宣称字体子集嵌入。完整内容见 [v2.4.0-alpha 发布说明](docs/RELEASE_2.4.0.md)与 [v2.4 路线图](docs/ROADMAP_2.4.md)。
+当前限制包括：不宣称 full OME-TIFF/CZI/LIF/ND2/DM3/DM4/Bio-Formats；不猜测未保存的 interleaved RGB component；任意 affine warp 尚未作为像素重采样 composite。PDF 仅对许可允许且可可靠映射的 TrueType / OpenType TrueType 生成实际字形子集；CFF、受限许可或无法可靠映射的字体在严格策略下阻止导出，在偏好策略下记录原因并回退为文字轮廓。完整内容见 [v2.4.0-alpha 发布说明](docs/RELEASE_2.4.0.md)与 [v2.4 路线图](docs/ROADMAP_2.4.md)。
+
 ## v2.3 Scientific Styling, Integrity & Submission
 
 `v2.3.0-alpha` 把科研对象样式从界面字段升级为可迁移、可审计并贯穿预览/工程/导出的统一系统，同时交付投稿前科研完整性检查和一键投稿包。
@@ -204,13 +240,13 @@ dotnet publish .\src\SciCanvas.Cli\SciCanvas.Cli.csproj --configuration Release 
 
 生成后可双击 `.\artifacts\SciCanvas-win-x64\SciCanvas.App.exe`，或在终端运行同目录的 `SciCanvas.Cli.exe`。该目录版仍需要系统安装 .NET 10 Desktop Runtime。
 
-当前可直接交付的版本为 `v2.4.0-alpha` 自包含 Windows x64 包：
+当前可直接交付的版本为 `v2.5.0-alpha` 自包含 Windows x64 包：
 
-- [SciCanvas-v2.4.0-alpha-Setup.exe](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.4.0-alpha/SciCanvas-v2.4.0-alpha-Setup.exe)：双击安装到当前用户目录，不需要管理员权限，同时安装 GUI 与 CLI。
-- [SciCanvas-v2.4.0-alpha-Portable.zip](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.4.0-alpha/SciCanvas-v2.4.0-alpha-Portable.zip)：解压后运行 `SciCanvas.App.exe` 或 `SciCanvas.Cli.exe`，不需要安装 .NET。
-- [SciCanvas-v2.4.0-alpha-SHA256.txt](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.4.0-alpha/SciCanvas-v2.4.0-alpha-SHA256.txt)：安装包与便携包的 SHA-256 校验值。
+- [SciCanvas-v2.5.0-alpha-Setup.exe](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.5.0-alpha/SciCanvas-v2.5.0-alpha-Setup.exe)：双击安装到当前用户目录，不需要管理员权限，同时安装 GUI 与 CLI。
+- [SciCanvas-v2.5.0-alpha-Portable.zip](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.5.0-alpha/SciCanvas-v2.5.0-alpha-Portable.zip)：解压后运行 `SciCanvas.App.exe` 或 `SciCanvas.Cli.exe`，不需要安装 .NET。
+- [SciCanvas-v2.5.0-alpha-SHA256.txt](https://github.com/ustcercyy-ui/SciCanvas/releases/download/v2.5.0-alpha/SciCanvas-v2.5.0-alpha-SHA256.txt)：安装包与便携包的 SHA-256 校验值。
 
-完整更新内容、安装步骤和验证记录见 [v2.4.0-alpha Release](https://github.com/ustcercyy-ui/SciCanvas/releases/tag/v2.4.0-alpha)。
+完整更新内容、安装步骤和验证记录见 [v2.5.0-alpha Release](https://github.com/ustcercyy-ui/SciCanvas/releases/tag/v2.5.0-alpha)。
 构建与测试：
 
 ```powershell
@@ -237,6 +273,7 @@ dotnet test .\SciCanvas.sln --configuration Debug
 - [v2.0.1 交互改进与安装验证](docs/RELEASE_2.0.1.md)
 - [v2.2 科学分析与自动化发布说明](docs/RELEASE_2.2.0.md)
 - [v2.3 科研样式、完整性与投稿包发布说明](docs/RELEASE_2.3.0.md)
+- [v2.5.0-alpha Scientific Data、Registered Imaging 与 Plot Workspace 发布说明](docs/RELEASE_2.5.0.md)
 - [v2.4.0-alpha 最终阶段发布说明](docs/RELEASE_2.4.0.md)
 - [v2.4.0-alpha.2 检查器与图层显示热修订](docs/RELEASE_2.4.0-alpha.2.md)
 - [v2.4.0-alpha.1 科学对象与多通道阶段发布说明](docs/RELEASE_2.4.0-alpha.1.md)

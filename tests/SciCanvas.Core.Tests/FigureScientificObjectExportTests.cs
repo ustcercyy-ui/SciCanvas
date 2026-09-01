@@ -1,4 +1,6 @@
+using SciCanvas.Core.Channels;
 using SciCanvas.Core.Export;
+using SciCanvas.Core.Workspace;
 
 namespace SciCanvas.Core.Tests;
 
@@ -51,6 +53,104 @@ public sealed class FigureScientificObjectExportTests
         Assert.True(result.HasErrors);
     }
 
+    [Fact]
+    public void TypedColorbarSpec_RoundTripsCanonicalTicksBindingAndOrientation()
+    {
+        Guid channelId = Guid.NewGuid();
+        IReadOnlyList<ColorbarTick> ticks = ColorbarObject.CreateDefaultTicks(10, 50, 3);
+        var canonical = new ColorbarObject
+        {
+            Id = Guid.NewGuid(),
+            Minimum = 10,
+            Maximum = 50,
+            Unit = "counts",
+            Colormap = "magma",
+            ChannelId = channelId,
+            BindingState = ColorbarBindingState.Linked,
+            Orientation = FigureObjectOrientation.Horizontal,
+            Ticks = ticks,
+        }.EnsureValid();
+        var spec = new FigureColorbarExportSpec(
+            canonical.Minimum,
+            canonical.Maximum,
+            canonical.Unit,
+            canonical.Colormap,
+            canonical.ChannelId,
+            canonical.BindingState,
+            canonical.Orientation,
+            canonical.Ticks).EnsureValid();
+        var item = new FigureScientificObjectExportItem(
+            canonical.Id,
+            FigureScientificObjectKind.Colorbar,
+            [new FigureScientificPoint(20, 20), new FigureScientificPoint(180, 50)],
+            "Intensity",
+            "#FFFFFFFF",
+            "#FFFFFFFF",
+            0,
+            "#FFFFFFFF",
+            "Arial",
+            7,
+            1,
+            false,
+            true,
+            0,
+            Minimum: spec.Minimum,
+            Maximum: spec.Maximum,
+            Unit: spec.Unit,
+            Colormap: spec.Colormap,
+            ChannelId: spec.ChannelId,
+            Colorbar: spec);
+
+        item.EnsureValid(240, 160);
+
+        Assert.Equal(FigureObjectOrientation.Horizontal, item.EffectiveColorbar!.Orientation);
+        Assert.Equal(ColorbarBindingState.Linked, item.EffectiveColorbar.BindingState);
+        Assert.Equal(["10", "30", "50"], item.EffectiveColorbar.Ticks.Select(tick => tick.Label));
+    }
+
+    [Fact]
+    public void TypedChannelLegendSpec_CarriesItemsTypographyContainerAndPadding()
+    {
+        Guid firstChannel = Guid.NewGuid();
+        var spec = new FigureChannelLegendExportSpec(
+            [
+                new FigureChannelLegendEntry("DAPI", "#FF4FC3F7", firstChannel),
+                new FigureChannelLegendEntry("GFP", "#FF66BB6A"),
+            ],
+            "Arial",
+            8,
+            true,
+            "#FFEEEEEE",
+            "#FF101010",
+            75,
+            "#FF808080",
+            1.5,
+            9).EnsureValid();
+        var item = new FigureScientificObjectExportItem(
+            Guid.NewGuid(),
+            FigureScientificObjectKind.ChannelLegend,
+            [new FigureScientificPoint(20, 20), new FigureScientificPoint(160, 100)],
+            "Channels",
+            spec.BorderColor,
+            spec.BackgroundColor,
+            spec.BackgroundOpacityPercent,
+            spec.TextColor,
+            spec.FontFamily,
+            spec.FontSizePt,
+            spec.BorderWidthPt,
+            spec.IsBold,
+            true,
+            0,
+            ChannelLegendEntries: spec.Items,
+            ChannelLegend: spec);
+
+        item.EnsureValid(240, 160);
+
+        Assert.Equal(9, item.EffectiveChannelLegend!.PaddingPixels);
+        Assert.Equal(firstChannel, item.EffectiveChannelLegend.Items[0].ChannelId);
+        Assert.Equal("#FF101010", item.EffectiveChannelLegend.BackgroundColor);
+    }
+
     private static IReadOnlyList<FigureScientificObjectExportItem> CreateCanonicalObjects() =>
     [
         new(
@@ -68,21 +168,6 @@ public sealed class FigureScientificObjectExportTests
             true,
             true,
             0),
-        new(
-            Guid.NewGuid(),
-            FigureScientificObjectKind.Roi,
-            [new FigureScientificPoint(100, 20), new FigureScientificPoint(150, 20), new FigureScientificPoint(150, 70), new FigureScientificPoint(100, 70)],
-            "ROI 1",
-            "#FF00E5FF",
-            "#FF00E5FF",
-            10,
-            "#FFFFFFFF",
-            "Arial",
-            7,
-            1.25,
-            true,
-            true,
-            1),
         new(
             Guid.NewGuid(),
             FigureScientificObjectKind.DirectionMarker,

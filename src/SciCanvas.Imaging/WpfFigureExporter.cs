@@ -6,12 +6,27 @@ using System.Windows.Media.Imaging;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Science;
+using SciCanvas.Core.Workspace;
 
 namespace SciCanvas.Imaging;
 
-public sealed class WpfFigureExporter : IFigureExporter
+public sealed class WpfFigureExporter : IFigureExporter, IPdfFontExportReportProvider
 {
-    public Task ExportAsync(
+    private readonly object _pdfFontReportLock = new();
+    private IReadOnlyList<PdfFontExportOutcome> _lastPdfFontOutcomes = [];
+
+    public IReadOnlyList<PdfFontExportOutcome> LastPdfFontOutcomes
+    {
+        get
+        {
+            lock (_pdfFontReportLock)
+            {
+                return _lastPdfFontOutcomes;
+            }
+        }
+    }
+
+    public async Task ExportAsync(
         FigureExportDocument document,
         string targetPath,
         CancellationToken cancellationToken = default)
@@ -19,12 +34,23 @@ public sealed class WpfFigureExporter : IFigureExporter
         ArgumentNullException.ThrowIfNull(document);
         ArgumentException.ThrowIfNullOrWhiteSpace(targetPath);
 
-        return Task.Run(
-            () => ExportCore(document, targetPath, cancellationToken),
-            cancellationToken);
+        IReadOnlyList<PdfFontExportOutcome> outcomes = [];
+        try
+        {
+            outcomes = await Task.Run(
+                () => ExportCore(document, targetPath, cancellationToken),
+                cancellationToken);
+        }
+        finally
+        {
+            lock (_pdfFontReportLock)
+            {
+                _lastPdfFontOutcomes = outcomes;
+            }
+        }
     }
 
-    private static void ExportCore(
+    private static IReadOnlyList<PdfFontExportOutcome> ExportCore(
         FigureExportDocument document,
         string targetPath,
         CancellationToken cancellationToken)
@@ -33,14 +59,13 @@ public sealed class WpfFigureExporter : IFigureExporter
         string extension = Path.GetExtension(targetPath).ToLowerInvariant();
         if (extension is ".svg" or ".pdf")
         {
-            WpfEditableFigureExporter.Export(document, targetPath, extension, cancellationToken);
-            return;
+            return WpfEditableFigureExporter.Export(document, targetPath, extension, cancellationToken);
         }
 
         if (extension is ".tif" or ".tiff" && document.BitDepth == 16)
         {
             WpfHighBitDepthFigureExporter.Export(document, targetPath, cancellationToken);
-            return;
+            return [];
         }
 
         if (document.BitDepth != 8)
@@ -77,6 +102,16 @@ public sealed class WpfFigureExporter : IFigureExporter
                 DrawPanelLabel(drawing, panel.Label, panel.DestinationRect, document.Dpi, panelStyle);
             }
 
+            foreach (FigurePlotPanelExportItem plotPanel in
+                     document.PlotPanels.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ValidatePlotPanel(plotPanel, document);
+                WpfPlotPanelRenderer.Draw(drawing, plotPanel, document.GlobalStyle, document.Dpi);
+                FigureGlobalStyle panelStyle = document.GlobalStyle.ResolvePanelOverride(plotPanel.StyleOverride);
+                DrawPanelLabel(drawing, plotPanel.Label, plotPanel.DestinationRect, document.Dpi, panelStyle);
+            }
+
             foreach (FigureAnnotationExportItem annotation in
                      document.Annotations.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
             {
@@ -90,6 +125,13 @@ public sealed class WpfFigureExporter : IFigureExporter
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 DrawMeasurementOverlay(drawing, overlay, document, document.Dpi);
+            }
+
+            foreach (FigureRoiProjectionExportItem roiProjection in
+                     document.RoiProjections.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                DrawRoiProjection(drawing, roiProjection, document, document.Dpi);
             }
 
             foreach (FigureScientificObjectExportItem scientificObject in
@@ -137,6 +179,7 @@ public sealed class WpfFigureExporter : IFigureExporter
 
             throw;
         }
+        return [];
     }
 
     internal static BitmapSource LoadPanelImage(
@@ -148,6 +191,18 @@ public sealed class WpfFigureExporter : IFigureExporter
             ? WpfCompositePanelRenderer.Render(panel.EffectiveChannelLayers, cancellationToken)
             : LoadExactCrop(panel.Source.OriginalPath, panel.SourceRect, panel.FrameIndex);
         return WpfImageAdjustmentProcessor.Apply(source, panel.Adjustments);
+    }
+
+    internal static void ValidatePlotPanel(
+        FigurePlotPanelExportItem panel,
+        FigureExportDocument document)
+    {
+        panel.EnsureValid();
+        if (panel.DestinationRect.Right > document.WidthPixels ||
+            panel.DestinationRect.Bottom > document.HeightPixels)
+        {
+            throw new InvalidOperationException("Figure Plot panel 超出导出画布边界。");
+        }
     }
 
     internal static BitmapSource LoadExactCrop(string sourcePath, PixelRect64 crop, int frameIndex = 0)
@@ -453,6 +508,128 @@ public sealed class WpfFigureExporter : IFigureExporter
         scientificObject.EnsureValid(document.WidthPixels, document.HeightPixels);
     }
 
+    internal static void DrawRoiProjection(
+        DrawingContext drawing,
+        FigureRoiProjectionExportItem item,
+        FigureExportDocument document,
+        int dpi)
+    {
+        ArgumentNullException.ThrowIfNull(drawing);
+        FigurePanelExportItem panel = ResolveRoiProjectionPanel(item, document);
+        FigureRoiProjectionGeometry geometry = FigureRoiProjectionMapper.Map(item, panel, dpi);
+        Color strokeColor = ParseColor(geometry.Style.Shape.StrokeColor);
+        Color fillColor = ParseColor(geometry.Style.Shape.FillColor);
+        fillColor.A = (byte)Math.Round(
+            fillColor.A * geometry.Style.Shape.FillOpacityPercent / 100.0);
+        var strokeBrush = new SolidColorBrush(strokeColor);
+        strokeBrush.Freeze();
+        var fillBrush = new SolidColorBrush(fillColor);
+        fillBrush.Freeze();
+        var pen = new Pen(strokeBrush, Math.Max(0.25, geometry.StrokeWidthPixels))
+        {
+            StartLineCap = PenLineCap.Round,
+            EndLineCap = PenLineCap.Round,
+            LineJoin = PenLineJoin.Round,
+        };
+        pen.Freeze();
+
+        switch (geometry.Kind)
+        {
+            case RoiGeometryKind.Rectangle:
+            {
+                Rect bounds = Bounds(geometry.Points[0], geometry.Points[1]);
+                drawing.DrawRectangle(fillBrush, pen, bounds);
+                break;
+            }
+            case RoiGeometryKind.Ellipse:
+            {
+                Rect bounds = Bounds(geometry.Points[0], geometry.Points[1]);
+                drawing.DrawEllipse(
+                    fillBrush,
+                    pen,
+                    new Point(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2),
+                    bounds.Width / 2,
+                    bounds.Height / 2);
+                break;
+            }
+            case RoiGeometryKind.Polygon:
+                drawing.DrawGeometry(fillBrush, pen, CreateRoiPath(geometry.Points, closed: true));
+                break;
+            case RoiGeometryKind.Polyline:
+                drawing.DrawGeometry(null, pen, CreateRoiPath(geometry.Points, closed: false));
+                break;
+            default:
+                throw new InvalidOperationException("不支持的 canonical ROI geometry kind。");
+        }
+
+        if (!string.IsNullOrWhiteSpace(geometry.Style.Label))
+        {
+            var textBrush = new SolidColorBrush(ParseColor(geometry.Style.LabelStyle.Color));
+            textBrush.Freeze();
+            var text = new FormattedText(
+                geometry.Style.Label,
+                CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight,
+                new Typeface(
+                    new FontFamily(geometry.Style.LabelStyle.FontFamily),
+                    FontStyles.Normal,
+                    geometry.Style.LabelStyle.IsBold ? FontWeights.Bold : FontWeights.Normal,
+                    FontStretches.Normal),
+                geometry.LabelFontSizePixels,
+                textBrush,
+                1);
+            drawing.DrawText(
+                text,
+                new Point(
+                    geometry.LabelAnchor.X + 4,
+                    geometry.LabelAnchor.Y - geometry.LabelFontSizePixels - 4));
+        }
+    }
+
+    internal static FigurePanelExportItem ResolveRoiProjectionPanel(
+        FigureRoiProjectionExportItem item,
+        FigureExportDocument document)
+    {
+        FigurePanelExportItem[] matches = document.Panels
+            .Where(panel => panel.PanelId == item.PanelId)
+            .ToArray();
+        if (matches.Length != 1)
+        {
+            throw new InvalidOperationException(
+                "ROI Figure Projection 必须解析到唯一的 Figure Panel。");
+        }
+
+        FigureRoiProjectionMapper.ValidateRelationship(item, matches[0]);
+        return matches[0];
+    }
+
+    private static StreamGeometry CreateRoiPath(
+        IReadOnlyList<MeasurementPoint> points,
+        bool closed)
+    {
+        var path = new StreamGeometry();
+        using (StreamGeometryContext context = path.Open())
+        {
+            context.BeginFigure(
+                new Point(points[0].X, points[0].Y),
+                isFilled: closed,
+                isClosed: closed);
+            context.PolyLineTo(
+                points.Skip(1).Select(point => new Point(point.X, point.Y)).ToArray(),
+                isStroked: true,
+                isSmoothJoin: false);
+        }
+
+        path.Freeze();
+        return path;
+    }
+
+    private static Rect Bounds(MeasurementPoint first, MeasurementPoint second) => new(
+        Math.Min(first.X, second.X),
+        Math.Min(first.Y, second.Y),
+        Math.Abs(second.X - first.X),
+        Math.Abs(second.Y - first.Y));
+
     internal static void DrawScientificObject(
         DrawingContext drawing,
         FigureScientificObjectExportItem scientificObject,
@@ -480,7 +657,6 @@ public sealed class WpfFigureExporter : IFigureExporter
         switch (scientificObject.Kind)
         {
             case FigureScientificObjectKind.PolygonAnnotation:
-            case FigureScientificObjectKind.Roi:
                 var polygon = new StreamGeometry();
                 using (StreamGeometryContext context = polygon.Open())
                 {
@@ -498,7 +674,7 @@ public sealed class WpfFigureExporter : IFigureExporter
                 DrawColorbar(drawing, scientificObject, pen, textBrush, dpi);
                 break;
             case FigureScientificObjectKind.ChannelLegend:
-                DrawChannelLegend(drawing, scientificObject, pen, textBrush, dpi);
+                DrawChannelLegend(drawing, scientificObject, pen, fillBrush, textBrush, dpi);
                 break;
             default:
                 throw new InvalidOperationException("不支持的科研对象类型。");
@@ -545,12 +721,39 @@ public sealed class WpfFigureExporter : IFigureExporter
         Brush textBrush,
         int dpi)
     {
+        FigureColorbarExportSpec colorbar = scientificObject.EffectiveColorbar!;
         Rect bounds = CreateBounds(scientificObject.Points);
-        drawing.DrawRectangle(CreateColormapBrush(scientificObject.Colormap), pen, bounds);
-        DrawScientificObjectText(drawing, $"{scientificObject.Maximum:0.###} {scientificObject.Unit}",
-            new FigureScientificPoint(bounds.Right + 5, bounds.Top), textBrush, scientificObject, dpi);
-        DrawScientificObjectText(drawing, $"{scientificObject.Minimum:0.###} {scientificObject.Unit}",
-            new FigureScientificPoint(bounds.Right + 5, bounds.Bottom - scientificObject.FontSizePt / 72.0 * dpi), textBrush, scientificObject, dpi);
+        drawing.DrawRectangle(CreateColormapBrush(colorbar.Colormap, colorbar.Orientation), pen, bounds);
+        double fontSize = scientificObject.FontSizePt / 72.0 * dpi;
+        foreach (ColorbarTick tick in colorbar.Ticks)
+        {
+            double position = (tick.Value - colorbar.Minimum) / (colorbar.Maximum - colorbar.Minimum);
+            if (colorbar.Orientation == FigureObjectOrientation.Vertical)
+            {
+                double tickY = bounds.Bottom - position * bounds.Height;
+                drawing.DrawLine(pen, new Point(bounds.Right, tickY), new Point(bounds.Right + 4, tickY));
+                DrawScientificObjectText(
+                    drawing,
+                    tick.Label,
+                    new FigureScientificPoint(bounds.Right + 7, tickY - fontSize / 2),
+                    textBrush,
+                    scientificObject,
+                    dpi);
+            }
+            else
+            {
+                double tickX = bounds.Left + position * bounds.Width;
+                drawing.DrawLine(pen, new Point(tickX, bounds.Bottom), new Point(tickX, bounds.Bottom + 4));
+                DrawScientificObjectText(
+                    drawing,
+                    tick.Label,
+                    new FigureScientificPoint(tickX, bounds.Bottom + 6),
+                    textBrush,
+                    scientificObject,
+                    dpi,
+                    -fontSize / 4);
+            }
+        }
         if (!string.IsNullOrWhiteSpace(scientificObject.Label))
         {
             DrawScientificObjectText(drawing, scientificObject.Label,
@@ -562,23 +765,45 @@ public sealed class WpfFigureExporter : IFigureExporter
         DrawingContext drawing,
         FigureScientificObjectExportItem scientificObject,
         Pen pen,
+        Brush fillBrush,
         Brush textBrush,
         int dpi)
     {
+        FigureChannelLegendExportSpec legend = scientificObject.EffectiveChannelLegend!;
+        var renderItem = scientificObject with
+        {
+            FontFamily = legend.FontFamily,
+            FontSizePt = legend.FontSizePt,
+            IsBold = legend.IsBold,
+            TextColor = legend.TextColor,
+            FillColor = legend.BackgroundColor,
+            FillOpacityPercent = legend.BackgroundOpacityPercent,
+            StrokeColor = legend.BorderColor,
+            StrokeWidthPt = legend.BorderWidthPt,
+        };
         Rect bounds = CreateBounds(scientificObject.Points);
-        drawing.DrawRectangle(new SolidColorBrush(Color.FromArgb(185, 12, 18, 25)), pen, bounds);
-        double fontSize = scientificObject.FontSizePt / 72.0 * dpi;
-        int count = scientificObject.EffectiveChannelLegendEntries.Count;
-        double rowHeight = bounds.Height / Math.Max(1, count);
+        var legendFill = new SolidColorBrush(ParseColor(legend.BackgroundColor))
+        {
+            Opacity = legend.BackgroundOpacityPercent / 100.0,
+        };
+        var legendStroke = new SolidColorBrush(ParseColor(legend.BorderColor));
+        var legendText = new SolidColorBrush(ParseColor(legend.TextColor));
+        var legendPen = new Pen(legendStroke, legend.BorderWidthPt / 72.0 * dpi);
+        double padding = legend.PaddingPixels;
+        drawing.DrawRectangle(legendFill, legendPen, bounds);
+        double fontSize = legend.FontSizePt / 72.0 * dpi;
+        int count = legend.Items.Count;
+        double rowHeight = Math.Max(fontSize + 2, (bounds.Height - 2 * padding) / Math.Max(1, count));
         for (int index = 0; index < count; index++)
         {
-            FigureChannelLegendEntry entry = scientificObject.EffectiveChannelLegendEntries[index];
+            FigureChannelLegendEntry entry = legend.Items[index];
             var swatch = new SolidColorBrush(ParseColor(entry.Color));
             swatch.Freeze();
-            double y = bounds.Y + index * rowHeight;
-            drawing.DrawRectangle(swatch, null, new Rect(bounds.X + 5, y + Math.Max(2, (rowHeight - fontSize) / 2), Math.Min(16, bounds.Width * 0.18), Math.Max(4, fontSize)));
+            double y = bounds.Y + padding + index * rowHeight;
+            double swatchWidth = Math.Min(16, Math.Max(4, bounds.Width * 0.18));
+            drawing.DrawRectangle(swatch, null, new Rect(bounds.X + padding, y + Math.Max(1, (rowHeight - fontSize) / 2), swatchWidth, Math.Max(4, fontSize)));
             DrawScientificObjectText(drawing, entry.Label,
-                new FigureScientificPoint(bounds.X + Math.Min(24, bounds.Width * 0.25), y + Math.Max(0, (rowHeight - fontSize) / 2)), textBrush, scientificObject, dpi);
+                new FigureScientificPoint(bounds.X + padding + swatchWidth + 4, y + Math.Max(0, (rowHeight - fontSize) / 2)), legendText, renderItem, dpi);
         }
     }
 
@@ -619,14 +844,22 @@ public sealed class WpfFigureExporter : IFigureExporter
     internal static IReadOnlyList<Color> GetColormapColors(string colormap) => colormap.ToLowerInvariant() switch
     {
         "magma" => [Color.FromRgb(0, 0, 4), Color.FromRgb(115, 20, 117), Color.FromRgb(252, 136, 97), Color.FromRgb(252, 253, 191)],
+        "plasma" => [Color.FromRgb(13, 8, 135), Color.FromRgb(126, 3, 168), Color.FromRgb(204, 71, 120), Color.FromRgb(248, 149, 64), Color.FromRgb(240, 249, 33)],
+        "inferno" => [Color.FromRgb(0, 0, 4), Color.FromRgb(87, 16, 110), Color.FromRgb(188, 55, 84), Color.FromRgb(249, 142, 8), Color.FromRgb(252, 255, 164)],
+        "cividis" => [Color.FromRgb(0, 32, 77), Color.FromRgb(40, 72, 110), Color.FromRgb(87, 108, 116), Color.FromRgb(145, 143, 111), Color.FromRgb(253, 234, 69)],
+        "turbo" => [Color.FromRgb(48, 18, 59), Color.FromRgb(50, 104, 210), Color.FromRgb(44, 203, 128), Color.FromRgb(245, 210, 65), Color.FromRgb(180, 4, 38)],
         "grayscale" => [Colors.Black, Colors.White],
         _ => [Color.FromRgb(68, 1, 84), Color.FromRgb(59, 82, 139), Color.FromRgb(33, 145, 140), Color.FromRgb(94, 201, 98), Color.FromRgb(253, 231, 37)],
     };
-    internal static LinearGradientBrush CreateColormapBrush(string colormap)
+    internal static LinearGradientBrush CreateColormapBrush(
+        string colormap,
+        FigureObjectOrientation orientation = FigureObjectOrientation.Vertical)
     {
         IReadOnlyList<Color> colors = GetColormapColors(colormap);
 
-        var brush = new LinearGradientBrush { StartPoint = new Point(0, 1), EndPoint = new Point(0, 0) };
+        var brush = orientation == FigureObjectOrientation.Vertical
+            ? new LinearGradientBrush { StartPoint = new Point(0, 1), EndPoint = new Point(0, 0) }
+            : new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) };
         for (int index = 0; index < colors.Count; index++)
         {
             brush.GradientStops.Add(new GradientStop(colors[index], index / (double)Math.Max(1, colors.Count - 1)));
@@ -841,11 +1074,11 @@ public sealed class WpfFigureExporter : IFigureExporter
             }
 
             if (panel.EffectiveChannelLayers.Select(layer => layer.GroupId).Distinct().Count() != 1 ||
-                panel.EffectiveChannelLayers.Select(layer => layer.SourceRect.Width).Distinct().Count() != 1 ||
-                panel.EffectiveChannelLayers.Select(layer => layer.SourceRect.Height).Distinct().Count() != 1)
+                panel.EffectiveChannelLayers.Select(layer => layer.OutputWidth).Distinct().Count() != 1 ||
+                panel.EffectiveChannelLayers.Select(layer => layer.OutputHeight).Distinct().Count() != 1)
             {
                 throw new InvalidOperationException(
-                    $"复合面板 {panel.Label} 的通道层必须来自同一组且具有相同裁剪尺寸。");
+                    $"复合面板 {panel.Label} 的通道层必须来自同一组且落在相同输出参考网格。");
             }
         }
 

@@ -14,7 +14,8 @@ public sealed record ChannelDisplaySettings(
     double DisplayMinimum,
     double DisplayMaximum,
     double Gamma,
-    bool Invert)
+    bool Invert,
+    string Colormap = "viridis")
 {
     public ChannelDisplaySettings EnsureValid()
     {
@@ -22,9 +23,11 @@ public sealed record ChannelDisplaySettings(
             !double.IsFinite(Opacity) || Opacity is < 0 or > 1 ||
             !double.IsFinite(DisplayMinimum) || !double.IsFinite(DisplayMaximum) ||
             DisplayMaximum <= DisplayMinimum ||
-            !double.IsFinite(Gamma) || Gamma is <= 0 or > 100)
+            !double.IsFinite(Gamma) || Gamma is <= 0 or > 100 ||
+            !ScientificColormap.IsSupported(Colormap))
         {
-            throw new InvalidOperationException("通道显示设置必须包含有效颜色、透明度、递增显示范围和正 Gamma。");
+            throw new InvalidOperationException(
+                "通道显示设置必须包含有效颜色、透明度、递增显示范围、正 Gamma 和受支持的 colormap。");
         }
 
         return this;
@@ -59,6 +62,7 @@ public sealed record ChannelDisplaySettings(
             DisplayMinimum: 0,
             DisplayMaximum: maximum,
             Gamma: 1,
-            Invert: false);
+            Invert: false,
+            Colormap: "viridis");
     }
 }

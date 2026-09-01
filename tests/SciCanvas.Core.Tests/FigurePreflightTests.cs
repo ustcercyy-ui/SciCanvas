@@ -1,6 +1,7 @@
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
+using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
 using SciCanvas.Core.Workspace;
 
@@ -287,6 +288,77 @@ public sealed class FigurePreflightTests
     }
 
     [Fact]
+    public void Check_ValidatesRoiProjectionRelationshipAndResolvedFontBeforeExport()
+    {
+        SourceAsset source = CreateSource(SourceLinkState.Verified);
+        Guid panelId = Guid.NewGuid();
+        Guid roiId = Guid.NewGuid();
+        var panel = new FigurePanelExportItem(
+            source,
+            new PixelRect64(0, 0, 100, 100),
+            new PixelRect64(0, 0, 100, 100),
+            "a",
+            true,
+            PanelId: panelId,
+            SourceRevision: 4);
+        var roi = new RoiObject
+        {
+            Id = roiId,
+            AssetId = source.Id,
+            SourceRevision = 4,
+            GeometryKind = RoiGeometryKind.Rectangle,
+            SourceGeometry =
+            [
+                new MeasurementPoint(10, 10),
+                new MeasurementPoint(30, 30),
+            ],
+            Style = RoiStyle.Default with { Label = "cell" },
+        }.EnsureValid();
+        var validProjection = new RoiFigureProjectionObject
+        {
+            Id = Guid.NewGuid(),
+            RoiId = roiId,
+            PanelId = panelId,
+            AssetId = source.Id,
+            SourceRevision = 4,
+            StyleOverride = new StyleOverride(
+                Annotation: new TextStyle("Missing ROI Font", 8, false, "#FFFFFFFF")),
+        };
+        var staleProjection = validProjection with
+        {
+            Id = Guid.NewGuid(),
+            SourceRevision = 3,
+        };
+        var document = new FigureExportDocument(
+            100,
+            100,
+            300,
+            [panel],
+            roiProjections:
+            [
+                new FigureRoiProjectionExportItem(validProjection, roi),
+                new FigureRoiProjectionExportItem(staleProjection, roi),
+            ]);
+
+        FigurePreflightResult result = FigurePreflight.Check(
+            new FigurePreflightContext(
+                document,
+                TargetFormat: "svg",
+                FontCatalog: new FixedFontCatalog(["Arial"])),
+            [source],
+            configuration: new FigurePreflightConfiguration { MinimumEffectiveDpi = 1 });
+
+        FigurePreflightIssue invalid = Assert.Single(
+            result.Issues,
+            issue => issue.Code == "INVALID_ROI_PROJECTION");
+        Assert.Equal(staleProjection.Id, invalid.ObjectId);
+        FigurePreflightIssue missingFont = Assert.Single(
+            result.Issues,
+            issue => issue.Code == "FONT_MISSING" && issue.ObjectId == validProjection.Id);
+        Assert.Contains("Missing ROI Font", missingFont.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AssistedReview_ReportsStyleContrastAndIntegrityRisksWithExplainableCodes()
     {
         SourceAsset source = CreateSource(SourceLinkState.Verified);
@@ -350,6 +422,87 @@ public sealed class FigurePreflightTests
         Assert.Contains(result.Issues, issue => issue.Code == "INTEGRITY_INCONSISTENT_ADJUSTMENT");
     }
 
+    [Theory]
+    [InlineData(PdfFontStrategy.EmbedSubsetWhenPermitted, FontEmbeddingPermission.Restricted, true, FigurePreflightSeverity.Error, "PDF_FONT_EMBEDDING_UNAVAILABLE")]
+    [InlineData(PdfFontStrategy.EmbedSubsetWhenPermitted, FontEmbeddingPermission.BitmapOnly, true, FigurePreflightSeverity.Error, "PDF_FONT_EMBEDDING_UNAVAILABLE")]
+    [InlineData(PdfFontStrategy.EmbedSubsetWhenPermitted, FontEmbeddingPermission.Editable, false, FigurePreflightSeverity.Error, "PDF_FONT_EMBEDDING_UNAVAILABLE")]
+    [InlineData(PdfFontStrategy.PreferEmbeddedWithOutlineFallback, FontEmbeddingPermission.Restricted, true, FigurePreflightSeverity.Warning, "PDF_FONT_OUTLINE_FALLBACK")]
+    [InlineData(PdfFontStrategy.PreferEmbeddedWithOutlineFallback, FontEmbeddingPermission.Editable, false, FigurePreflightSeverity.Warning, "PDF_FONT_OUTLINE_FALLBACK")]
+    public void PdfFontPreflight_RespectsEmbeddingRightsAndStrategy(
+        PdfFontStrategy strategy,
+        FontEmbeddingPermission permission,
+        bool subsettingPermitted,
+        FigurePreflightSeverity expectedSeverity,
+        string expectedCode)
+    {
+        Guid annotationId = Guid.NewGuid();
+        var annotation = new FigureAnnotationExportItem(
+            "text", 10, 10, 0, 0, "font", "#FF000000", "#00000000", 0,
+            "#FF000000", "Arial", 8, 1, false, true, 0)
+        {
+            Id = annotationId,
+        };
+        var document = new FigureExportDocument(
+            100,
+            100,
+            300,
+            [],
+            [annotation],
+            pdfFontStrategy: strategy);
+        var provider = new FixedPdfFontCapabilityProvider(permission, subsettingPermitted);
+
+        FigurePreflightResult result = FigurePreflight.Check(
+            new FigurePreflightContext(
+                document,
+                TargetFormat: "pdf",
+                PdfFontCapabilityProvider: provider),
+            []);
+
+        FigurePreflightIssue issue = Assert.Single(
+            result.Issues,
+            item => item.Code == expectedCode && item.ObjectId == annotationId);
+        Assert.Equal(expectedSeverity, issue.Severity);
+    }
+
+    [Fact]
+    public void PdfFontPreflight_PermittedTrueTypeSubsetHasNoFontStrategyIssue()
+    {
+        var document = new FigureExportDocument(
+            100,
+            100,
+            300,
+            [],
+            pdfFontStrategy: PdfFontStrategy.EmbedSubsetWhenPermitted);
+
+        FigurePreflightResult result = FigurePreflight.Check(
+            new FigurePreflightContext(
+                document,
+                TargetFormat: "pdf",
+                PdfFontCapabilityProvider: new FixedPdfFontCapabilityProvider(
+                    FontEmbeddingPermission.Editable,
+                    subsettingPermitted: true)),
+            []);
+
+        Assert.DoesNotContain(result.Issues, issue => issue.Code.StartsWith("PDF_FONT_", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PdfFontPreflight_OutlineDoesNotRequireCapabilityProvider()
+    {
+        var document = new FigureExportDocument(
+            100,
+            100,
+            300,
+            [],
+            pdfFontStrategy: PdfFontStrategy.OutlineText);
+
+        FigurePreflightResult result = FigurePreflight.Check(
+            new FigurePreflightContext(document, TargetFormat: "pdf"),
+            []);
+
+        Assert.DoesNotContain(result.Issues, issue => issue.Code.StartsWith("PDF_FONT_", StringComparison.Ordinal));
+    }
+
     private static SourceAsset CreateSource(SourceLinkState linkState) => new(
         Guid.NewGuid(),
         "sample.tif",
@@ -357,4 +510,18 @@ public sealed class FigurePreflightTests
         new SourceFingerprint(100, DateTimeOffset.UnixEpoch, new string('A', 64), null),
         new ImageMetadata(new PixelSize64(100, 100), 3, 8, "Bgr24"),
         linkState);
+
+    private sealed class FixedPdfFontCapabilityProvider(
+        FontEmbeddingPermission permission,
+        bool subsettingPermitted) : IPdfFontCapabilityProvider
+    {
+        public PdfFontCapability GetCapability(string effectiveFont, bool isBold) => new(
+            effectiveFont,
+            effectiveFont,
+            IsInstalled: true,
+            IsSupportedFontFormat: true,
+            permission,
+            subsettingPermitted,
+            EmbeddingImplementationAvailable: true);
+    }
 }

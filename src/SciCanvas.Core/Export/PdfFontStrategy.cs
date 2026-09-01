@@ -34,6 +34,23 @@ public sealed record PdfFontCapability(
     bool SubsettingPermitted,
     bool EmbeddingImplementationAvailable);
 
+public interface IPdfFontCapabilityProvider
+{
+    PdfFontCapability GetCapability(string effectiveFont, bool isBold);
+}
+
+public sealed record PdfFontExportOutcome(
+    string EffectiveFont,
+    bool IsBold,
+    bool Embedded,
+    bool Outlined,
+    string? FallbackReason = null);
+
+public interface IPdfFontExportReportProvider
+{
+    IReadOnlyList<PdfFontExportOutcome> LastPdfFontOutcomes { get; }
+}
+
 public sealed record PdfFontPlan(
     PdfFontStrategy Strategy,
     PdfTextRenderMode RenderMode,
@@ -117,7 +134,7 @@ public static class PdfFontStrategyPlanner
 
         return capability.EmbeddingImplementationAvailable
             ? null
-            : "the current PDF writer has no reliable subset/ToUnicode implementation";
+            : "the PDF writer cannot produce a reliable subset/ToUnicode mapping for this font face";
     }
 }
 
@@ -140,7 +157,7 @@ public static class OpenTypeEmbeddingRightsReader
         }
 
         uint signature = BinaryPrimitives.ReadUInt32BigEndian(fontBytes);
-        if (signature is not (0x00010000 or 0x4F54544F))
+        if (signature is not (0x00010000 or 0x74727565 or 0x4F54544F))
         {
             throw new NotSupportedException("Only single-font TrueType/OpenType sfnt files are supported for permission inspection.");
         }

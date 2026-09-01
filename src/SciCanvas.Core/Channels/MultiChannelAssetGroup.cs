@@ -12,7 +12,7 @@ public enum ChannelNameOrigin
 public sealed record ChannelGroupMember(
     Guid ChannelId,
     Guid AssetId,
-    int FrameIndex,
+    ChannelPlaneSelector PlaneSelector,
     string Name,
     string? Role,
     string Color,
@@ -22,10 +22,17 @@ public sealed record ChannelGroupMember(
 {
     public long? SourceRevision { get; init; }
 
+    public int FrameIndex => PlaneSelector.FrameIndex;
+
+    public ScientificPlaneRef PlaneRef => new(AssetId, SourceRevision, PlaneSelector);
+
     public ChannelGroupMember EnsureValid()
     {
+        ArgumentNullException.ThrowIfNull(PlaneSelector);
+        PlaneSelector.EnsureValid();
+        PlaneRef.EnsureValid();
         DisplaySettings.EnsureValid();
-        if (ChannelId == Guid.Empty || AssetId == Guid.Empty || FrameIndex < 0 ||
+        if (ChannelId == Guid.Empty || AssetId == Guid.Empty ||
             string.IsNullOrWhiteSpace(Name) || Name.Trim().Length > 128 ||
             Role?.Length > 128 || !ScientificStyleColor.ValidateColor(Color) ||
             !Enum.IsDefined(NameOrigin) || !IsNameConfirmed ||
@@ -73,7 +80,7 @@ public sealed record MultiChannelAssetGroup(
 
         if (Members.Count(member => member.AssetId == ReferenceAssetId) != 1 ||
             Members.Select(member => member.ChannelId).Distinct().Count() != Members.Count ||
-            Members.Select(member => (member.AssetId, member.FrameIndex)).Distinct().Count() != Members.Count ||
+            Members.Select(member => member.PlaneRef).Distinct().Count() != Members.Count ||
             Members.Select(member => member.Name.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase).Count() != Members.Count)
         {

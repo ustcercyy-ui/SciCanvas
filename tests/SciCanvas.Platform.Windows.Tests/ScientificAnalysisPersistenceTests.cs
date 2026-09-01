@@ -93,6 +93,10 @@ public sealed class ScientificAnalysisPersistenceTests
             AppliedThresholdNormalized = 0.5,
             MinimumAreaPixels = 1,
             MaximumCandidates = 10,
+            AnalysisMaxPixels = 4_000,
+            AnalysisMaxComponentsSafety = 200,
+            AnalysisMaxBoundaryPoints = 400,
+            AnalysisMemoryBudgetBytes = 8_000_000,
             ForegroundPixelCount = 1,
             TotalPixelCount = 4,
             Particles =
@@ -163,6 +167,10 @@ public sealed class ScientificAnalysisPersistenceTests
             item => item.Kind == "particleAnalysis");
         Assert.Equal(50003, Assert.Single(restoredParticles.Particles).RawMeanIntensity);
         Assert.Equal("brightParticles", restoredParticles.AnalysisMode);
+        Assert.Equal(4_000, restoredParticles.AnalysisMaxPixels);
+        Assert.Equal(200, restoredParticles.AnalysisMaxComponentsSafety);
+        Assert.Equal(400, restoredParticles.AnalysisMaxBoundaryPoints);
+        Assert.Equal(8_000_000, restoredParticles.AnalysisMemoryBudgetBytes);
     }
 
     [Fact]

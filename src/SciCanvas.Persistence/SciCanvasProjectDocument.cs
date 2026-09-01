@@ -21,6 +21,10 @@ public sealed class SciCanvasProjectDocument
 
     public IReadOnlyList<ProjectSourceSnapshot> Sources { get; init; } = [];
 
+    public IReadOnlyList<ProjectTabularDataAssetSnapshot> DataAssets { get; init; } = [];
+
+    public IReadOnlyList<ProjectPlotSnapshot> Plots { get; init; } = [];
+
     public IReadOnlyList<ProjectImageLayerSnapshot> Layers { get; init; } = [];
 
     public IReadOnlyList<ProjectCropPresetSnapshot> CropPresets { get; init; } = [];
@@ -118,6 +122,197 @@ public sealed class ProjectSourceSnapshot
     public long SourceRevision { get; init; } = 1;
 }
 
+public sealed class ProjectTabularDataAssetSnapshot
+{
+    public Guid Id { get; init; }
+
+    public string Name { get; init; } = string.Empty;
+
+    public string? SourcePath { get; init; }
+
+    public ProjectFingerprintSnapshot? Fingerprint { get; init; }
+
+    public long SourceRevision { get; init; } = 1;
+
+    public IReadOnlyList<ProjectDataColumnSnapshot> Columns { get; init; } = [];
+
+    public IReadOnlyList<ProjectTabularDataRowSnapshot> Rows { get; init; } = [];
+
+    public ProjectTabularImportMetadataSnapshot ImportMetadata { get; init; } = new();
+}
+
+public sealed class ProjectDataColumnSnapshot
+{
+    public Guid Id { get; init; }
+
+    public string Name { get; init; } = string.Empty;
+
+    public string DataType { get; init; } = "text";
+
+    public string? Unit { get; init; }
+
+    public string? Role { get; init; }
+}
+
+public sealed class ProjectTabularDataRowSnapshot
+{
+    public IReadOnlyList<ProjectTabularDataValueSnapshot> Values { get; init; } = [];
+}
+
+public sealed class ProjectTabularDataValueSnapshot
+{
+    public string? RawText { get; init; }
+
+    public double? NumericValue { get; init; }
+
+    public bool? BooleanValue { get; init; }
+
+    public DateTimeOffset? DateTimeValue { get; init; }
+}
+
+public sealed class ProjectTabularImportMetadataSnapshot
+{
+    public string Format { get; init; } = "csv";
+
+    public DateTimeOffset ImportedAt { get; init; }
+
+    public string EncodingName { get; init; } = "UTF-8";
+
+    public string? Delimiter { get; init; }
+
+    public string? SheetName { get; init; }
+
+    public string? SelectedRange { get; init; }
+
+    public int HeaderRow { get; init; } = 1;
+
+    public int DataRowCount { get; init; }
+
+    public int InferenceRowCount { get; init; }
+
+    public IReadOnlyList<string> OriginalHeaders { get; init; } = [];
+}
+
+public sealed class ProjectPlotSnapshot
+{
+    public Guid Id { get; init; }
+
+    public string Name { get; init; } = string.Empty;
+
+    public string PlotType { get; init; } = "line";
+
+    public ProjectPlotDataBindingSnapshot Data { get; init; } = new();
+
+    public ProjectPlotAxisSnapshot XAxis { get; init; } = new();
+
+    public ProjectPlotAxisSnapshot YAxis { get; init; } = new();
+
+    public ProjectPlotTypographySnapshot Typography { get; init; } = new();
+
+    public ProjectPlotSeriesStyleSnapshot Style { get; init; } = new();
+
+    public ProjectPlotFilterSnapshot? Filter { get; init; }
+
+    public IReadOnlyList<ProjectPlotTransformSnapshot> Transforms { get; init; } = [];
+}
+
+public sealed class ProjectPlotDataBindingSnapshot
+{
+    public Guid DataAssetId { get; init; }
+
+    public long SourceRevision { get; init; } = 1;
+
+    public Guid? XColumnId { get; init; }
+
+    public Guid YColumnId { get; init; }
+
+    public Guid? ValueColumnId { get; init; }
+
+    public ProjectPlotErrorBarBindingSnapshot? ErrorBars { get; init; }
+}
+
+public sealed class ProjectPlotErrorBarBindingSnapshot
+{
+    public string Mode { get; init; } = "symmetric";
+
+    public Guid? SymmetricColumnId { get; init; }
+
+    public Guid? LowerColumnId { get; init; }
+
+    public Guid? UpperColumnId { get; init; }
+}
+
+public sealed class ProjectPlotAxisSnapshot
+{
+    public string Title { get; init; } = string.Empty;
+
+    public string? Unit { get; init; }
+
+    public string Scale { get; init; } = "linear";
+
+    public double? Minimum { get; init; }
+
+    public double? Maximum { get; init; }
+
+    public double? MajorTickInterval { get; init; }
+
+    public int MinorTickCount { get; init; } = 4;
+}
+
+public sealed class ProjectPlotTypographySnapshot
+{
+    public ProjectTextStyleSnapshot Axis { get; init; } = new();
+
+    public ProjectTextStyleSnapshot Tick { get; init; } = new();
+
+    public ProjectTextStyleSnapshot Legend { get; init; } = new();
+
+    public ProjectTextStyleSnapshot Annotation { get; init; } = new();
+}
+
+public sealed class ProjectPlotSeriesStyleSnapshot
+{
+    public string LineColor { get; init; } = "#FF2563EB";
+
+    public double LineWidthPt { get; init; } = 1.25;
+
+    public string LineStyle { get; init; } = "solid";
+
+    public string MarkerShape { get; init; } = "circle";
+
+    public double MarkerSizePt { get; init; } = 5;
+
+    public string MarkerFill { get; init; } = "#FFFFFFFF";
+
+    public string MarkerStroke { get; init; } = "#FF2563EB";
+}
+
+public sealed class ProjectPlotFilterSnapshot
+{
+    public Guid ColumnId { get; init; }
+
+    public string Operator { get; init; } = "equal";
+
+    public string? Operand { get; init; }
+
+    public string Expression { get; init; } = string.Empty;
+
+    public int ExcludedRowCount { get; init; }
+}
+
+public sealed class ProjectPlotTransformSnapshot
+{
+    public Guid ColumnId { get; init; }
+
+    public string Kind { get; init; } = "offset";
+
+    public double? Parameter { get; init; }
+
+    public int? WindowSize { get; init; }
+
+    public string? Alignment { get; init; }
+}
+
 public sealed class ProjectMultiChannelAssetGroupSnapshot
 {
     public Guid Id { get; init; }
@@ -141,6 +336,8 @@ public sealed class ProjectChannelGroupMemberSnapshot
 
     public int FrameIndex { get; init; }
 
+    public ProjectChannelPlaneSelectorSnapshot? PlaneSelector { get; init; }
+
     public string Name { get; init; } = string.Empty;
 
     public string? Role { get; init; }
@@ -162,6 +359,23 @@ public sealed class ProjectChannelGroupMemberSnapshot
     public double Gamma { get; init; } = 1;
 
     public bool Invert { get; init; }
+
+    public string Colormap { get; init; } = "viridis";
+}
+
+public sealed class ProjectChannelPlaneSelectorSnapshot
+{
+    public string SourceKind { get; init; } = "externalAsset";
+
+    public int FrameIndex { get; init; }
+
+    public int? ComponentIndex { get; init; }
+
+    public int? ZIndex { get; init; }
+
+    public int? CIndex { get; init; }
+
+    public int? TIndex { get; init; }
 }
 
 public sealed class ProjectLinkGroupSnapshot
@@ -248,6 +462,8 @@ public sealed class ProjectRoiSnapshot
 
     public IReadOnlyList<ProjectMeasurementPointSnapshot> SourceGeometry { get; init; } = [];
 
+    public ProjectScientificValiditySnapshot Validity { get; init; } = new();
+
     public ProjectRoiStyleSnapshot Style { get; init; } = new();
 
     public ProjectRoiPropagationSnapshot? Propagation { get; init; }
@@ -267,6 +483,10 @@ public sealed class ProjectRoiStyleSnapshot
 
     public string? LabelFont { get; init; } = "Arial";
 
+    public double LabelFontSizePt { get; init; } = 7;
+
+    public bool LabelIsBold { get; init; }
+
     public string? LabelColor { get; init; } = "#FF22C7E8";
 }
 
@@ -279,6 +499,8 @@ public sealed class ProjectRoiPropagationSnapshot
     public Guid LinkGroupId { get; init; }
 
     public Guid MappingId { get; init; }
+
+    public double TargetCoverageFraction { get; init; } = 1;
 }
 public sealed class ProjectFingerprintSnapshot
 {
@@ -398,9 +620,24 @@ public sealed class ProjectPanelStyleOverrideSnapshot
 {
     public ProjectTextStyleSnapshot? PanelLabel { get; init; }
 
+    public ProjectTextStyleSnapshot? Annotation { get; init; }
+
     public ProjectTextStyleSnapshot? ScaleBarText { get; init; }
 
     public ProjectScaleBarStyleSnapshot? ScaleBar { get; init; }
+
+    public ProjectShapeStyleSnapshot? Shapes { get; init; }
+}
+
+public sealed class ProjectShapeStyleSnapshot
+{
+    public string StrokeColor { get; init; } = "#FFE53935";
+
+    public string FillColor { get; init; } = "#FFE53935";
+
+    public double FillOpacityPercent { get; init; }
+
+    public double StrokeWidthPt { get; init; } = 1.25;
 }
 
 public sealed class ProjectTextStyleSnapshot
@@ -771,6 +1008,10 @@ public sealed class ProjectScientificAnalysisSnapshot
 
     public IReadOnlyList<ProjectMeasurementPointSnapshot> PolygonMask { get; init; } = [];
 
+    public bool ClippedToImage { get; init; }
+
+    public double CoverageFraction { get; init; } = 1;
+
     public long? PixelCount { get; init; }
 
     public double? Minimum { get; init; }
@@ -800,6 +1041,14 @@ public sealed class ProjectScientificAnalysisSnapshot
     public int? MinimumAreaPixels { get; init; }
 
     public int? MaximumCandidates { get; init; }
+
+    public long? AnalysisMaxPixels { get; init; }
+
+    public int? AnalysisMaxComponentsSafety { get; init; }
+
+    public int? AnalysisMaxBoundaryPoints { get; init; }
+
+    public long? AnalysisMemoryBudgetBytes { get; init; }
 
     public long? ForegroundPixelCount { get; init; }
 
@@ -895,11 +1144,47 @@ public sealed class ProjectTemplateSnapshot
 
     public IReadOnlyList<ProjectFigureScientificObjectSnapshot> ScientificObjects { get; init; } = [];
 
+    public IReadOnlyList<ProjectRoiFigureProjectionSnapshot> RoiProjections { get; init; } = [];
+
     public IReadOnlyList<ProjectMeasurementOverlaySnapshot> MeasurementOverlays { get; init; } = [];
+
+    public IReadOnlyList<ProjectFigurePlotPanelSnapshot> PlotPanels { get; init; } = [];
 
     public ProjectGlobalStyleSnapshot? GlobalStyle { get; init; }
 
     public IReadOnlyList<ProjectScientificColorSnapshot> ScientificColors { get; init; } = [];
+}
+
+public sealed class ProjectFigurePlotPanelSnapshot
+{
+    public Guid Id { get; init; }
+
+    public Guid PlotId { get; init; }
+
+    public ProjectPixelRectSnapshot DestinationRect { get; init; } = new();
+
+    public string Label { get; init; } = string.Empty;
+
+    public bool Visible { get; init; } = true;
+
+    public bool Locked { get; init; }
+
+    public int ZIndex { get; init; }
+
+    public ProjectPanelStyleOverrideSnapshot? StyleOverride { get; init; }
+
+    public ProjectPlotTypographyOverrideSnapshot? TypographyOverride { get; init; }
+}
+
+public sealed class ProjectPlotTypographyOverrideSnapshot
+{
+    public ProjectTextStyleSnapshot? Axis { get; init; }
+
+    public ProjectTextStyleSnapshot? Tick { get; init; }
+
+    public ProjectTextStyleSnapshot? Legend { get; init; }
+
+    public ProjectTextStyleSnapshot? Annotation { get; init; }
 }
 
 public sealed class ProjectGlobalStyleSnapshot
@@ -1066,6 +1351,44 @@ public sealed class ProjectFigureScientificObjectSnapshot
     public string ChannelEntries { get; init; } = string.Empty;
 
     public Guid? ChannelId { get; init; }
+
+    public string ColorbarBindingState { get; init; } = "detached";
+
+    public string Orientation { get; init; } = "vertical";
+
+    public IReadOnlyList<ProjectColorbarTickSnapshot> Ticks { get; init; } = [];
+
+    public double ChannelLegendPadding { get; init; } = 5;
+}
+
+public sealed class ProjectColorbarTickSnapshot
+{
+    public double Value { get; init; }
+
+    public string Label { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Persisted Figure reference to a canonical ROI. Geometry is deliberately absent and is
+/// reconstructed from ProjectRoiSnapshot.SourceGeometry plus the referenced panel.
+/// </summary>
+public sealed class ProjectRoiFigureProjectionSnapshot
+{
+    public Guid Id { get; init; }
+
+    public Guid RoiId { get; init; }
+
+    public Guid PanelId { get; init; }
+
+    public Guid AssetId { get; init; }
+
+    public long SourceRevision { get; init; }
+
+    public ProjectPanelStyleOverrideSnapshot? StyleOverride { get; init; }
+
+    public bool Visible { get; init; } = true;
+
+    public int ZIndex { get; init; }
 }
 public sealed class ProjectAuditEntrySnapshot
 {

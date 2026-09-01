@@ -38,7 +38,11 @@ public sealed class CanonicalRoiTests
             1,
             [new(0, 0), new(10, 0), new(0, 10)]);
 
-        var result = PolygonRoiStatisticsCalculator.AnalyzeRawPlane(plane, roi, histogramBinCount: 16);
+        var result = PolygonRoiStatisticsCalculator.AnalyzeRawPlane(
+            plane,
+            roi,
+            new PixelSize64(10, 10),
+            histogramBinCount: 16);
 
         Assert.Equal(55, result.PixelCount);
         Assert.Equal(0, result.Minimum);
@@ -83,7 +87,11 @@ public sealed class CanonicalRoiTests
         RoiObject target = Assert.Single(RoiPropagationService.PropagatePolygon(
             reference,
             group,
-            new Dictionary<Guid, long> { [referenceId] = 1, [targetId] = 2 }));
+            new Dictionary<Guid, RoiSourceGeometryContext>
+            {
+                [referenceId] = new(1, new PixelSize64(10, 10)),
+                [targetId] = new(2, new PixelSize64(100, 100)),
+            }));
 
         Assert.Equal(targetId, target.AssetId);
         Assert.Equal(2, target.SourceRevision);
@@ -122,7 +130,11 @@ public sealed class CanonicalRoiTests
             RoiPropagationService.PropagatePolygon(
                 reference,
                 group,
-                new Dictionary<Guid, long> { [referenceId] = 1, [targetId] = 2 }));
+                new Dictionary<Guid, RoiSourceGeometryContext>
+                {
+                    [referenceId] = new(1, new PixelSize64(10, 10)),
+                    [targetId] = new(2, new PixelSize64(10, 10)),
+                }));
 
         Assert.Contains("mapping-revision-stale", exception.Message, StringComparison.Ordinal);
     }
@@ -165,7 +177,11 @@ public sealed class CanonicalRoiTests
         IReadOnlyList<RoiObject> propagated = RoiPropagationService.PropagatePolygon(
             referenceRoi,
             linkGroup,
-            new Dictionary<Guid, long> { [referenceId] = 1, [targetId] = 1 });
+            new Dictionary<Guid, RoiSourceGeometryContext>
+            {
+                [referenceId] = new(1, referenceAsset.Metadata.PixelSize),
+                [targetId] = new(1, targetAsset.Metadata.PixelSize),
+            });
         var reader = new ConstantRawPlaneReader(new Dictionary<Guid, byte>
         {
             [referenceId] = 10,
@@ -196,6 +212,140 @@ public sealed class CanonicalRoiTests
             Assert.True(result.Statistics.IsValid);
         });
         Assert.Equal(2, reader.RequestedAssets.Count);
+    }
+
+    [Fact]
+    public void PropagatedPartialPolygon_RecordsCoverageAndStatisticsExposeClipping()
+    {
+        Guid referenceId = Guid.NewGuid();
+        Guid targetId = Guid.NewGuid();
+        LinkingSpatialMapping mapping = LinkingSpatialMapping.CreateTranslation(
+            referenceId,
+            targetId,
+            1,
+            1,
+            -4,
+            0,
+            DateTimeOffset.Parse("2026-08-28T00:00:00Z"));
+        var linkGroup = new SpatialLinkGroup(
+            Guid.NewGuid(),
+            "partial",
+            referenceId,
+            [referenceId, targetId],
+            LinkingLinkSyncOptions.Roi,
+            [mapping]).EnsureValid();
+        RoiObject reference = CreatePolygon(
+            referenceId,
+            1,
+            [new(2, 2), new(6, 2), new(6, 6), new(2, 6)]);
+
+        RoiObject target = Assert.Single(RoiPropagationService.PropagatePolygon(
+            reference,
+            linkGroup,
+            new Dictionary<Guid, RoiSourceGeometryContext>
+            {
+                [referenceId] = new(1, new PixelSize64(10, 10)),
+                [targetId] = new(1, new PixelSize64(10, 10)),
+            }));
+
+        Assert.Equal(ScientificValidityState.ReviewRequired, target.Validity.State);
+        Assert.Equal(0.5, target.Propagation!.TargetCoverageFraction, 10);
+        var plane = new ImagePlane(
+            targetId,
+            1,
+            0,
+            new PixelRect64(0, 2, 2, 4),
+            new ScientificChannelDescriptor(
+                Guid.NewGuid(),
+                0,
+                "Ti",
+                ScientificChannelSourceKind.ExternalAsset,
+                ScientificSampleType.UInt8,
+                8),
+            new UInt8ImagePlaneSamples(Enumerable.Repeat((byte)42, 8)));
+
+        RoiStatisticsResult result = PolygonRoiStatisticsCalculator.AnalyzeRawPlane(
+            plane,
+            target,
+            new PixelSize64(10, 10),
+            histogramBinCount: 16,
+            linkGroupId: linkGroup.Id,
+            mappingId: mapping.Id);
+
+        Assert.True(result.ClippedToImage);
+        Assert.Equal(0.5, result.CoverageFraction, 10);
+        Assert.Equal(AnalysisResultState.ReviewRequired, result.Validity.State);
+        Assert.Equal(8, result.PixelCount);
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public async Task CrossChannelStatistics_FullyOutsideTargetFailsBeforeAnyRawRead()
+    {
+        Guid referenceId = Guid.NewGuid();
+        Guid targetId = Guid.NewGuid();
+        SourceAsset referenceAsset = CreateSource(referenceId, "Reference");
+        SourceAsset targetAsset = CreateSource(targetId, "Target");
+        LinkingSpatialMapping mapping = LinkingSpatialMapping.CreateTranslation(
+            referenceId,
+            targetId,
+            1,
+            1,
+            20,
+            0,
+            DateTimeOffset.Parse("2026-08-28T00:00:00Z"));
+        var linkGroup = new SpatialLinkGroup(
+            Guid.NewGuid(),
+            "outside",
+            referenceId,
+            [referenceId, targetId],
+            LinkingLinkSyncOptions.Roi,
+            [mapping]).EnsureValid();
+        var channelGroup = new MultiChannelAssetGroup(
+            Guid.NewGuid(),
+            "channels",
+            referenceId,
+            [
+                Member(Guid.NewGuid(), referenceId, "Reference"),
+                Member(Guid.NewGuid(), targetId, "Target"),
+            ],
+            SameFieldOfViewConfirmed: true).EnsureValid();
+        RoiObject reference = CreatePolygon(
+            referenceId,
+            1,
+            [new(1, 1), new(4, 1), new(4, 4), new(1, 4)]);
+        IReadOnlyList<RoiObject> propagated = RoiPropagationService.PropagatePolygon(
+            reference,
+            linkGroup,
+            new Dictionary<Guid, RoiSourceGeometryContext>
+            {
+                [referenceId] = new(1, referenceAsset.Metadata.PixelSize),
+                [targetId] = new(1, targetAsset.Metadata.PixelSize),
+            });
+        RoiObject outside = Assert.Single(propagated);
+        Assert.Equal(0, outside.Propagation!.TargetCoverageFraction);
+        Assert.Equal(ScientificValidityState.Invalid, outside.Validity.State);
+        var reader = new ConstantRawPlaneReader(new Dictionary<Guid, byte>
+        {
+            [referenceId] = 10,
+            [targetId] = 20,
+        });
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            CrossChannelRoiStatisticsService.AnalyzeAsync(
+                reference,
+                propagated,
+                linkGroup,
+                channelGroup,
+                new Dictionary<Guid, RoiAnalysisSource>
+                {
+                    [referenceId] = new(referenceAsset, 1),
+                    [targetId] = new(targetAsset, 1),
+                },
+                reader));
+
+        Assert.Contains("fully outside", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(reader.RequestedAssets);
     }
 
     private static RoiObject CreatePolygon(
@@ -231,7 +381,7 @@ public sealed class CanonicalRoiTests
     private static ChannelGroupMember Member(Guid channelId, Guid assetId, string name) => new ChannelGroupMember(
         channelId,
         assetId,
-        0,
+        ChannelPlaneSelector.ExternalAsset(frameIndex: 0),
         name,
         null,
         "#FFFFFFFF",

@@ -228,7 +228,9 @@ public sealed class SourceAssetItemViewModel : ObservableObject
             Calibration.Calibration,
             Measurements.Count + 1,
             pathPoints,
-            sourceRevision ?? SourceRevision)
+            sourceRevision ?? SourceRevision,
+            Width,
+            Height)
         {
             StrokeColor = strokeColor ?? "#FF22C7E8",
             StrokeWidthPixels = strokeWidthPixels,

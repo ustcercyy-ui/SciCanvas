@@ -27,6 +27,8 @@ public sealed class CliV24ExportIntegrationTests
         Guid redChannelId = Guid.NewGuid();
         Guid greenChannelId = Guid.NewGuid();
         Guid groupId = Guid.NewGuid();
+        Guid linkGroupId = Guid.NewGuid();
+        Guid mappingId = Guid.NewGuid();
         Guid panelId = Guid.NewGuid();
         Guid measurementId = Guid.NewGuid();
         Guid colorbarId = Guid.NewGuid();
@@ -65,7 +67,7 @@ public sealed class CliV24ExportIntegrationTests
                     Id = groupId,
                     Name = "EDS composite",
                     ReferenceAssetId = redSourceId,
-                    SameFieldOfViewConfirmed = true,
+                    SameFieldOfViewConfirmed = false,
                     Members =
                     [
                         new ProjectChannelGroupMemberSnapshot
@@ -91,6 +93,37 @@ public sealed class CliV24ExportIntegrationTests
                             Color = "#FF00FF00",
                             DisplayMinimum = 0,
                             DisplayMaximum = ushort.MaxValue,
+                        },
+                    ],
+                },
+            ],
+            LinkGroups =
+            [
+                new ProjectLinkGroupSnapshot
+                {
+                    Id = linkGroupId,
+                    Name = "registered EDS",
+                    ReferenceAssetId = redSourceId,
+                    AssetIds = [redSourceId, greenSourceId],
+                    SyncOptions = new ProjectLinkSyncOptionsSnapshot
+                    {
+                        Crop = true,
+                        Roi = true,
+                        ColorScale = false,
+                    },
+                    Mappings =
+                    [
+                        new ProjectSpatialMappingSnapshot
+                        {
+                            Id = mappingId,
+                            SourceAssetId = redSourceId,
+                            TargetAssetId = greenSourceId,
+                            SourceRevision = 3,
+                            TargetRevision = 4,
+                            Kind = "identity",
+                            Matrix = [1, 0, 0, 0, 1, 0, 0, 0, 1],
+                            Origin = "userDeclaredIdentity",
+                            CreatedAt = DateTimeOffset.UnixEpoch.AddDays(1),
                         },
                     ],
                 },
@@ -209,6 +242,16 @@ public sealed class CliV24ExportIntegrationTests
         Assert.Equal(3, redChannel.GetProperty("sourceRevision").GetInt64());
         Assert.Equal(16, redChannel.GetProperty("bitDepth").GetInt32());
         Assert.Equal(ushort.MaxValue, redChannel.GetProperty("displayMaximum").GetDouble());
+        JsonElement greenChannel = channels.EnumerateArray().Single(item =>
+            item.GetProperty("channelId").GetGuid() == greenChannelId);
+        Assert.Equal(mappingId, greenChannel.GetProperty("mappingId").GetGuid());
+        Assert.Equal("Identity", greenChannel.GetProperty("mappingKind").GetString());
+        Assert.Equal("Bilinear", greenChannel.GetProperty("interpolation").GetString());
+        Assert.Equal("Transparent", greenChannel.GetProperty("borderPolicy").GetString());
+        Assert.Equal(3, greenChannel.GetProperty("mappingSourceRevision").GetInt64());
+        Assert.Equal(4, greenChannel.GetProperty("mappingTargetRevision").GetInt64());
+        Assert.Equal(redSourceId, greenChannel.GetProperty("referenceGrid").GetProperty("assetId").GetGuid());
+        Assert.Equal(mappingId, root.GetProperty("registrations")[0].GetProperty("mappingId").GetGuid());
         Assert.Equal(redChannelId, root.GetProperty("colorbars")[0].GetProperty("channelId").GetGuid());
         Assert.Equal(2, root.GetProperty("channelLegends")[0].GetProperty("entries").GetArrayLength());
         Assert.Equal(1, root.GetProperty("measurementOverlays").GetArrayLength());

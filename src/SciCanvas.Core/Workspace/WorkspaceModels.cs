@@ -220,5 +220,24 @@ public sealed record ScientificProject(
                 }
             }
         }
+
+        FigurePanel[] allPanels = Figures.Values.SelectMany(figure => figure.Panels).ToArray();
+        if (allPanels.Select(panel => panel.Id).Distinct().Count() != allPanels.Length)
+        {
+            throw new InvalidOperationException("Project 包含跨 Figure 重复的 Panel ID。");
+        }
+
+        foreach (RoiFigureProjectionObject projection in ScientificObjects.Values.OfType<RoiFigureProjectionObject>())
+        {
+            if (!ScientificObjects.TryGetValue(projection.RoiId, out ScientificObject? candidate) ||
+                candidate is not RoiObject roi ||
+                allPanels.SingleOrDefault(panel => panel.Id == projection.PanelId) is not FigurePanel panel)
+            {
+                throw new InvalidOperationException(
+                    "ROI Figure Projection 引用了不存在的 canonical ROI 或 Panel。");
+            }
+
+            projection.EnsureValid(roi, panel);
+        }
     }
 }

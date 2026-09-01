@@ -13,6 +13,10 @@ public enum LinkSyncOptions
     ColorScale = 1 << 4,
 }
 
+/// <summary>
+/// Spatial asset-level relationship only. A mapping is shared by every scientific plane
+/// of an asset; frame/component identity is carried separately by ScientificPlaneRef.
+/// </summary>
 public sealed record LinkGroup(
     Guid Id,
     string Name,

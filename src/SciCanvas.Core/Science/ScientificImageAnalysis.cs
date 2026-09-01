@@ -153,6 +153,12 @@ public sealed record RoiStatisticsResult : ScientificImageAnalysisResult
     /// <summary>Optional canonical polygon in absolute source-pixel coordinates.</summary>
     public IReadOnlyList<MeasurementPoint> PolygonMask { get; init; } = [];
 
+    /// <summary>True only when the canonical ROI was explicitly intersected with the source image.</summary>
+    public bool ClippedToImage { get; init; }
+
+    /// <summary>Continuous canonical ROI geometry fraction covered by the source image.</summary>
+    public double CoverageFraction { get; init; } = 1;
+
     public int SourceBitDepth { get; init; } = 8;
 
     public long PixelCount { get; init; }
@@ -178,6 +184,11 @@ public sealed record RoiStatisticsResult : ScientificImageAnalysisResult
             ? PixelCount == Region.Width * Region.Height
             : PolygonMask.Count >= 3 && PolygonMask.All(point =>
                 double.IsFinite(point.X) && double.IsFinite(point.Y))) &&
+        double.IsFinite(CoverageFraction) &&
+        CoverageFraction is > 0 and <= 1 &&
+        (ClippedToImage
+            ? CoverageFraction < 1
+            : Math.Abs(CoverageFraction - 1) <= 1e-12) &&
         double.IsFinite(Minimum) &&
         double.IsFinite(Maximum) &&
         double.IsFinite(Mean) &&
@@ -212,7 +223,8 @@ public static class ScientificAnalysisTable
         "DistancePixels", "PhysicalDistance", "DistanceUnit",
         "RawIntensity", "NormalizedIntensity", "PixelCount",
         "Minimum", "Maximum", "Mean", "StandardDeviation",
-        "IntegratedIntensity", "HistogramLower", "HistogramUpper",
+        "IntegratedIntensity", "ClippedToImage", "CoverageFraction",
+        "HistogramLower", "HistogramUpper",
         "HistogramCount", "AnalyzerId", "AnalyzedAt",
         "AnalysisMode", "AppliedThreshold", "AreaFraction", "ParticleCount",
         "ParticleAreaPixels", "ParticlePerimeterPixels", "EquivalentDiameterPixels",
@@ -372,6 +384,8 @@ public static class ScientificAnalysisTable
             mean,
             standardDeviation,
             integratedIntensity,
+            result is RoiStatisticsResult roi ? roi.ClippedToImage : null,
+            result is RoiStatisticsResult roiCoverage ? roiCoverage.CoverageFraction : null,
             histogramLower,
             histogramUpper,
             histogramCount,

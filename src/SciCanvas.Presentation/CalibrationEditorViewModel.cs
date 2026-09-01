@@ -18,13 +18,17 @@ public sealed class CalibrationEditorViewModel : ObservableObject
     private bool _hasReferenceLine;
     private bool _isRestoring;
     private string? _metadataReviewMessage;
+    private readonly double _sourceMaximumX;
+    private readonly double _sourceMaximumY;
 
     public CalibrationEditorViewModel(Guid sourceAssetId, ImageMetadata metadata)
         : this(
             sourceAssetId,
             metadata?.PhysicalSizeX,
             metadata?.PhysicalSizeY,
-            metadata?.PhysicalUnit)
+            metadata?.PhysicalUnit,
+            metadata?.PixelSize.Width ?? double.PositiveInfinity,
+            metadata?.PixelSize.Height ?? double.PositiveInfinity)
     {
         ArgumentNullException.ThrowIfNull(metadata);
         SetFromMetadata(ImageMetadataCalibrationMapper.Map(sourceAssetId, metadata));
@@ -34,7 +38,9 @@ public sealed class CalibrationEditorViewModel : ObservableObject
         Guid sourceAssetId,
         double? metadataUnitsPerPixelX,
         double? metadataUnitsPerPixelY,
-        string? metadataUnit)
+        string? metadataUnit,
+        double sourceWidth = double.PositiveInfinity,
+        double sourceHeight = double.PositiveInfinity)
     {
         if (sourceAssetId == Guid.Empty)
         {
@@ -42,9 +48,21 @@ public sealed class CalibrationEditorViewModel : ObservableObject
         }
 
         _sourceAssetId = sourceAssetId;
+        _sourceMaximumX = double.IsFinite(sourceWidth) && sourceWidth > 0
+            ? Math.Max(0, sourceWidth - 1)
+            : double.PositiveInfinity;
+        _sourceMaximumY = double.IsFinite(sourceHeight) && sourceHeight > 0
+            ? Math.Max(0, sourceHeight - 1)
+            : double.PositiveInfinity;
         AvailableUnits = ScientificLengthUnits.Supported;
         ApplyReferenceCommand = new RelayCommand(ApplyReference, () => CanApplyReference);
         ClearCalibrationCommand = new RelayCommand(ClearCalibration, () => IsCalibrated);
+        SetReferenceHorizontalCommand = new RelayCommand(
+            () => ReferenceAngleDegrees = 0,
+            () => HasReferenceLine);
+        SetReferenceVerticalCommand = new RelayCommand(
+            () => ReferenceAngleDegrees = 90,
+            () => HasReferenceLine);
         SetFromMetadata(metadataUnitsPerPixelX, metadataUnitsPerPixelY, metadataUnit);
     }
 
@@ -57,6 +75,10 @@ public sealed class CalibrationEditorViewModel : ObservableObject
     public RelayCommand ApplyReferenceCommand { get; }
 
     public RelayCommand ClearCalibrationCommand { get; }
+
+    public RelayCommand SetReferenceHorizontalCommand { get; }
+
+    public RelayCommand SetReferenceVerticalCommand { get; }
 
     public double UnitsPerPixelX
     {
@@ -161,6 +183,16 @@ public sealed class CalibrationEditorViewModel : ObservableObject
         Math.Pow(ReferenceEndX - ReferenceStartX, 2) +
         Math.Pow(ReferenceEndY - ReferenceStartY, 2));
 
+    public double ReferenceAngleDegrees
+    {
+        get => HasReferenceLine
+            ? NormalizeAngle(Math.Atan2(
+                ReferenceEndY - ReferenceStartY,
+                ReferenceEndX - ReferenceStartX) * 180.0 / Math.PI)
+            : 0;
+        set => SetReferenceAngle(value);
+    }
+
     public double ReferencePhysicalLength
     {
         get => _referencePhysicalLength;
@@ -224,6 +256,50 @@ public sealed class CalibrationEditorViewModel : ObservableObject
             HasReferenceLine = false;
         }
 
+        NotifyReferenceChanged();
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void SetReferenceAngle(double angleDegrees)
+    {
+        if (!HasReferenceLine || !double.IsFinite(angleDegrees))
+        {
+            return;
+        }
+
+        double length = ReferencePixelLength;
+        if (length < 0.001)
+        {
+            return;
+        }
+
+        double radians = NormalizeAngle(angleDegrees) * Math.PI / 180.0;
+        double cosine = Math.Cos(radians);
+        double sine = Math.Sin(radians);
+        double maximumLength = Math.Min(
+            Math.Abs(cosine) < 1e-9 ? double.PositiveInfinity : _sourceMaximumX / Math.Abs(cosine),
+            Math.Abs(sine) < 1e-9 ? double.PositiveInfinity : _sourceMaximumY / Math.Abs(sine));
+        length = Math.Min(length, maximumLength);
+
+        double centerX = (ReferenceStartX + ReferenceEndX) / 2;
+        double centerY = (ReferenceStartY + ReferenceEndY) / 2;
+        double halfX = cosine * length / 2;
+        double halfY = sine * length / 2;
+        double startX = centerX - halfX;
+        double startY = centerY - halfY;
+        double endX = centerX + halfX;
+        double endY = centerY + halfY;
+        double shiftX = double.IsFinite(_sourceMaximumX)
+            ? Math.Clamp(0, -Math.Min(startX, endX), _sourceMaximumX - Math.Max(startX, endX))
+            : 0;
+        double shiftY = double.IsFinite(_sourceMaximumY)
+            ? Math.Clamp(0, -Math.Min(startY, endY), _sourceMaximumY - Math.Max(startY, endY))
+            : 0;
+
+        ReferenceStartX = startX + shiftX;
+        ReferenceStartY = startY + shiftY;
+        ReferenceEndX = endX + shiftX;
+        ReferenceEndY = endY + shiftY;
         NotifyReferenceChanged();
         EditCompleted?.Invoke(this, EventArgs.Empty);
     }
@@ -394,8 +470,11 @@ public sealed class CalibrationEditorViewModel : ObservableObject
         OnPropertyChanged(nameof(ReferenceLabel));
         OnPropertyChanged(nameof(ReferenceLabelX));
         OnPropertyChanged(nameof(ReferenceLabelY));
+        OnPropertyChanged(nameof(ReferenceAngleDegrees));
         OnPropertyChanged(nameof(CanApplyReference));
         ApplyReferenceCommand.NotifyCanExecuteChanged();
+        SetReferenceHorizontalCommand.NotifyCanExecuteChanged();
+        SetReferenceVerticalCommand.NotifyCanExecuteChanged();
         if (!_isRestoring)
         {
             Changed?.Invoke(this, EventArgs.Empty);
@@ -438,4 +517,19 @@ public sealed class CalibrationEditorViewModel : ObservableObject
 
     private static double Distance(double x1, double y1, double x2, double y2) =>
         Math.Sqrt(Math.Pow(x2 - x1, 2) + Math.Pow(y2 - y1, 2));
+
+    private static double NormalizeAngle(double value)
+    {
+        double normalized = value % 360;
+        if (normalized >= 180)
+        {
+            normalized -= 360;
+        }
+        else if (normalized < -180)
+        {
+            normalized += 360;
+        }
+
+        return normalized;
+    }
 }

@@ -96,6 +96,29 @@ public sealed class MetadataCalibrationTests
         Assert.Equal(CalibrationOrigin.None, item.Calibration.Origin);
     }
 
+    [Fact]
+    public void ReferenceLineDirection_CanBeAdjustedAfterDrawing()
+    {
+        var calibration = new CalibrationEditorViewModel(
+            Guid.NewGuid(),
+            metadataUnitsPerPixelX: null,
+            metadataUnitsPerPixelY: null,
+            metadataUnit: null,
+            sourceWidth: 200,
+            sourceHeight: 160);
+        calibration.BeginReferenceLine(50, 50);
+        calibration.UpdateReferenceLine(150, 50);
+        calibration.CompleteReferenceLine();
+        double originalLength = calibration.ReferencePixelLength;
+
+        calibration.ReferenceAngleDegrees = 90;
+
+        Assert.Equal(90, calibration.ReferenceAngleDegrees, 8);
+        Assert.Equal(calibration.ReferenceStartX, calibration.ReferenceEndX, 8);
+        Assert.Equal(originalLength, calibration.ReferencePixelLength, 8);
+        Assert.True(calibration.SetReferenceHorizontalCommand.CanExecute(null));
+    }
+
     private static CoreImageMetadata CreateMetadata(double x, double y, string unit) => new(
         new PixelSize64(2, 2),
         1,

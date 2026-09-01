@@ -228,7 +228,8 @@ public sealed class FigureMeasurementOverlayViewModel : ObservableObject
         panel.FrameIndex,
         panel.IsInset,
         panel.StyleOverride,
-        panel.Id);
+        panel.Id,
+        SourceRevision: panel.Source.SourceRevision);
 
     private static DoubleCollection Freeze(double[] values)
     {

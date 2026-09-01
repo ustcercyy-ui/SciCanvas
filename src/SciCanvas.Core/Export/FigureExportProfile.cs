@@ -105,6 +105,12 @@ public sealed record FigureExportProfile
                 EndY = annotation.EndY * scaleY,
             })
             .ToArray();
+        FigurePlotPanelExportItem[] plotPanels = source.PlotPanels
+            .Select(panel => panel with
+            {
+                DestinationRect = ScaleRect(panel.DestinationRect, scaleX, scaleY),
+            })
+            .ToArray();
 
         return new FigureExportDocument(
             width,
@@ -117,7 +123,9 @@ public sealed record FigureExportProfile
             source.GlobalStyle,
             source.MeasurementOverlays,
             source.ScientificObjects,
-            PdfFontStrategy);
+            source.RoiProjections,
+            PdfFontStrategy,
+            plotPanels);
     }
 
     public static IReadOnlyList<FigureExportProfile> BuiltIns { get; } =

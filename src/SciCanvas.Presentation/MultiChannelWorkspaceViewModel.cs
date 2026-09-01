@@ -381,13 +381,18 @@ public sealed class MultiChannelWorkspaceViewModel : ObservableObject
             members.Add(new ChannelGroupMember(
                 channelId,
                 candidate.Source.Asset.Id,
-                FrameIndex: 0,
+                candidate.Source.Asset.Metadata.Channels > 1
+                    ? ChannelPlaneSelector.InterleavedComponent(frameIndex: 0, componentIndex: 0)
+                    : ChannelPlaneSelector.ExternalAsset(frameIndex: 0),
                 candidate.Name.Trim(),
                 candidate.IsReference ? "Reference" : candidate.Role.Trim(),
                 ScientificStyleColor.NormalizeColor(candidate.Color),
                 candidate.NameOrigin,
                 candidate.IsNameConfirmed,
-                display));
+                display)
+            {
+                SourceRevision = candidate.Source.SourceRevision,
+            });
         }
 
         var model = new MultiChannelAssetGroup(
@@ -780,6 +785,13 @@ public sealed class ChannelGroupMemberViewModel : ObservableObject
     private double _displayMaximum;
     private double _gamma;
     private bool _invert;
+    private string _colormap;
+    private ScientificChannelSourceKind _sourceKind;
+    private int _frameIndex;
+    private int? _componentIndex;
+    private readonly int? _zIndex;
+    private readonly int? _cIndex;
+    private readonly int? _tIndex;
 
     public ChannelGroupMemberViewModel(ChannelGroupMember model, SourceAssetItemViewModel source)
     {
@@ -787,8 +799,13 @@ public sealed class ChannelGroupMemberViewModel : ObservableObject
         Source = source ?? throw new ArgumentNullException(nameof(source));
         ChannelId = model.ChannelId;
         AssetId = model.AssetId;
-        FrameIndex = model.FrameIndex;
         SourceRevision = model.SourceRevision ?? source.SourceRevision;
+        _sourceKind = model.PlaneSelector.SourceKind;
+        _frameIndex = model.PlaneSelector.FrameIndex;
+        _componentIndex = model.PlaneSelector.ComponentIndex;
+        _zIndex = model.PlaneSelector.ZIndex;
+        _cIndex = model.PlaneSelector.CIndex;
+        _tIndex = model.PlaneSelector.TIndex;
         _name = model.Name;
         _role = model.Role ?? string.Empty;
         _color = model.Color;
@@ -800,6 +817,7 @@ public sealed class ChannelGroupMemberViewModel : ObservableObject
         _displayMaximum = model.DisplaySettings.DisplayMaximum;
         _gamma = model.DisplaySettings.Gamma;
         _invert = model.DisplaySettings.Invert;
+        _colormap = model.DisplaySettings.Colormap;
     }
 
     public event EventHandler? Changed;
@@ -810,7 +828,71 @@ public sealed class ChannelGroupMemberViewModel : ObservableObject
 
     public Guid AssetId { get; }
 
-    public int FrameIndex { get; }
+    public IReadOnlyList<ScientificChannelSourceKind> SourceKindChoices =>
+        Source.Asset.Metadata.Channels > 1
+            ? [ScientificChannelSourceKind.InterleavedComponent]
+            : Source.Asset.Metadata.FrameCount > 1
+                ? [ScientificChannelSourceKind.ExternalAsset, ScientificChannelSourceKind.FramePlane]
+                : [ScientificChannelSourceKind.ExternalAsset];
+
+    public ScientificChannelSourceKind SourceKind
+    {
+        get => _sourceKind;
+        set
+        {
+            ScientificChannelSourceKind normalized = SourceKindChoices.Contains(value)
+                ? value
+                : SourceKindChoices[0];
+            if (SetProperty(ref _sourceKind, normalized))
+            {
+                ComponentIndex = normalized == ScientificChannelSourceKind.InterleavedComponent
+                    ? Math.Clamp(_componentIndex ?? 0, 0, Math.Max(0, Source.Asset.Metadata.Channels - 1))
+                    : null;
+                OnPropertyChanged(nameof(ComponentIndexVisibility));
+                OnPropertyChanged(nameof(PlaneIdentityText));
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public int FrameIndex
+    {
+        get => _frameIndex;
+        set
+        {
+            int normalized = Math.Clamp(value, 0, Math.Max(0, Source.Asset.Metadata.FrameCount - 1));
+            if (SetProperty(ref _frameIndex, normalized))
+            {
+                OnPropertyChanged(nameof(PlaneIdentityText));
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public int? ComponentIndex
+    {
+        get => _componentIndex;
+        set
+        {
+            int? normalized = SourceKind == ScientificChannelSourceKind.InterleavedComponent
+                ? Math.Clamp(value ?? 0, 0, Math.Max(0, Source.Asset.Metadata.Channels - 1))
+                : null;
+            if (SetProperty(ref _componentIndex, normalized))
+            {
+                OnPropertyChanged(nameof(PlaneIdentityText));
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public Visibility ComponentIndexVisibility =>
+        SourceKind == ScientificChannelSourceKind.InterleavedComponent
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+    public string PlaneIdentityText =>
+        $"{SourceKind} · frame {FrameIndex}" +
+        (ComponentIndex is int component ? $" · component {component}" : string.Empty);
 
     public long SourceRevision { get; }
 
@@ -892,6 +974,14 @@ public sealed class ChannelGroupMemberViewModel : ObservableObject
         set => SetAndNotify(ref _invert, value);
     }
 
+    public IReadOnlyList<string> ColormapChoices => ScientificColormap.Supported;
+
+    public string Colormap
+    {
+        get => _colormap;
+        set => SetAndNotify(ref _colormap, ScientificColormap.Normalize(value));
+    }
+
     public ChannelGroupMember ToModel()
     {
         string normalizedColor = ScientificStyleColor.NormalizeColor(Color);
@@ -903,11 +993,19 @@ public sealed class ChannelGroupMemberViewModel : ObservableObject
             DisplayMinimum,
             DisplayMaximum,
             Gamma,
-            Invert);
+            Invert,
+            Colormap);
+        var planeSelector = new ChannelPlaneSelector(
+            SourceKind,
+            FrameIndex,
+            ComponentIndex,
+            _zIndex,
+            _cIndex,
+            _tIndex).EnsureValid();
         return new ChannelGroupMember(
             ChannelId,
             AssetId,
-            FrameIndex,
+            planeSelector,
             Name.Trim(),
             string.IsNullOrWhiteSpace(Role) ? null : Role.Trim(),
             normalizedColor,

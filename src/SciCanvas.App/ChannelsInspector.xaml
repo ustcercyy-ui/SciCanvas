@@ -133,6 +133,33 @@
                                                     <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="7" />
                                                     <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="7" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="Plane source" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                                    <ComboBox Margin="0,2,0,0"
+                                                              ItemsSource="{Binding SourceKindChoices}"
+                                                              SelectedItem="{Binding SourceKind}" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="2">
+                                                    <TextBlock Text="Frame (0-based)" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                                    <TextBox Margin="0,2,0,0" Text="{Binding FrameIndex, UpdateSourceTrigger=PropertyChanged}" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="4" Visibility="{Binding ComponentIndexVisibility}">
+                                                    <TextBlock Text="Component (0-based)" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                                    <TextBox Margin="0,2,0,0" Text="{Binding ComponentIndex, UpdateSourceTrigger=PropertyChanged}" />
+                                                </StackPanel>
+                                            </Grid>
+                                            <TextBlock Margin="0,3,0,0"
+                                                       Text="{Binding PlaneIdentityText}"
+                                                       Foreground="#8CE5F4"
+                                                       FontSize="8" />
+                                            <Grid Margin="0,7,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="7" />
+                                                    <ColumnDefinition Width="*" />
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel>
                                                     <TextBlock Text="Color (#AARRGGBB)" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
@@ -164,6 +191,12 @@
                                                     <TextBox Margin="0,2,0,0" Text="{Binding Gamma, UpdateSourceTrigger=PropertyChanged}" />
                                                 </StackPanel>
                                             </Grid>
+                                            <StackPanel Margin="0,6,0,0">
+                                                <TextBlock Text="Colormap" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                                <ComboBox Margin="0,2,0,0"
+                                                          ItemsSource="{Binding ColormapChoices}"
+                                                          SelectedItem="{Binding Colormap, UpdateSourceTrigger=PropertyChanged}" />
+                                            </StackPanel>
                                             <CheckBox Margin="0,6,0,0" IsChecked="{Binding Invert}" Content="Invert display" FontSize="9" />
                                         </StackPanel>
                                     </Border>
@@ -274,7 +307,7 @@
                     <StackPanel Visibility="{Binding WizardStep6Visibility}">
                         <TextBlock Text="Group name" Foreground="{DynamicResource MutedBrush}" FontSize="9" />
                         <TextBox Margin="0,4,0,0" Text="{Binding GroupName, UpdateSourceTrigger=PropertyChanged}" />
-                        <TextBlock Margin="0,8,0,0" Text="组将保存 AssetId、ChannelId、FrameIndex、名称来源、颜色和完整显示参数。" Foreground="{DynamicResource MutedBrush}" FontSize="9" TextWrapping="Wrap" />
+                        <TextBlock Margin="0,8,0,0" Text="组将保存 AssetId、ChannelId、结构化 PlaneSelector（source/frame/component/Z/C/T）、名称来源、颜色和完整显示参数。" Foreground="{DynamicResource MutedBrush}" FontSize="9" TextWrapping="Wrap" />
                         <Button Margin="0,10,0,0" Command="{Binding CreateGroupCommand}" Style="{DynamicResource AccentButtonStyle}" Content="创建 EDS Map Group" />
                     </StackPanel>
 

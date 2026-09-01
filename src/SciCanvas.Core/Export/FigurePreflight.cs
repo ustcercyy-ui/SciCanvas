@@ -57,7 +57,8 @@ public sealed record FigurePreflightContext(
     string? TargetFormat = null,
     FigureExportProfile? Profile = null,
     PanelLabelScheme LabelScheme = PanelLabelScheme.Custom,
-    IFontCatalog? FontCatalog = null)
+    IFontCatalog? FontCatalog = null,
+    IPdfFontCapabilityProvider? PdfFontCapabilityProvider = null)
 {
     public int BitDepth => Profile?.BitDepth ?? Document.BitDepth;
 
@@ -111,20 +112,41 @@ public static class FigurePreflight
         List<FigurePreflightIssue> issues = [];
 
         if (context.EffectiveTargetFormat == "pdf" &&
-            document.PdfFontStrategy == PdfFontStrategy.EmbedSubsetWhenPermitted)
+            document.PdfFontStrategy != PdfFontStrategy.OutlineText)
         {
-            issues.Add(new FigurePreflightIssue(
-                FigurePreflightSeverity.Error,
-                "PDF_FONT_EMBEDDING_UNAVAILABLE",
-                "Strict PDF font embedding is unavailable in the current writer; choose OutlineText or the explicit outline-fallback strategy."));
-        }
-        else if (context.EffectiveTargetFormat == "pdf" &&
-                 document.PdfFontStrategy == PdfFontStrategy.PreferEmbeddedWithOutlineFallback)
-        {
-            issues.Add(new FigurePreflightIssue(
-                FigurePreflightSeverity.Warning,
-                "PDF_FONT_OUTLINE_FALLBACK",
-                "The current PDF writer cannot reliably subset/embed fonts with ToUnicode; text will be outlined and the fallback is reported."));
+            if (context.PdfFontCapabilityProvider is null)
+            {
+                bool strict = document.PdfFontStrategy == PdfFontStrategy.EmbedSubsetWhenPermitted;
+                issues.Add(new FigurePreflightIssue(
+                    strict ? FigurePreflightSeverity.Error : FigurePreflightSeverity.Warning,
+                    strict ? "PDF_FONT_CAPABILITY_UNAVAILABLE" : "PDF_FONT_OUTLINE_FALLBACK",
+                    strict
+                        ? "Strict PDF font embedding requires an available platform font capability provider."
+                        : "PDF font capability could not be inspected during preflight; the writer will outline any font it cannot legally and reliably subset."));
+            }
+            else
+            {
+                foreach (FontUsage usage in FontUsageCollector.Collect(document, includeHidden: false))
+                {
+                    PdfFontCapability capability = context.PdfFontCapabilityProvider.GetCapability(
+                        usage.RequestedFont,
+                        usage.IsBold);
+                    PdfFontPlan plan = PdfFontStrategyPlanner.Plan(document.PdfFontStrategy, capability);
+                    if (plan.CanExport && plan.Warning is null)
+                    {
+                        continue;
+                    }
+
+                    bool strict = !plan.CanExport;
+                    issues.Add(new FigurePreflightIssue(
+                        strict ? FigurePreflightSeverity.Error : FigurePreflightSeverity.Warning,
+                        strict ? "PDF_FONT_EMBEDDING_UNAVAILABLE" : "PDF_FONT_OUTLINE_FALLBACK",
+                        $"{usage.UsageKind} font “{usage.RequestedFont}” " +
+                        (strict ? plan.Error : plan.Warning),
+                        usage.PanelLabel,
+                        ObjectId: usage.ObjectId));
+                }
+            }
         }
 
         if (TryGetAlpha(document.BackgroundColor, out byte backgroundAlpha) &&
@@ -141,9 +163,9 @@ public static class FigurePreflight
                     "画布背景含透明度；投稿系统转码时可能显示为黑色，请核对期刊要求。"));
         }
 
-        if (document.Panels.Count == 0)
+        if (document.Panels.Count == 0 && document.PlotPanels.Count == 0)
         {
-            issues.Add(new(FigurePreflightSeverity.Error, "NO_PANELS", "拼版中没有可导出的图像面板。"));
+            issues.Add(new(FigurePreflightSeverity.Error, "NO_PANELS", "拼版中没有可导出的图像或 Plot 面板。"));
         }
 
         HashSet<Guid> sourceIds = projectSources.Select(source => source.Id).ToHashSet();
@@ -252,6 +274,33 @@ public static class FigurePreflight
             }
         }
 
+        foreach (FigurePlotPanelExportItem panel in document.PlotPanels)
+        {
+            if (!panel.IsVisible)
+            {
+                issues.Add(new(FigurePreflightSeverity.Warning, "HIDDEN_PLOT_PANEL",
+                    $"Plot 面板 {panel.Label} 已隐藏，不会进入导出。", panel.Label));
+            }
+            if (panel.DestinationRect.X < 0 || panel.DestinationRect.Y < 0 ||
+                panel.DestinationRect.Right > document.WidthPixels ||
+                panel.DestinationRect.Bottom > document.HeightPixels)
+            {
+                issues.Add(new(FigurePreflightSeverity.Error, "PLOT_PANEL_OUT_OF_BOUNDS",
+                    $"Plot 面板 {panel.Label} 超出画布边界。", panel.Label));
+            }
+            try
+            {
+                panel.EnsureValid();
+                _ = panel.ResolveTypography(document.GlobalStyle);
+            }
+            catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+            {
+                issues.Add(new(FigurePreflightSeverity.Error, "INVALID_PLOT_PANEL",
+                    $"Plot 面板 {panel.Label} 无效：{exception.Message}", panel.Label,
+                    ObjectId: panel.Plot.Id));
+            }
+        }
+
         foreach (IGrouping<string, SourceAsset> duplicateSources in projectSources
                      .Where(source => !string.IsNullOrWhiteSpace(source.Fingerprint.Sha256))
                      .GroupBy(source => source.Fingerprint.Sha256, StringComparer.OrdinalIgnoreCase)
@@ -334,17 +383,35 @@ public static class FigurePreflight
                 continue;
             }
 
-            if (context.FontCatalog is not null &&
-                !context.FontCatalog.IsInstalled(overlay.Style.LabelFontFamily))
+        }
+        foreach (FigureRoiProjectionExportItem projection in document.RoiProjections.Where(item => item.IsVisible))
+        {
+            FigurePanelExportItem[] matchingPanels = document.Panels
+                .Where(panel => panel.IsVisible && panel.PanelId == projection.PanelId)
+                .ToArray();
+            try
+            {
+                if (matchingPanels.Length != 1)
+                {
+                    throw new InvalidOperationException(
+                        "ROI Figure Projection 必须绑定到一个可见且唯一的 Figure Panel。");
+                }
+
+                _ = FigureRoiProjectionMapper.Map(projection, matchingPanels[0], document.Dpi);
+            }
+            catch (Exception exception) when (
+                exception is InvalidOperationException or ArgumentException)
             {
                 issues.Add(new(
-                    FigurePreflightSeverity.Warning,
-                    "FONT_MISSING",
-                    $"Measurement Overlay font “{overlay.Style.LabelFontFamily}” is not installed on this system. Export will use a fallback font.",
-                    matchingPanels[0].Label,
-                    overlay.SourceAssetId,
-                    overlay.Id));
+                    FigurePreflightSeverity.Error,
+                    "INVALID_ROI_PROJECTION",
+                    exception.Message,
+                    matchingPanels.FirstOrDefault()?.Label,
+                    projection.AssetId,
+                    projection.Id));
+                continue;
             }
+
         }
         foreach (FigureAnnotationExportItem annotation in document.Annotations.Where(item => item.IsVisible))
         {
@@ -379,15 +446,6 @@ public static class FigurePreflight
                 issues.Add(new(FigurePreflightSeverity.Error, "INVALID_ANNOTATION_STYLE", "存在颜色、字号或线宽无效的标注。"));
             }
 
-            if (annotation.Kind == "text" &&
-                context.FontCatalog is not null &&
-                !context.FontCatalog.IsInstalled(annotation.FontFamily))
-            {
-                issues.Add(new(
-                    FigurePreflightSeverity.Warning,
-                    "FONT_MISSING",
-                    $"Font “{annotation.FontFamily}” is not installed on this system. Export will use a fallback font."));
-            }
         }
 
         foreach (FigureScientificObjectExportItem scientificObject in document.ScientificObjects.Where(item => item.IsVisible))
@@ -407,46 +465,27 @@ public static class FigurePreflight
         }
         if (context.FontCatalog is not null)
         {
-            IEnumerable<(string Role, string FontFamily)> globalFonts =
-            [
-                ("Figure", document.GlobalStyle.FontFamily),
-                ("Panel Label", document.GlobalStyle.EffectivePanelLabelFontFamily),
-                ("Scale Bar", document.GlobalStyle.EffectiveScaleBarFontFamily),
-            ];
-            IEnumerable<(string Role, string FontFamily)> panelFonts = document.Panels
-                .Where(panel => panel.IsVisible)
-                .SelectMany(panel =>
-                {
-                    FigureGlobalStyle resolved = ResolvePanelStyleOrGlobal(document.GlobalStyle, panel.StyleOverride);
-                    return new (string Role, string FontFamily)[]
-                    {
-                        ($"Panel {panel.Label} label", resolved.EffectivePanelLabelFontFamily),
-                        ($"Panel {panel.Label} scale bar", resolved.EffectiveScaleBarFontFamily),
-                    };
-                });
-            IEnumerable<(string Role, string FontFamily)> scientificObjectFonts = document.ScientificObjects
-                .Where(item => item.IsVisible)
-                .Select(item => ($"{item.Kind} object", item.FontFamily));
-            foreach ((string Role, string FontFamily) font in globalFonts
-                     .Concat(panelFonts)
-                     .Concat(scientificObjectFonts)
-                     .DistinctBy(item => item.FontFamily, StringComparer.OrdinalIgnoreCase))
+            foreach (FontUsage usage in FontUsageCollector.Collect(document, includeHidden: false)
+                         .Where(usage => !context.FontCatalog.IsInstalled(usage.RequestedFont)))
             {
-                if (!context.FontCatalog.IsInstalled(font.FontFamily))
-                {
-                    issues.Add(new(
-                        FigurePreflightSeverity.Warning,
-                        "FONT_MISSING",
-                        $"{font.Role} font “{font.FontFamily}” is not installed on this system. Export will use a fallback font."));
-                }
+                string? panelLabel = usage.PanelLabel ?? (usage.PanelId is Guid panelId
+                    ? document.Panels.FirstOrDefault(panel => panel.PanelId == panelId)?.Label ??
+                      document.PlotPanels.FirstOrDefault(panel => panel.PanelId == panelId)?.Label
+                    : null);
+                issues.Add(new(
+                    FigurePreflightSeverity.Warning,
+                    "FONT_MISSING",
+                    $"{usage.UsageKind} font “{usage.RequestedFont}” is not installed on this system. Export will use a fallback font.",
+                    panelLabel,
+                    ObjectId: usage.ObjectId));
             }
         }
 
-        FigureGlobalStyle[] visiblePanelStyles = document.Panels
-            .Where(panel => panel.IsVisible)
-            .Select(panel => ResolvePanelStyleOrGlobal(document.GlobalStyle, panel.StyleOverride))
-            .ToArray();
-        if (visiblePanelStyles.Select(style => style.EffectivePanelLabelFontFamily)
+        FontUsage[] visibleFontUsages = FontUsageCollector.Collect(document, includeHidden: false).ToArray();
+        if (visibleFontUsages
+            .Where(usage => usage.UsageKind == FontUsageKind.PanelLabel &&
+                            (usage.PanelId.HasValue || usage.PanelLabel is not null))
+            .Select(usage => usage.RequestedFont)
             .Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
         {
             issues.Add(new(
@@ -455,7 +494,10 @@ public static class FigurePreflight
                 "可见 Panel 使用了不一致的 Panel Label 字体；请确认这是有意的局部覆盖。"));
         }
 
-        if (visiblePanelStyles.Select(style => style.EffectiveScaleBarFontFamily)
+        if (visibleFontUsages
+            .Where(usage => usage.UsageKind == FontUsageKind.ScaleBarText &&
+                            (usage.PanelId.HasValue || usage.PanelLabel is not null))
+            .Select(usage => usage.RequestedFont)
             .Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
         {
             issues.Add(new(
@@ -464,7 +506,13 @@ public static class FigurePreflight
                 "可见 Panel 使用了不一致的比例尺字体；请确认这是有意的局部覆盖。"));
         }
 
-        FigurePanelExportItem[] visiblePanels = document.Panels.Where(panel => panel.IsVisible).ToArray();
+        PreflightPanel[] visiblePanels = document.Panels
+            .Where(panel => panel.IsVisible)
+            .Select(panel => new PreflightPanel(panel.PanelId, panel.Label, panel.DestinationRect))
+            .Concat(document.PlotPanels
+                .Where(panel => panel.IsVisible)
+                .Select(panel => new PreflightPanel(panel.PanelId, panel.Label, panel.DestinationRect)))
+            .ToArray();
         string[] nonEmptyLabels = visiblePanels
             .Select(panel => panel.Label)
             .Where(label => !string.IsNullOrWhiteSpace(label))
@@ -483,7 +531,7 @@ public static class FigurePreflight
 
         if (context.LabelScheme is not (PanelLabelScheme.None or PanelLabelScheme.Custom))
         {
-            FigurePanelExportItem[] readingOrder = visiblePanels
+            PreflightPanel[] readingOrder = visiblePanels
                 .OrderBy(panel => panel.DestinationRect.Y)
                 .ThenBy(panel => panel.DestinationRect.X)
                 .ThenBy(panel => panel.DestinationRect.Width)
@@ -530,24 +578,15 @@ public static class FigurePreflight
         first.X < second.Right && first.Right > second.X &&
         first.Y < second.Bottom && first.Bottom > second.Y;
 
+    private sealed record PreflightPanel(
+        Guid Id,
+        string Label,
+        Geometry.PixelRect64 DestinationRect);
+
     private static bool IsHexColor(string? value)
     {
         string hex = value?.Trim().TrimStart('#') ?? string.Empty;
         return hex.Length is 6 or 8 && hex.All(Uri.IsHexDigit);
-    }
-
-    private static FigureGlobalStyle ResolvePanelStyleOrGlobal(
-        FigureGlobalStyle globalStyle,
-        StyleOverride? styleOverride)
-    {
-        try
-        {
-            return globalStyle.ResolvePanelOverride(styleOverride);
-        }
-        catch (InvalidOperationException)
-        {
-            return globalStyle;
-        }
     }
 
     private static bool TryGetAlpha(string? color, out byte alpha)

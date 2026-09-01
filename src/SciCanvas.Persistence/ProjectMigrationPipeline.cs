@@ -1,3 +1,8 @@
+using SciCanvas.Core.Channels;
+using SciCanvas.Core.Geometry;
+using SciCanvas.Core.Science;
+using SciCanvas.Core.Workspace;
+
 namespace SciCanvas.Persistence;
 
 /// <summary>
@@ -7,11 +12,17 @@ namespace SciCanvas.Persistence;
 /// persisted threshold/particle analysis and reproducible automation parameters; V2.3
 /// separates scientific stroke/fill/marker/label and annotation text/shape styles; V2.4
 /// persists scientific objects, multichannel/link/mapping state, composite panels, publishing
-/// portability and export policy. All new fields have deterministic defaults for legacy documents.
+/// portability and export policy. V2.5 separates canonical ROI data from Figure ROI projections
+/// and canonicalizes ROI shape/label styles. V2.6 persists typed colorbar/legend adapters and
+/// per-channel colormaps. V2.7 adds typed, source-fingerprinted tabular data assets. V2.8 adds
+/// data-bound 2D PlotObjects with axes, typography and series style. V2.9 adds auditable Plot
+/// filters, excluded-row counts and ordered non-destructive transforms. V3.0 persists PlotObjects
+/// as native Figure panels with geometry and style inheritance. All new fields have
+/// deterministic defaults for legacy documents.
 /// </summary>
 public static class ProjectMigrationPipeline
 {
-    public const string CurrentVersion = "2.4";
+    public const string CurrentVersion = "3.0";
 
     public static IReadOnlySet<string> SupportedVersions { get; } =
         new HashSet<string>(StringComparer.Ordinal)
@@ -24,6 +35,12 @@ public static class ProjectMigrationPipeline
             "2.1",
             "2.2",
             "2.3",
+            "2.4",
+            "2.5",
+            "2.6",
+            "2.7",
+            "2.8",
+            "2.9",
             CurrentVersion,
         };
 
@@ -35,15 +52,16 @@ public static class ProjectMigrationPipeline
             throw new NotSupportedException($"暂不支持工程版本 {document.SchemaVersion}。");
         }
 
-        if (document.SchemaVersion == CurrentVersion)
+        if (document.SchemaVersion == CurrentVersion &&
+            document.MultiChannelGroups
+                .SelectMany(group => group.Members)
+                .All(member => member.PlaneSelector is not null))
         {
             return document;
         }
 
-        bool requiresCanonicalStyleMigration = !string.Equals(
-            document.SchemaVersion,
-            "2.3",
-            StringComparison.Ordinal);
+        bool requiresCanonicalStyleMigration =
+            document.SchemaVersion is not ("2.3" or "2.4" or "2.5" or "2.9" or CurrentVersion);
         Guid figureId = CreateStableFigureId(document.ProjectId);
         ProjectWorkspaceSnapshot workspace = document.Workspace.Figures.Count > 0
             ? document.Workspace
@@ -73,6 +91,8 @@ public static class ProjectMigrationPipeline
         string globalShapeColor = string.IsNullOrWhiteSpace(document.TemplateSnapshot?.GlobalStyle?.ShapeColor)
             ? "#FFE53935"
             : document.TemplateSnapshot.GlobalStyle.ShapeColor;
+        IReadOnlyDictionary<Guid, ProjectSourceSnapshot> sourcesById =
+            document.Sources.ToDictionary(source => source.Id);
 
         return new SciCanvasProjectDocument
         {
@@ -83,6 +103,8 @@ public static class ProjectMigrationPipeline
             Title = document.Title,
             Canvas = document.Canvas,
             Sources = document.Sources,
+            DataAssets = document.DataAssets,
+            Plots = document.Plots,
             Layers = document.Layers,
             CropPresets = document.CropPresets,
             Guides = document.Guides,
@@ -95,19 +117,24 @@ public static class ProjectMigrationPipeline
                     .Select(measurement => MigrateMeasurement(measurement, globalFontFamily))
                     .ToArray()
                 : document.Measurements,
-            Analyses = document.Analyses,
+            Analyses = document.Analyses
+                .Select(analysis => MigrateAnalysis(analysis, sourcesById))
+                .ToArray(),
             MultiChannelGroups = MigrateMultiChannelGroups(document.MultiChannelGroups, document.Sources),
             LinkGroups = document.LinkGroups,
-            Rois = document.Rois,
-            TemplateSnapshot = requiresCanonicalStyleMigration
-                ? MigrateTemplateSnapshot(
-                    document.TemplateSnapshot,
-                    globalFontFamily,
-                    globalTextColor,
-                    globalShapeColor)
-                : document.TemplateSnapshot,
-            AuditTrail = document.AuditTrail
-                .Concat(
+            Rois = document.Rois
+                .Select(roi => MigrateRoi(roi, sourcesById))
+                .ToArray(),
+            TemplateSnapshot = MigrateTemplateSnapshot(
+                document.TemplateSnapshot,
+                globalFontFamily,
+                globalTextColor,
+                globalShapeColor,
+                requiresCanonicalStyleMigration,
+                document.SchemaVersion != CurrentVersion),
+            AuditTrail = document.SchemaVersion == CurrentVersion
+                ? document.AuditTrail
+                : document.AuditTrail.Concat(
                 [
                     new ProjectAuditEntrySnapshot
                     {
@@ -144,6 +171,7 @@ public static class ProjectMigrationPipeline
                 AssetId = member.AssetId,
                 SourceRevision = member.SourceRevision ?? revisions.GetValueOrDefault(member.AssetId, 1),
                 FrameIndex = member.FrameIndex,
+                PlaneSelector = MigratePlaneSelector(member, group, sources),
                 Name = member.Name,
                 Role = member.Role,
                 Color = member.Color,
@@ -155,8 +183,35 @@ public static class ProjectMigrationPipeline
                 DisplayMaximum = member.DisplayMaximum,
                 Gamma = member.Gamma,
                 Invert = member.Invert,
+                Colormap = string.IsNullOrWhiteSpace(member.Colormap)
+                    ? "viridis"
+                    : ScientificColormap.Normalize(member.Colormap),
             }).ToArray(),
         }).ToArray();
+    }
+
+    private static ProjectChannelPlaneSelectorSnapshot MigratePlaneSelector(
+        ProjectChannelGroupMemberSnapshot member,
+        ProjectMultiChannelAssetGroupSnapshot group,
+        IReadOnlyList<ProjectSourceSnapshot> sources)
+    {
+        if (member.PlaneSelector is { } selector)
+        {
+            return selector;
+        }
+
+        ProjectSourceSnapshot? source = sources.FirstOrDefault(item => item.Id == member.AssetId);
+        string sourceKind = source?.Metadata.Channels > 1
+            ? "interleavedComponent"
+            : group.Members.Count(item => item.AssetId == member.AssetId) > 1 || member.FrameIndex > 0
+                ? "framePlane"
+                : "externalAsset";
+        return new ProjectChannelPlaneSelectorSnapshot
+        {
+            SourceKind = sourceKind,
+            FrameIndex = member.FrameIndex,
+            ComponentIndex = sourceKind == "interleavedComponent" ? 0 : null,
+        };
     }
 
     private static ProjectMeasurementSnapshot MigrateMeasurement(
@@ -196,7 +251,9 @@ public static class ProjectMigrationPipeline
         ProjectTemplateSnapshot? template,
         string globalFontFamily,
         string globalTextColor,
-        string globalShapeColor)
+        string globalShapeColor,
+        bool migrateCanonicalStyles,
+        bool migrateColorbarAdapters)
     {
         if (template is null)
         {
@@ -220,17 +277,327 @@ public static class ProjectMigrationPipeline
             LayerSlots = template.LayerSlots,
             ScaleBars = template.ScaleBars,
             MeasurementOverlays = template.MeasurementOverlays,
-            ScientificObjects = template.ScientificObjects,
-            Annotations = template.Annotations
-                .Select(annotation => MigrateAnnotation(
-                    annotation,
-                    globalFontFamily,
-                    globalTextColor,
-                    globalShapeColor))
+            PlotPanels = template.PlotPanels,
+            ScientificObjects = template.ScientificObjects
+                .Select(item => MigrateFigureScientificObject(item, migrateColorbarAdapters))
                 .ToArray(),
-            GlobalStyle = MigrateGlobalStyle(template.GlobalStyle),
+            RoiProjections = template.RoiProjections,
+            Annotations = migrateCanonicalStyles
+                ? template.Annotations
+                    .Select(annotation => MigrateAnnotation(
+                        annotation,
+                        globalFontFamily,
+                        globalTextColor,
+                        globalShapeColor))
+                    .ToArray()
+                : template.Annotations,
+            GlobalStyle = migrateCanonicalStyles
+                ? MigrateGlobalStyle(template.GlobalStyle)
+                : template.GlobalStyle,
             ScientificColors = template.ScientificColors,
         };
+    }
+
+    private static ProjectRoiSnapshot MigrateRoi(
+        ProjectRoiSnapshot roi,
+        IReadOnlyDictionary<Guid, ProjectSourceSnapshot> sourcesById)
+    {
+        ProjectRoiStyleSnapshot style = roi.Style ?? new ProjectRoiStyleSnapshot();
+        RoiGeometryValidationResult? validation = TryValidateGeometry(
+            roi.AssetId,
+            roi.SourceRevision,
+            roi.FrameIndex,
+            roi.GeometryKind,
+            roi.SourceGeometry,
+            sourcesById);
+        ProjectScientificValiditySnapshot validity = roi.Validity ?? new ProjectScientificValiditySnapshot();
+        if (validation is not null)
+        {
+            RoiBoundaryPolicyResult policy = RoiOutOfBoundsPolicy.Evaluate(
+                validation,
+                roi.Propagation is null ? RoiBoundaryRole.Reference : RoiBoundaryRole.Propagated,
+                partialReferenceConfirmed:
+                    roi.Propagation is null &&
+                    validation.State == RoiGeometryValidationState.PartiallyOutside);
+            validity = new ProjectScientificValiditySnapshot
+            {
+                State = policy.Validity.State.ToString().ToLowerInvariant(),
+                Reasons = policy.Validity.Reasons,
+            };
+        }
+
+        return new ProjectRoiSnapshot
+        {
+            Id = roi.Id,
+            AssetId = roi.AssetId,
+            SourceRevision = roi.SourceRevision,
+            GeometryKind = roi.GeometryKind,
+            FrameIndex = roi.FrameIndex,
+            SourceGeometry = roi.SourceGeometry,
+            Validity = validity,
+            Style = new ProjectRoiStyleSnapshot
+            {
+                StrokeColor = style.StrokeColor,
+                StrokeWidth = style.StrokeWidth,
+                FillColor = style.FillColor,
+                FillOpacity = style.FillOpacity,
+                Label = style.Label,
+                LabelFont = style.LabelFont,
+                LabelFontSizePt = style.LabelFontSizePt,
+                LabelIsBold = style.LabelIsBold,
+                LabelColor = style.LabelColor,
+            },
+            Propagation = roi.Propagation is null
+                ? null
+                : new ProjectRoiPropagationSnapshot
+                {
+                    ReferenceRoiId = roi.Propagation.ReferenceRoiId,
+                    TargetRoiId = roi.Propagation.TargetRoiId,
+                    LinkGroupId = roi.Propagation.LinkGroupId,
+                    MappingId = roi.Propagation.MappingId,
+                    TargetCoverageFraction =
+                        validation?.CoverageFraction ??
+                        roi.Propagation.TargetCoverageFraction,
+                },
+        };
+    }
+
+    private static ProjectScientificAnalysisSnapshot MigrateAnalysis(
+        ProjectScientificAnalysisSnapshot analysis,
+        IReadOnlyDictionary<Guid, ProjectSourceSnapshot> sourcesById)
+    {
+        if (!string.Equals(analysis.Kind, "roiStatistics", StringComparison.OrdinalIgnoreCase) ||
+            analysis.PolygonMask.Count < 3)
+        {
+            return analysis;
+        }
+
+        RoiGeometryValidationResult? validation = TryValidateGeometry(
+            analysis.SourceAssetId,
+            analysis.SourceRevision,
+            analysis.FrameIndex,
+            "polygon",
+            analysis.PolygonMask,
+            sourcesById);
+        if (validation is null)
+        {
+            return CloneAnalysis(
+                analysis,
+                clippedToImage: false,
+                coverageFraction: 0,
+                new ProjectScientificValiditySnapshot
+                {
+                    State = "invalid",
+                    Reasons = [.. analysis.Validity.Reasons, "ROI analysis source dimensions are unavailable after migration."],
+                });
+        }
+
+        return validation.State switch
+        {
+            RoiGeometryValidationState.Inside => CloneAnalysis(
+                analysis,
+                clippedToImage: false,
+                coverageFraction: 1,
+                analysis.Validity),
+            RoiGeometryValidationState.PartiallyOutside => CloneAnalysis(
+                analysis,
+                clippedToImage: true,
+                coverageFraction: validation.CoverageFraction,
+                new ProjectScientificValiditySnapshot
+                {
+                    State = "reviewrequired",
+                    Reasons =
+                    [
+                        .. analysis.Validity.Reasons,
+                        $"Migrated ROI statistics used an image-clipped polygon (coverage fraction {validation.CoverageFraction:0.######}).",
+                    ],
+                }),
+            _ => CloneAnalysis(
+                analysis,
+                clippedToImage: false,
+                coverageFraction: 0,
+                new ProjectScientificValiditySnapshot
+                {
+                    State = "invalid",
+                    Reasons =
+                    [
+                        .. analysis.Validity.Reasons,
+                        "Migrated ROI statistics reference geometry that is outside or invalid; do not use this result.",
+                    ],
+                }),
+        };
+    }
+
+    private static ProjectScientificAnalysisSnapshot CloneAnalysis(
+        ProjectScientificAnalysisSnapshot analysis,
+        bool clippedToImage,
+        double coverageFraction,
+        ProjectScientificValiditySnapshot validity) => new()
+    {
+        Id = analysis.Id,
+        SourceAssetId = analysis.SourceAssetId,
+        SourceRevision = analysis.SourceRevision,
+        Kind = analysis.Kind,
+        FrameIndex = analysis.FrameIndex,
+        Channel = analysis.Channel,
+        AnalyzerId = analysis.AnalyzerId,
+        AnalyzedAt = analysis.AnalyzedAt,
+        Validity = validity,
+        SourceBitDepth = analysis.SourceBitDepth,
+        Region = analysis.Region,
+        RoiId = analysis.RoiId,
+        ScientificChannelId = analysis.ScientificChannelId,
+        LinkGroupId = analysis.LinkGroupId,
+        MappingId = analysis.MappingId,
+        PolygonMask = analysis.PolygonMask,
+        ClippedToImage = clippedToImage,
+        CoverageFraction = coverageFraction,
+        PixelCount = analysis.PixelCount,
+        Minimum = analysis.Minimum,
+        Maximum = analysis.Maximum,
+        Mean = analysis.Mean,
+        StandardDeviation = analysis.StandardDeviation,
+        IntegratedIntensity = analysis.IntegratedIntensity,
+        Histogram = analysis.Histogram,
+        DistanceUnit = analysis.DistanceUnit,
+        Samples = analysis.Samples,
+        AnalysisMode = analysis.AnalysisMode,
+        UseAutomaticThreshold = analysis.UseAutomaticThreshold,
+        ThresholdNormalized = analysis.ThresholdNormalized,
+        AppliedThresholdNormalized = analysis.AppliedThresholdNormalized,
+        MinimumAreaPixels = analysis.MinimumAreaPixels,
+        MaximumCandidates = analysis.MaximumCandidates,
+        AnalysisMaxPixels = analysis.AnalysisMaxPixels,
+        AnalysisMaxComponentsSafety = analysis.AnalysisMaxComponentsSafety,
+        AnalysisMaxBoundaryPoints = analysis.AnalysisMaxBoundaryPoints,
+        AnalysisMemoryBudgetBytes = analysis.AnalysisMemoryBudgetBytes,
+        ForegroundPixelCount = analysis.ForegroundPixelCount,
+        TotalPixelCount = analysis.TotalPixelCount,
+        Particles = analysis.Particles,
+    };
+
+    private static RoiGeometryValidationResult? TryValidateGeometry(
+        Guid assetId,
+        long sourceRevision,
+        int frameIndex,
+        string? geometryKind,
+        IReadOnlyList<ProjectMeasurementPointSnapshot> points,
+        IReadOnlyDictionary<Guid, ProjectSourceSnapshot> sourcesById)
+    {
+        if (!sourcesById.TryGetValue(assetId, out ProjectSourceSnapshot? source) ||
+            source.Metadata.Width <= 0 || source.Metadata.Height <= 0)
+        {
+            return null;
+        }
+
+        RoiGeometryKind kind;
+        switch (geometryKind?.ToLowerInvariant())
+        {
+            case "rectangle":
+                kind = RoiGeometryKind.Rectangle;
+                break;
+            case "ellipse":
+                kind = RoiGeometryKind.Ellipse;
+                break;
+            case "polygon":
+                kind = RoiGeometryKind.Polygon;
+                break;
+            case "polyline":
+                kind = RoiGeometryKind.Polyline;
+                break;
+            default:
+                return new RoiGeometryValidationResult(
+                    RoiGeometryValidationState.Invalid,
+                    0,
+                    null,
+                    ["ROI geometry kind is unknown."]);
+        }
+
+        var roi = new RoiObject
+        {
+            Id = Guid.Empty,
+            AssetId = assetId,
+            SourceRevision = Math.Max(1, sourceRevision),
+            FrameIndex = Math.Max(0, frameIndex),
+            GeometryKind = kind,
+            SourceGeometry = points
+                .Select(point => new MeasurementPoint(point.X, point.Y))
+                .ToArray(),
+        };
+        return RoiGeometryValidator.Validate(roi, source.Metadata.Width, source.Metadata.Height);
+    }
+
+    private static ProjectFigureScientificObjectSnapshot MigrateFigureScientificObject(
+        ProjectFigureScientificObjectSnapshot scientificObject,
+        bool migrateColorbarAdapters)
+    {
+        // Schema 2.4 Figure ROI records contain canvas geometry only and no canonical
+        // RoiId/PanelId/AssetId/revision. Preserve the visual exactly as a polygon annotation;
+        // never fabricate a scientific ROI relationship from ambiguous data.
+        string kind = string.Equals(scientificObject.Kind, "roi", StringComparison.OrdinalIgnoreCase)
+            ? "PolygonAnnotation"
+            : scientificObject.Kind;
+        string bindingState = migrateColorbarAdapters
+            ? scientificObject.ChannelId.HasValue ? "Linked" : "Detached"
+            : string.IsNullOrWhiteSpace(scientificObject.ColorbarBindingState)
+                ? scientificObject.ChannelId.HasValue ? "Linked" : "Detached"
+                : scientificObject.ColorbarBindingState;
+        IReadOnlyList<ProjectColorbarTickSnapshot> ticks = scientificObject.Ticks.Count > 0
+            ? scientificObject.Ticks
+            : CreateDefaultColorbarTicks(scientificObject.Minimum, scientificObject.Maximum);
+        return new ProjectFigureScientificObjectSnapshot
+        {
+            Id = scientificObject.Id,
+            Kind = kind,
+            Points = scientificObject.Points,
+            Label = scientificObject.Label,
+            StrokeColor = scientificObject.StrokeColor,
+            FillColor = scientificObject.FillColor,
+            FillOpacityPercent = scientificObject.FillOpacityPercent,
+            TextColor = scientificObject.TextColor,
+            FontFamily = scientificObject.FontFamily,
+            FontSizePt = scientificObject.FontSizePt,
+            StrokeWidthPt = scientificObject.StrokeWidthPt,
+            IsBold = scientificObject.IsBold,
+            Visible = scientificObject.Visible,
+            Locked = scientificObject.Locked,
+            ZIndex = scientificObject.ZIndex,
+            Minimum = scientificObject.Minimum,
+            Maximum = scientificObject.Maximum,
+            Unit = scientificObject.Unit,
+            Colormap = scientificObject.Colormap,
+            ChannelEntries = scientificObject.ChannelEntries,
+            ChannelId = scientificObject.ChannelId,
+            ColorbarBindingState = bindingState,
+            Orientation = scientificObject.Orientation?.ToLowerInvariant() switch
+            {
+                null or "" or "vertical" => "Vertical",
+                "horizontal" => "Horizontal",
+                _ => throw new InvalidDataException(
+                    $"工程包含未知 Colorbar orientation：{scientificObject.Orientation}。"),
+            },
+            Ticks = ticks,
+            ChannelLegendPadding = scientificObject.ChannelLegendPadding > 0
+                ? scientificObject.ChannelLegendPadding
+                : 5,
+        };
+    }
+
+    private static IReadOnlyList<ProjectColorbarTickSnapshot> CreateDefaultColorbarTicks(
+        double minimum,
+        double maximum)
+    {
+        if (!double.IsFinite(minimum) || !double.IsFinite(maximum) || maximum <= minimum)
+        {
+            return [];
+        }
+
+        return ColorbarObject.CreateDefaultTicks(minimum, maximum)
+            .Select(tick => new ProjectColorbarTickSnapshot
+            {
+                Value = tick.Value,
+                Label = tick.Label,
+            }).ToArray();
     }
 
     private static ProjectGlobalStyleSnapshot? MigrateGlobalStyle(ProjectGlobalStyleSnapshot? style)

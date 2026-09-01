@@ -14,13 +14,39 @@ public sealed record SubmissionPackageRequest(
     string TargetDirectory,
     FigureExportDocument Figure,
     IReadOnlyCollection<SourceAssetItemViewModel> Sources,
-    FigurePreflightResult QcResult,
+    UnifiedQcReport QcResult,
     IReadOnlyList<ProjectAuditEntrySnapshot> AuditTrail,
     string SoftwareVersion,
     string FigureBaseName = "figure1",
     IReadOnlyList<ResolvedFont>? FontResolutions = null,
     IReadOnlyList<SpatialLinkGroup>? LinkGroups = null,
-    IReadOnlyList<RoiObject>? Rois = null);
+    IReadOnlyList<RoiObject>? Rois = null)
+{
+    public SubmissionPackageRequest(
+        string targetDirectory,
+        FigureExportDocument figure,
+        IReadOnlyCollection<SourceAssetItemViewModel> sources,
+        FigurePreflightResult qcResult,
+        IReadOnlyList<ProjectAuditEntrySnapshot> auditTrail,
+        string softwareVersion,
+        string figureBaseName = "figure1",
+        IReadOnlyList<ResolvedFont>? fontResolutions = null,
+        IReadOnlyList<SpatialLinkGroup>? linkGroups = null,
+        IReadOnlyList<RoiObject>? rois = null)
+        : this(
+            targetDirectory,
+            figure,
+            sources,
+            UnifiedQcReport.FromFigurePreflight(qcResult),
+            auditTrail,
+            softwareVersion,
+            figureBaseName,
+            fontResolutions,
+            linkGroups,
+            rois)
+    {
+    }
+}
 
 public sealed record SubmissionPackageResult(
     string RootDirectory,
@@ -84,14 +110,15 @@ public sealed class SubmissionPackageBuilder
                 tiffPath,
                 request.SoftwareVersion,
                 request.Sources.Select(source => source.Asset).ToArray(),
-                request.QcResult,
+                request.QcResult.ToFigurePreflightResult(),
                 exportProfileId: "submission-package",
                 exportProfileName: "Submission Package",
                 sourceRevisions: request.Sources.ToDictionary(source => source.Asset.Id, source => source.SourceRevision),
                 analyses: request.Sources.SelectMany(source => source.AnalysisResults),
                 fontResolutions: request.FontResolutions,
                 linkGroups: request.LinkGroups,
-                rois: request.Rois);
+                rois: request.Rois,
+                pdfFontOutcomes: (_figureExporter as IPdfFontExportReportProvider)?.LastPdfFontOutcomes);
             string provenancePath = Path.Combine(figureDirectory, baseName + ".provenance.json");
             string exportReportPath = Path.Combine(figureDirectory, baseName + ".export-report.html");
             FigureProvenanceWriter.WriteJson(provenance, provenancePath);

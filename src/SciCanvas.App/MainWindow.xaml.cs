@@ -5,7 +5,6 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
-using Color = System.Windows.Media.Color;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using MessageBox = System.Windows.MessageBox;
 using MessageBoxButton = System.Windows.MessageBoxButton;
@@ -35,6 +34,11 @@ public partial class MainWindow : Window
     private MeasurementHandle _measurementHandle;
     private FrameworkElement? _measurementCaptureElement;
     private Point _measurementDragAnchor;
+    private RoiObjectItemViewModel? _draggedCanonicalRoi;
+    private FrameworkElement? _canonicalRoiCaptureElement;
+    private Point _canonicalRoiDragAnchor;
+    private int _canonicalRoiDragVertexIndex = -1;
+    private int _selectedCanonicalRoiVertexIndex = -1;
     private FigurePanelViewModel? _draggedFigurePanel;
     private Point _figureDragAnchor;
     private FigurePanelViewModel? _resizingFigurePanel;
@@ -42,8 +46,23 @@ public partial class MainWindow : Window
     private Point _figureResizeAnchor;
     private long _figureResizeStartWidth;
     private long _figureResizeStartHeight;
+    private FigurePlotPanelViewModel? _draggedFigurePlotPanel;
+    private FrameworkElement? _figurePlotDragElement;
+    private long _figurePlotDragStartX;
+    private long _figurePlotDragStartY;
+    private FigurePlotPanelViewModel? _resizingFigurePlotPanel;
+    private FrameworkElement? _figurePlotResizeElement;
+    private long _figurePlotResizeStartWidth;
+    private long _figurePlotResizeStartHeight;
     private FigureAnnotationViewModel? _draggedAnnotation;
+    private AnnotationHandle _annotationHandle;
+    private FrameworkElement? _annotationCaptureElement;
     private Point _annotationDragAnchor;
+    private FigureScientificObjectViewModel? _draggedScientificObject;
+    private FrameworkElement? _scientificObjectCaptureElement;
+    private Point _scientificObjectDragAnchor;
+    private bool _isResizingScientificObject;
+    private int _scientificPolygonDragVertexIndex = -1;
     private double _sourceZoom = 1;
     private double _figureZoom = 1;
     private bool _sourceZoomIsFit = true;
@@ -163,216 +182,6 @@ public partial class MainWindow : Window
         ScheduleFitVisibleWorkspace();
     }
 
-    private void MeasurementColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel
-            {
-                SelectedSource.SelectedMeasurement: { } measurement,
-            } viewModel && TryPickColor(measurement.StrokeColor, out string color))
-        {
-            measurement.StrokeColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private void MeasurementFillColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel
-            {
-                SelectedSource.SelectedMeasurement: { } measurement,
-            } viewModel && TryPickColor(measurement.FillColor, out string color))
-        {
-            measurement.FillColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private void MeasurementMarkerStrokeColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel
-            {
-                SelectedSource.SelectedMeasurement: { } measurement,
-            } viewModel && TryPickColor(measurement.MarkerStrokeColor, out string color))
-        {
-            measurement.MarkerStrokeColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private void MeasurementMarkerFillColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel
-            {
-                SelectedSource.SelectedMeasurement: { } measurement,
-            } viewModel && TryPickColor(measurement.MarkerFillColor, out string color))
-        {
-            measurement.MarkerFillColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private void MeasurementLabelColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel
-            {
-                SelectedSource.SelectedMeasurement: { } measurement,
-            } viewModel && TryPickColor(measurement.LabelColor, out string color))
-        {
-            measurement.LabelColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private void AnnotationTextColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel
-            {
-                Figure.SelectedAnnotation: { } annotation,
-            } viewModel && TryPickColor(annotation.TextColor, out string color))
-        {
-            annotation.TextColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private void AnnotationStrokeColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel
-            {
-                Figure.SelectedAnnotation: { } annotation,
-            } viewModel && TryPickColor(annotation.StrokeColor, out string color))
-        {
-            annotation.StrokeColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private void AnnotationFillColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel
-            {
-                Figure.SelectedAnnotation: { } annotation,
-            } viewModel && TryPickColor(annotation.FillColor, out string color))
-        {
-            annotation.FillColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private void FigureGlobalTextColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel viewModel &&
-            TryPickColor(viewModel.Figure.GlobalTextColor, out string color))
-        {
-            viewModel.Figure.GlobalTextColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private void FigureGlobalShapeColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel viewModel &&
-            TryPickColor(viewModel.Figure.GlobalShapeColor, out string color))
-        {
-            viewModel.Figure.GlobalShapeColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private void FigureScaleBarColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel viewModel &&
-            TryPickColor(viewModel.Figure.GlobalScaleBarColor, out string color))
-        {
-            viewModel.Figure.GlobalScaleBarColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private void FigurePanelLabelColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel viewModel &&
-            TryPickColor(viewModel.Figure.PanelLabelTextColor, out string color))
-        {
-            viewModel.Figure.PanelLabelTextColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private void FigureScaleBarLabelColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel viewModel &&
-            TryPickColor(viewModel.Figure.ScaleBarLabelColor, out string color))
-        {
-            viewModel.Figure.ScaleBarLabelColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private void SelectedPanelLabelColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel viewModel &&
-            TryPickColor(viewModel.Figure.SelectedPanelLabelTextColor, out string color))
-        {
-            viewModel.Figure.SelectedPanelLabelTextColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private void SelectedPanelScaleBarColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel viewModel &&
-            TryPickColor(viewModel.Figure.SelectedPanelScaleBarColor, out string color))
-        {
-            viewModel.Figure.SelectedPanelScaleBarColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private void SelectedPanelScaleBarLabelColorPicker_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel viewModel &&
-            TryPickColor(viewModel.Figure.SelectedPanelScaleBarLabelColor, out string color))
-        {
-            viewModel.Figure.SelectedPanelScaleBarLabelColor = color;
-            viewModel.CompleteHistoryGesture();
-        }
-    }
-
-    private static bool TryPickColor(string currentValue, out string selectedValue)
-    {
-        byte alpha = 255;
-        System.Drawing.Color initial = System.Drawing.Color.FromArgb(34, 199, 232);
-        try
-        {
-            if (ColorConverter.ConvertFromString(currentValue) is Color current)
-            {
-                alpha = current.A;
-                initial = System.Drawing.Color.FromArgb(current.R, current.G, current.B);
-            }
-        }
-        catch (FormatException)
-        {
-            // Keep the safe default when the user is midway through typing a HEX value.
-        }
-
-        using var dialog = new System.Windows.Forms.ColorDialog
-        {
-            AllowFullOpen = true,
-            FullOpen = true,
-            AnyColor = true,
-            Color = initial,
-        };
-        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK)
-        {
-            selectedValue = currentValue;
-            return false;
-        }
-
-        selectedValue = $"#{alpha:X2}{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
-        return true;
-    }
-
     private void ScheduleFitVisibleWorkspace() => Dispatcher.BeginInvoke(
         DispatcherPriority.Background,
         new Action(() =>
@@ -389,7 +198,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        Point position = ClampToSource(e.GetPosition(ImageCanvas), viewModel);
+        Point canvasPosition = e.GetPosition(ImageCanvas);
+        Point position = viewModel.IsCanonicalRoiCreationTool
+            ? canvasPosition
+            : ClampToSource(canvasPosition, viewModel);
         if (viewModel.ActiveScienceTool != ScientificToolMode.Crop)
         {
             _scientificGestureActive = viewModel.BeginScientificGesture(
@@ -437,10 +249,19 @@ public partial class MainWindow : Window
             e.LeftButton == MouseButtonState.Pressed &&
             DataContext is MainWindowViewModel { SelectedSource: not null } scienceViewModel)
         {
-            Point sciencePosition = ClampToSource(e.GetPosition(ImageCanvas), scienceViewModel);
+            Point canvasPosition = e.GetPosition(ImageCanvas);
+            Point sciencePosition = scienceViewModel.IsCanonicalRoiCreationTool
+                ? canvasPosition
+                : ClampToSource(canvasPosition, scienceViewModel);
             scienceViewModel.UpdateScientificGesture(sciencePosition.X, sciencePosition.Y);
             e.Handled = true;
             return;
+        }
+
+        if (DataContext is MainWindowViewModel { HasPendingCanonicalRoi: true } roiViewModel)
+        {
+            Point hover = e.GetPosition(ImageCanvas);
+            roiViewModel.UpdateCanonicalRoiHover(hover.X, hover.Y);
         }
 
         if (_gesture == CropGesture.None ||
@@ -485,8 +306,30 @@ public partial class MainWindow : Window
     {
         if (_scientificGestureActive)
         {
+            bool canonicalRoi = DataContext is MainWindowViewModel
+            {
+                IsCanonicalRoiCreationTool: true,
+            };
             EndScientificGesture();
-            ShowMeasurementInspector();
+            if (canonicalRoi && DataContext is MainWindowViewModel roiViewModel)
+            {
+                roiViewModel.IsRoiPropagationTabActive = true;
+            }
+            else
+            {
+                ShowMeasurementInspector();
+            }
+            e.Handled = true;
+            return;
+        }
+
+        if (DataContext is MainWindowViewModel
+            {
+                HasPendingCanonicalRoi: true,
+                ActiveScienceTool: ScientificToolMode.CanonicalRoiPolygon or
+                    ScientificToolMode.CanonicalRoiPolyline,
+            })
+        {
             e.Handled = true;
             return;
         }
@@ -707,6 +550,148 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
+    private void CanonicalRoi_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: RoiObjectItemViewModel roi } element ||
+            DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        viewModel.SelectCanonicalRoi(roi);
+        _selectedCanonicalRoiVertexIndex = -1;
+        Point position = e.GetPosition(ImageCanvas);
+        if (e.ClickCount > 1 && roi.Model.GeometryKind == SciCanvas.Core.Workspace.RoiGeometryKind.Polygon)
+        {
+            viewModel.BeginHistoryGesture();
+            bool inserted = viewModel.TryInsertSelectedCanonicalRoiVertex(position.X, position.Y);
+            viewModel.CompleteHistoryGesture();
+            if (inserted)
+            {
+                _selectedCanonicalRoiVertexIndex = -1;
+            }
+            e.Handled = true;
+            return;
+        }
+
+        _draggedCanonicalRoi = roi;
+        _canonicalRoiDragVertexIndex = -1;
+        _canonicalRoiDragAnchor = position;
+        _canonicalRoiCaptureElement = element;
+        viewModel.BeginHistoryGesture();
+        element.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void CanonicalRoi_OnMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_draggedCanonicalRoi is null ||
+            _canonicalRoiDragVertexIndex >= 0 ||
+            e.LeftButton != MouseButtonState.Pressed ||
+            DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        Point position = e.GetPosition(ImageCanvas);
+        double deltaX = position.X - _canonicalRoiDragAnchor.X;
+        double deltaY = position.Y - _canonicalRoiDragAnchor.Y;
+        if (viewModel.TryMoveSelectedCanonicalRoi(deltaX, deltaY))
+        {
+            _canonicalRoiDragAnchor = position;
+        }
+        e.Handled = true;
+    }
+
+    private void CanonicalRoi_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        EndCanonicalRoiGesture();
+        e.Handled = true;
+    }
+
+    private void CanonicalRoi_OnLostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (_draggedCanonicalRoi is not null)
+        {
+            EndCanonicalRoiGesture();
+        }
+    }
+
+    private void CanonicalRoiVertexHandle_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement
+            {
+                Tag: RoiVertexHandleViewModel vertex,
+            } element ||
+            FindVisualAncestor<Canvas>(element)?.Tag is not RoiObjectItemViewModel roi ||
+            DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        viewModel.SelectCanonicalRoi(roi);
+        _draggedCanonicalRoi = roi;
+        _canonicalRoiDragVertexIndex = vertex.Index;
+        _selectedCanonicalRoiVertexIndex =
+            roi.Model.GeometryKind == SciCanvas.Core.Workspace.RoiGeometryKind.Polygon
+                ? vertex.Index
+                : -1;
+        _canonicalRoiCaptureElement = element;
+        _canonicalRoiDragAnchor = e.GetPosition(ImageCanvas);
+        viewModel.BeginHistoryGesture();
+        element.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void CanonicalRoiVertexHandle_OnMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_draggedCanonicalRoi is null ||
+            _canonicalRoiDragVertexIndex < 0 ||
+            e.LeftButton != MouseButtonState.Pressed ||
+            DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        Point position = e.GetPosition(ImageCanvas);
+        _ = viewModel.TryUpdateSelectedCanonicalRoiVertex(
+            _canonicalRoiDragVertexIndex,
+            position.X,
+            position.Y);
+        e.Handled = true;
+    }
+
+    private void CanonicalRoiVertexHandle_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        EndCanonicalRoiGesture();
+        e.Handled = true;
+    }
+
+    private void CanonicalRoiVertexHandle_OnLostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (_draggedCanonicalRoi is not null)
+        {
+            EndCanonicalRoiGesture();
+        }
+    }
+
+    private void EndCanonicalRoiGesture()
+    {
+        FrameworkElement? capture = _canonicalRoiCaptureElement;
+        _canonicalRoiCaptureElement = null;
+        _draggedCanonicalRoi = null;
+        _canonicalRoiDragVertexIndex = -1;
+        if (capture?.IsMouseCaptured == true)
+        {
+            capture.ReleaseMouseCapture();
+        }
+
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
     private void MeasurementResizeHandle_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (sender is not FrameworkElement { Tag: ScientificMeasurementViewModel measurement } element ||
@@ -833,7 +818,7 @@ public partial class MainWindow : Window
         viewModel.IsLayersTabActive = false;
         Dispatcher.BeginInvoke(
             DispatcherPriority.Background,
-            new Action(() => MeasurementInspectorPanel.BringIntoView()));
+            new Action(InspectorWorkspacePanel.BringMeasurementInspectorIntoView));
     }
 
     private static void ResizeMeasurement(
@@ -1045,6 +1030,137 @@ public partial class MainWindow : Window
         }
     }
 
+    private void FigurePlotPanel_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: FigurePlotPanelViewModel panel } element ||
+            DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+        if (e.OriginalSource is FrameworkElement original && original.Cursor == Cursors.SizeNWSE)
+        {
+            return;
+        }
+
+        viewModel.Figure.SelectPlotPanel(panel);
+        if (panel.IsLocked)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        _draggedFigurePlotPanel = panel;
+        _figurePlotDragElement = element;
+        _figureDragAnchor = e.GetPosition(FigureSurface);
+        _figurePlotDragStartX = panel.X;
+        _figurePlotDragStartY = panel.Y;
+        element.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void FigurePlotPanel_OnMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_draggedFigurePlotPanel is not { } panel ||
+            _resizingFigurePlotPanel is not null ||
+            e.LeftButton != MouseButtonState.Pressed ||
+            DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        Point position = e.GetPosition(FigureSurface);
+        long deltaX = (long)Math.Round(position.X - _figureDragAnchor.X);
+        long deltaY = (long)Math.Round(position.Y - _figureDragAnchor.Y);
+        viewModel.Figure.MovePlotPanel(
+            panel,
+            _figurePlotDragStartX + deltaX,
+            _figurePlotDragStartY + deltaY);
+        e.Handled = true;
+    }
+
+    private void FigurePlotPanel_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        EndFigurePlotPanelDrag();
+        e.Handled = true;
+    }
+
+    private void FigurePlotPanel_OnLostMouseCapture(object sender, MouseEventArgs e) =>
+        EndFigurePlotPanelDrag();
+
+    private void EndFigurePlotPanelDrag()
+    {
+        if (_figurePlotDragElement?.IsMouseCaptured == true)
+        {
+            _figurePlotDragElement.ReleaseMouseCapture();
+        }
+        _figurePlotDragElement = null;
+        _draggedFigurePlotPanel = null;
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void FigurePlotPanelResizeHandle_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: FigurePlotPanelViewModel panel } element ||
+            DataContext is not MainWindowViewModel viewModel || panel.IsLocked)
+        {
+            return;
+        }
+
+        viewModel.Figure.SelectPlotPanel(panel);
+        _resizingFigurePlotPanel = panel;
+        _figurePlotResizeElement = element;
+        _figureResizeAnchor = e.GetPosition(FigureSurface);
+        _figurePlotResizeStartWidth = panel.Width;
+        _figurePlotResizeStartHeight = panel.Height;
+        element.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void FigurePlotPanelResizeHandle_OnMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_resizingFigurePlotPanel is not { } panel ||
+            e.LeftButton != MouseButtonState.Pressed ||
+            DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        Point position = e.GetPosition(FigureSurface);
+        long deltaX = (long)Math.Round(position.X - _figureResizeAnchor.X);
+        long deltaY = (long)Math.Round(position.Y - _figureResizeAnchor.Y);
+        long maxWidth = Math.Max(120, viewModel.Figure.CanvasWidth - panel.X);
+        long maxHeight = Math.Max(100, viewModel.Figure.CanvasHeight - panel.Y);
+        panel.Width = Math.Clamp(_figurePlotResizeStartWidth + deltaX, 120, maxWidth);
+        panel.Height = Math.Clamp(_figurePlotResizeStartHeight + deltaY, 100, maxHeight);
+        e.Handled = true;
+    }
+
+    private void FigurePlotPanelResizeHandle_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        EndFigurePlotPanelResize();
+        e.Handled = true;
+    }
+
+    private void FigurePlotPanelResizeHandle_OnLostMouseCapture(object sender, MouseEventArgs e) =>
+        EndFigurePlotPanelResize();
+
+    private void EndFigurePlotPanelResize()
+    {
+        if (_figurePlotResizeElement?.IsMouseCaptured == true)
+        {
+            _figurePlotResizeElement.ReleaseMouseCapture();
+        }
+        _figurePlotResizeElement = null;
+        _resizingFigurePlotPanel = null;
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
     private void Annotation_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (sender is not FrameworkElement { Tag: FigureAnnotationViewModel annotation } element ||
@@ -1053,14 +1169,23 @@ public partial class MainWindow : Window
             return;
         }
 
-        viewModel.Figure.SelectedAnnotation = annotation;
-        if (annotation.IsLocked)
+        if (e.OriginalSource is DependencyObject original &&
+            FindVisualAncestor<Thumb>(original) is not null)
+        {
+            return;
+        }
+
+        bool toggle = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+        viewModel.Figure.SelectAnnotation(annotation, toggle);
+        if (!annotation.IsSelected || annotation.IsLocked)
         {
             e.Handled = true;
             return;
         }
 
         _draggedAnnotation = annotation;
+        _annotationHandle = AnnotationHandle.Move;
+        _annotationCaptureElement = element;
         _annotationDragAnchor = e.GetPosition(FigureSurface);
         element.CaptureMouse();
         e.Handled = true;
@@ -1069,6 +1194,7 @@ public partial class MainWindow : Window
     private void Annotation_OnMouseMove(object sender, MouseEventArgs e)
     {
         if (_draggedAnnotation is null ||
+            _annotationHandle != AnnotationHandle.Move ||
             e.LeftButton != MouseButtonState.Pressed ||
             DataContext is not MainWindowViewModel viewModel)
         {
@@ -1086,22 +1212,321 @@ public partial class MainWindow : Window
 
     private void Annotation_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (sender is FrameworkElement element && element.IsMouseCaptured)
-        {
-            element.ReleaseMouseCapture();
-        }
-
-        _draggedAnnotation = null;
-        if (DataContext is MainWindowViewModel viewModel)
-        {
-            viewModel.CompleteHistoryGesture();
-        }
+        EndAnnotationGesture();
         e.Handled = true;
     }
 
     private void Annotation_OnLostMouseCapture(object sender, MouseEventArgs e)
     {
+        if (_annotationCaptureElement is not null &&
+            !ReferenceEquals(sender, _annotationCaptureElement))
+        {
+            return;
+        }
+
         _draggedAnnotation = null;
+        _annotationHandle = AnnotationHandle.None;
+        _annotationCaptureElement = null;
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void AnnotationHandle_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: FigureAnnotationViewModel annotation } element ||
+            DataContext is not MainWindowViewModel viewModel ||
+            annotation.IsLocked)
+        {
+            return;
+        }
+
+        viewModel.Figure.SelectAnnotation(annotation, toggle: false);
+        _annotationHandle = element.Name switch
+        {
+            "AnnotationStartHandle" => AnnotationHandle.Start,
+            "AnnotationEndHandle" => AnnotationHandle.End,
+            _ => AnnotationHandle.None,
+        };
+        if (_annotationHandle == AnnotationHandle.None)
+        {
+            return;
+        }
+
+        _draggedAnnotation = annotation;
+        _annotationCaptureElement = element;
+        element.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void AnnotationHandle_OnMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_draggedAnnotation is null ||
+            _annotationHandle is not (AnnotationHandle.Start or AnnotationHandle.End) ||
+            e.LeftButton != MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        Point position = e.GetPosition(FigureSurface);
+        if (_annotationHandle == AnnotationHandle.Start)
+        {
+            _draggedAnnotation.SetStartPoint(position.X, position.Y);
+        }
+        else
+        {
+            _draggedAnnotation.SetEndPoint(position.X, position.Y);
+        }
+
+        e.Handled = true;
+    }
+
+    private void AnnotationHandle_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        EndAnnotationGesture();
+        e.Handled = true;
+    }
+
+    private void AnnotationHandle_OnLostMouseCapture(object sender, MouseEventArgs e) =>
+        Annotation_OnLostMouseCapture(sender, e);
+
+    private void EndAnnotationGesture()
+    {
+        FrameworkElement? capture = _annotationCaptureElement;
+        _draggedAnnotation = null;
+        _annotationHandle = AnnotationHandle.None;
+        _annotationCaptureElement = null;
+        if (capture?.IsMouseCaptured == true)
+        {
+            capture.ReleaseMouseCapture();
+        }
+
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void ScientificObject_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: FigureScientificObjectViewModel scientificObject } element ||
+            DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        if (e.OriginalSource is DependencyObject original &&
+            FindVisualAncestor<Thumb>(original) is not null)
+        {
+            return;
+        }
+
+        viewModel.Figure.SelectedScientificObject = scientificObject;
+        if (scientificObject.IsLocked)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        if (scientificObject.Kind == SciCanvas.Core.Export.FigureScientificObjectKind.PolygonAnnotation &&
+            e.ClickCount >= 2 &&
+            e.OriginalSource is DependencyObject polygonSource &&
+            FindVisualAncestor<System.Windows.Shapes.Polygon>(polygonSource) is not null)
+        {
+            Point insertionPoint = e.GetPosition(FigureSurface);
+            viewModel.BeginHistoryGesture();
+            viewModel.Figure.TryInsertSelectedPolygonAnnotationVertex(
+                insertionPoint.X,
+                insertionPoint.Y);
+            viewModel.CompleteHistoryGesture();
+            e.Handled = true;
+            return;
+        }
+
+        scientificObject.ClearSelectedPolygonVertex();
+        viewModel.BeginHistoryGesture();
+        _draggedScientificObject = scientificObject;
+        _scientificObjectCaptureElement = element;
+        _scientificObjectDragAnchor = e.GetPosition(FigureSurface);
+        _isResizingScientificObject = false;
+        _scientificPolygonDragVertexIndex = -1;
+        element.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void ScientificObject_OnMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_draggedScientificObject is null ||
+            _isResizingScientificObject ||
+            e.LeftButton != MouseButtonState.Pressed ||
+            DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        Point position = e.GetPosition(FigureSurface);
+        viewModel.Figure.MoveScientificObject(
+            _draggedScientificObject,
+            position.X - _scientificObjectDragAnchor.X,
+            position.Y - _scientificObjectDragAnchor.Y);
+        _scientificObjectDragAnchor = position;
+        e.Handled = true;
+    }
+
+    private void ScientificObject_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        EndScientificObjectGesture();
+        e.Handled = true;
+    }
+
+    private void ScientificObject_OnLostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (_scientificObjectCaptureElement is not null &&
+            !ReferenceEquals(sender, _scientificObjectCaptureElement))
+        {
+            return;
+        }
+
+        _draggedScientificObject = null;
+        _scientificObjectCaptureElement = null;
+        _isResizingScientificObject = false;
+        _scientificPolygonDragVertexIndex = -1;
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.CompleteHistoryGesture();
+        }
+    }
+
+    private void ScientificObjectResizeHandle_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: FigureScientificObjectViewModel scientificObject } element ||
+            DataContext is not MainWindowViewModel viewModel ||
+            scientificObject.IsLocked)
+        {
+            return;
+        }
+
+        viewModel.Figure.SelectedScientificObject = scientificObject;
+        viewModel.BeginHistoryGesture();
+        _draggedScientificObject = scientificObject;
+        _scientificObjectCaptureElement = element;
+        _isResizingScientificObject = true;
+        _scientificPolygonDragVertexIndex = -1;
+        element.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void ScientificObjectResizeHandle_OnMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_draggedScientificObject is null ||
+            !_isResizingScientificObject ||
+            e.LeftButton != MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        Point position = e.GetPosition(FigureSurface);
+        _draggedScientificObject.SetResizePoint(position.X, position.Y);
+        e.Handled = true;
+    }
+
+    private void ScientificObjectResizeHandle_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        EndScientificObjectGesture();
+        e.Handled = true;
+    }
+
+    private void ScientificObjectResizeHandle_OnLostMouseCapture(object sender, MouseEventArgs e) =>
+        ScientificObject_OnLostMouseCapture(sender, e);
+
+    private void ScientificPolygonVertexHandle_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement
+            {
+                DataContext: FigureScientificVertexHandle handle,
+                Tag: FigureScientificObjectViewModel scientificObject,
+            } element ||
+            DataContext is not MainWindowViewModel viewModel ||
+            scientificObject.IsLocked)
+        {
+            return;
+        }
+
+        viewModel.Figure.SelectedScientificObject = scientificObject;
+        if (!scientificObject.TrySelectPolygonVertex(handle.Index))
+        {
+            return;
+        }
+
+        viewModel.BeginHistoryGesture();
+        _draggedScientificObject = scientificObject;
+        _scientificObjectCaptureElement = element;
+        _isResizingScientificObject = true;
+        _scientificPolygonDragVertexIndex = handle.Index;
+        element.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void ScientificPolygonVertexHandle_OnMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_draggedScientificObject is null ||
+            _scientificPolygonDragVertexIndex < 0 ||
+            e.LeftButton != MouseButtonState.Pressed ||
+            DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        Point position = e.GetPosition(FigureSurface);
+        viewModel.Figure.TryMoveSelectedPolygonAnnotationVertex(
+            _scientificPolygonDragVertexIndex,
+            position.X,
+            position.Y);
+        e.Handled = true;
+    }
+
+    private void ScientificPolygonVertexHandle_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        EndScientificObjectGesture();
+        e.Handled = true;
+    }
+
+    private void ScientificPolygonVertexHandle_OnLostMouseCapture(object sender, MouseEventArgs e) =>
+        ScientificObject_OnLostMouseCapture(sender, e);
+
+    private void FigurePolygonAnnotationDraft_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (DataContext is not MainWindowViewModel viewModel ||
+            !viewModel.Figure.HasPendingPolygonAnnotation)
+        {
+            return;
+        }
+
+        if (e.ClickCount >= 2)
+        {
+            viewModel.Figure.CompletePendingPolygonAnnotation();
+            e.Handled = true;
+            return;
+        }
+
+        Point position = e.GetPosition(FigureSurface);
+        viewModel.Figure.TryAddPolygonAnnotationDraftVertex(position.X, position.Y);
+        e.Handled = true;
+    }
+
+    private void EndScientificObjectGesture()
+    {
+        FrameworkElement? capture = _scientificObjectCaptureElement;
+        _draggedScientificObject = null;
+        _scientificObjectCaptureElement = null;
+        _isResizingScientificObject = false;
+        _scientificPolygonDragVertexIndex = -1;
+        if (capture?.IsMouseCaptured == true)
+        {
+            capture.ReleaseMouseCapture();
+        }
+
         if (DataContext is MainWindowViewModel viewModel)
         {
             viewModel.CompleteHistoryGesture();
@@ -1319,11 +1744,58 @@ public partial class MainWindow : Window
 
         bool control = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
         bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
+        if (e.Key == Key.Enter &&
+            DataContext is MainWindowViewModel
+            {
+                WorkspaceMode: WorkspaceMode.Figure,
+                Figure.HasPendingPolygonAnnotation: true,
+            } polygonCompletionViewModel)
+        {
+            polygonCompletionViewModel.Figure.CompletePendingPolygonAnnotation();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Enter &&
+            DataContext is MainWindowViewModel { HasPendingCanonicalRoi: true } roiCompletionViewModel)
+        {
+            e.Handled = roiCompletionViewModel.CompletePendingCanonicalRoi();
+            return;
+        }
+
         if (e.Key is Key.Delete or Key.Back)
         {
             if (DataContext is MainWindowViewModel viewModel)
             {
-                viewModel.DeleteSelectionCommand.Execute(null);
+                if (viewModel.WorkspaceMode == WorkspaceMode.Figure &&
+                    viewModel.Figure.SelectedScientificObject is
+                    {
+                        Kind: SciCanvas.Core.Export.FigureScientificObjectKind.PolygonAnnotation,
+                        SelectedPolygonVertexIndex: >= 0,
+                    } selectedPolygon)
+                {
+                    viewModel.BeginHistoryGesture();
+                    viewModel.Figure.TryDeleteSelectedPolygonAnnotationVertex(
+                        selectedPolygon.SelectedPolygonVertexIndex);
+                    viewModel.CompleteHistoryGesture();
+                }
+                else if (_selectedCanonicalRoiVertexIndex >= 0 &&
+                    viewModel.RoiPropagationWorkspace.SelectedRoi is { } selected &&
+                    selected.AssetId == viewModel.SelectedSource?.Asset.Id)
+                {
+                    viewModel.BeginHistoryGesture();
+                    bool deleted = viewModel.TryDeleteSelectedCanonicalRoiVertex(
+                        _selectedCanonicalRoiVertexIndex);
+                    viewModel.CompleteHistoryGesture();
+                    if (deleted)
+                    {
+                        _selectedCanonicalRoiVertexIndex = -1;
+                    }
+                }
+                else
+                {
+                    viewModel.DeleteSelectionCommand.Execute(null);
+                }
             }
             e.Handled = true;
             return;
@@ -1331,6 +1803,21 @@ public partial class MainWindow : Window
 
         if (e.Key == Key.Escape)
         {
+            if (DataContext is MainWindowViewModel
+                {
+                    WorkspaceMode: WorkspaceMode.Figure,
+                } polygonCancellationViewModel &&
+                polygonCancellationViewModel.Figure.CancelPendingPolygonAnnotation())
+            {
+                e.Handled = true;
+                return;
+            }
+            if (DataContext is MainWindowViewModel roiCancellationViewModel &&
+                roiCancellationViewModel.CancelPendingCanonicalRoi())
+            {
+                e.Handled = true;
+                return;
+            }
             CancelActiveGestureAndClearSelection();
             e.Handled = true;
             return;
@@ -1475,6 +1962,15 @@ public partial class MainWindow : Window
 
         if (viewModel.WorkspaceMode == WorkspaceMode.Figure)
         {
+            if (viewModel.Figure.SelectedPlotPanel is { IsLocked: false } plotPanel)
+            {
+                viewModel.Figure.MovePlotPanel(
+                    plotPanel,
+                    plotPanel.X + deltaX,
+                    plotPanel.Y + deltaY);
+                viewModel.CompleteHistoryGesture();
+                return true;
+            }
             if (viewModel.Figure.SelectedAnnotation is { IsLocked: false } annotation)
             {
                 viewModel.Figure.MoveAnnotation(annotation, deltaX, deltaY);
@@ -1508,6 +2004,10 @@ public partial class MainWindow : Window
         {
             EndMeasurementGesture();
         }
+        if (_draggedCanonicalRoi is not null)
+        {
+            EndCanonicalRoiGesture();
+        }
         if (_gesture != CropGesture.None)
         {
             EndGesture();
@@ -1536,14 +2036,39 @@ public partial class MainWindow : Window
         }
         else
         {
+            if (_draggedFigurePlotPanel is not null)
+            {
+                EndFigurePlotPanelDrag();
+            }
+            if (_resizingFigurePlotPanel is not null)
+            {
+                EndFigurePlotPanelResize();
+            }
             viewModel.Figure.SelectedAnnotation = null;
             viewModel.Figure.SelectedGuide = null;
+            viewModel.Figure.SelectedPlotPanel = null;
             viewModel.Figure.ClearPanelSelectionCommand.Execute(null);
         }
     }
 
     private static bool IsTextInputFocused() => Keyboard.FocusedElement is
         TextBoxBase or PasswordBox or ComboBox;
+
+    private static T? FindVisualAncestor<T>(DependencyObject? element)
+        where T : DependencyObject
+    {
+        for (DependencyObject? current = element;
+             current is not null;
+             current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is T match)
+            {
+                return match;
+            }
+        }
+
+        return null;
+    }
 
     private async void MainWindow_OnClosing(object? sender, CancelEventArgs e)
     {
@@ -1606,5 +2131,13 @@ public partial class MainWindow : Window
         PointA,
         PointB,
         PointC,
+    }
+
+    private enum AnnotationHandle
+    {
+        None,
+        Move,
+        Start,
+        End,
     }
 }

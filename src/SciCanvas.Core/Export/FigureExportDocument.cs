@@ -54,7 +54,8 @@ public sealed record FigurePanelExportItem(
     StyleOverride? StyleOverride = null,
     Guid PanelId = default,
     IReadOnlyList<FigureScaleBarExportSpec>? ScaleBars = null,
-    IReadOnlyList<FigureChannelLayerExportItem>? ChannelLayers = null)
+    IReadOnlyList<FigureChannelLayerExportItem>? ChannelLayers = null,
+    long SourceRevision = 1)
 {
     public IReadOnlyList<FigureScaleBarExportSpec> EffectiveScaleBars => ScaleBars is { Count: > 0 }
         ? ScaleBars
@@ -167,6 +168,8 @@ public sealed record FigureAnnotationExportItem
     public bool IsVisible { get; init; }
 
     public int ZIndex { get; init; }
+
+    public Guid Id { get; init; }
 
     public string Color => string.Equals(Kind, "text", StringComparison.OrdinalIgnoreCase)
         ? TextColor
@@ -287,7 +290,9 @@ public sealed record FigureExportDocument
         FigureGlobalStyle? globalStyle = null,
         IReadOnlyList<FigureMeasurementOverlayExportItem>? measurementOverlays = null,
         IReadOnlyList<FigureScientificObjectExportItem>? scientificObjects = null,
-        PdfFontStrategy pdfFontStrategy = PdfFontStrategy.OutlineText)
+        IReadOnlyList<FigureRoiProjectionExportItem>? roiProjections = null,
+        PdfFontStrategy pdfFontStrategy = PdfFontStrategy.OutlineText,
+        IReadOnlyList<FigurePlotPanelExportItem>? plotPanels = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(widthPixels);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(heightPixels);
@@ -308,6 +313,8 @@ public sealed record FigureExportDocument
         GlobalStyle = globalStyle ?? FigureGlobalStyle.Default;
         MeasurementOverlays = measurementOverlays ?? [];
         ScientificObjects = scientificObjects ?? [];
+        RoiProjections = roiProjections ?? [];
+        PlotPanels = plotPanels ?? [];
         if (!Enum.IsDefined(pdfFontStrategy))
         {
             throw new ArgumentOutOfRangeException(nameof(pdfFontStrategy));
@@ -315,6 +322,10 @@ public sealed record FigureExportDocument
 
         PdfFontStrategy = pdfFontStrategy;
         GlobalStyle.EnsureValid();
+        foreach (FigurePlotPanelExportItem plotPanel in PlotPanels)
+        {
+            plotPanel.EnsureValid();
+        }
     }
 
     public int WidthPixels { get; }
@@ -330,6 +341,10 @@ public sealed record FigureExportDocument
     public IReadOnlyList<FigureMeasurementOverlayExportItem> MeasurementOverlays { get; }
 
     public IReadOnlyList<FigureScientificObjectExportItem> ScientificObjects { get; }
+
+    public IReadOnlyList<FigureRoiProjectionExportItem> RoiProjections { get; }
+
+    public IReadOnlyList<FigurePlotPanelExportItem> PlotPanels { get; }
 
     public string BackgroundColor { get; }
 

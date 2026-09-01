@@ -17,12 +17,30 @@ public sealed class ExportProvenanceIntegrationTests
     public void Create_RecordsCompositeRegistrationRoiScientificObjectsAndFontPolicy()
     {
         SourceAsset reference = CreateSource("HAADF.tif", 16);
-        SourceAsset titanium = CreateSource("Ti.tif", 16);
+        SourceAsset titanium = CreateSource("Ti.tif", 16, channels: 3);
         Guid groupId = Guid.NewGuid();
         Guid haadfChannel = Guid.NewGuid();
         Guid tiChannel = Guid.NewGuid();
+        SpatialMapping mapping = SpatialMapping.CreateIdentity(
+            reference.Id, titanium.Id, 3, 4, DateTimeOffset.UnixEpoch.AddDays(1));
+        var resampling = new RegisteredPlaneResamplingSpec(
+            mapping,
+            new RegisteredReferenceGrid(
+                new ScientificPlaneRef(reference.Id, 3, ChannelPlaneSelector.ExternalAsset(0)),
+                new PixelRect64(0, 0, 4, 4)),
+            titanium.Metadata.PixelSize,
+            RegisteredInterpolation.Bilinear,
+            RegisteredBorderPolicy.Transparent);
         var firstLayer = CreateLayer(groupId, reference, haadfChannel, "HAADF", "#FFFFFFFF", 3);
-        var secondLayer = CreateLayer(groupId, titanium, tiChannel, "Ti", "#FFFF0000", 4);
+        var secondLayer = CreateLayer(
+            groupId,
+            titanium,
+            tiChannel,
+            "Ti",
+            "#FFFF0000",
+            4,
+            ChannelPlaneSelector.InterleavedComponent(0, 2),
+            resampling);
         var panel = new FigurePanelExportItem(
             reference,
             new PixelRect64(0, 0, 4, 4),
@@ -75,8 +93,6 @@ public sealed class ExportProvenanceIntegrationTests
             scientificObjects: [colorbar, legend],
             pdfFontStrategy: PdfFontStrategy.PreferEmbeddedWithOutlineFallback);
 
-        SpatialMapping mapping = SpatialMapping.CreateIdentity(
-            reference.Id, titanium.Id, 3, 4, DateTimeOffset.UnixEpoch.AddDays(1));
         var link = new SpatialLinkGroup(
             Guid.NewGuid(),
             "EDS linked view",
@@ -121,10 +137,42 @@ public sealed class ExportProvenanceIntegrationTests
         Assert.Equal(4, ti.SourceRevision);
         Assert.Equal(16, ti.BitDepth);
         Assert.Equal(65535, ti.DisplayMaximum);
+        Assert.Equal("InterleavedComponent", ti.SourceKind);
+        Assert.Equal(2, ti.ComponentIndex);
+        Assert.Equal(mapping.Id, ti.MappingId);
+        Assert.Equal("Identity", ti.MappingKind);
+        Assert.Equal(mapping.Matrix, ti.MappingMatrix);
+        Assert.Equal("Bilinear", ti.Interpolation);
+        Assert.Equal("Transparent", ti.BorderPolicy);
+        Assert.Equal("ContinuousDisplay", ti.PlaneSemantic);
+        Assert.Equal(3, ti.MappingSourceRevision);
+        Assert.Equal(4, ti.MappingTargetRevision);
+        FigureProvenanceReferenceGrid referenceGrid = Assert.IsType<FigureProvenanceReferenceGrid>(
+            ti.ReferenceGrid);
+        Assert.Equal(reference.Id, referenceGrid.AssetId);
+        Assert.Equal(new PixelRect64(0, 0, 4, 4), referenceGrid.Region);
+        Assert.Equal(4, referenceGrid.Width);
+        Assert.Equal(4, referenceGrid.Height);
+        Assert.Equal("ExternalAsset", referenceGrid.SourceKind);
         Assert.Equal(mapping.Id, Assert.Single(provenance.Registrations!).MappingId);
-        Assert.Equal(targetRoiId, Assert.Single(provenance.RoiPropagations!).TargetRoiId);
-        Assert.Equal(tiChannel, Assert.Single(provenance.Colorbars!).ChannelId);
-        Assert.Equal("Ti", Assert.Single(Assert.Single(provenance.ChannelLegends!).Entries).Label);
+        FigureProvenanceRoiPropagation roiPropagation = Assert.Single(provenance.RoiPropagations!);
+        Assert.Equal(targetRoiId, roiPropagation.TargetRoiId);
+        Assert.Equal(1, roiPropagation.TargetCoverageFraction);
+        FigureProvenanceColorbar colorbarProvenance = Assert.Single(provenance.Colorbars!);
+        Assert.Equal(tiChannel, colorbarProvenance.ChannelId);
+        Assert.Equal("Linked", colorbarProvenance.BindingState);
+        Assert.Equal("Vertical", colorbarProvenance.Orientation);
+        Assert.Equal(5, colorbarProvenance.Ticks.Count);
+        FigureProvenanceChannelLegend legendProvenance = Assert.Single(provenance.ChannelLegends!);
+        Assert.Equal("Ti", Assert.Single(legendProvenance.Entries).Label);
+        Assert.Equal("Arial", legendProvenance.FontFamily);
+        Assert.Equal(7, legendProvenance.FontSizePt);
+        Assert.Equal("#FFFFFFFF", legendProvenance.TextColor);
+        Assert.Equal("#AA000000", legendProvenance.BackgroundColor);
+        Assert.Equal(65, legendProvenance.BackgroundOpacityPercent);
+        Assert.Equal("#FFFFFFFF", legendProvenance.BorderColor);
+        Assert.Equal(1, legendProvenance.BorderWidthPt);
+        Assert.Equal(5, legendProvenance.PaddingPixels);
         FigureProvenanceFontResolution font = Assert.Single(provenance.FontResolutions!);
         Assert.Equal("Helvetica Neue", font.RequestedFont);
         Assert.Equal("Arial", font.EffectiveFont);
@@ -141,16 +189,18 @@ public sealed class ExportProvenanceIntegrationTests
         Guid channelId,
         string name,
         string color,
-        long revision)
+        long revision,
+        ChannelPlaneSelector? planeSelector = null,
+        RegisteredPlaneResamplingSpec? resampling = null)
     {
-        var descriptor = new ScientificChannelDescriptor(
+        planeSelector ??= ChannelPlaneSelector.ExternalAsset(0);
+        ScientificChannelDescriptor descriptor = planeSelector.CreateChannelDescriptor(
             channelId,
-            0,
             name,
-            ScientificChannelSourceKind.ExternalAsset,
             ScientificSampleType.UInt16,
             16,
-            DefaultColor: color);
+            role: null,
+            defaultColor: color);
         return new FigureChannelLayerExportItem(
             groupId,
             source,
@@ -158,14 +208,22 @@ public sealed class ExportProvenanceIntegrationTests
             new PixelRect64(0, 0, 4, 4),
             0,
             descriptor,
-            new ChannelDisplaySettings(channelId, true, color, 1, 0, 65535, 1, false));
+            new ChannelDisplaySettings(channelId, true, color, 1, 0, 65535, 1, false),
+            RegistrationResampling: resampling);
     }
 
-    private static SourceAsset CreateSource(string name, int bitsPerChannel) => new(
+    private static SourceAsset CreateSource(
+        string name,
+        int bitsPerChannel,
+        int channels = 1) => new(
         Guid.NewGuid(),
         name,
         name,
         new SourceFingerprint(32, DateTimeOffset.UnixEpoch, new string('A', 64), null),
-        new ImageMetadata(new PixelSize64(4, 4), 1, bitsPerChannel, $"Gray{bitsPerChannel}"),
+        new ImageMetadata(
+            new PixelSize64(4, 4),
+            channels,
+            bitsPerChannel,
+            channels == 1 ? $"Gray{bitsPerChannel}" : $"Rgb{bitsPerChannel * 3}"),
         SourceLinkState.Verified);
 }

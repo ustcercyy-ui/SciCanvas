@@ -4,9 +4,22 @@ using SciCanvas.Core.Sources;
 
 namespace SciCanvas.Imaging;
 
-public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
+public sealed class WpfAssistedRegionAnalyzer :
+    IAssistedRegionAnalyzer,
+    IAnalysisResourcePolicyProvider
 {
-    public const string AnalyzerVersion = "scicanvas.connected-components.v2";
+    public const string AnalyzerVersion = "scicanvas.connected-components.v3";
+
+    public WpfAssistedRegionAnalyzer(AnalysisResourcePolicy? resourcePolicy = null)
+    {
+        ResourcePolicy = resourcePolicy ?? AnalysisResourcePolicy.Default;
+        if (!ResourcePolicy.IsValid)
+        {
+            throw new ArgumentException("颗粒分析资源策略无效。", nameof(resourcePolicy));
+        }
+    }
+
+    public AnalysisResourcePolicy ResourcePolicy { get; }
 
     public Task<AssistedRegionAnalysisResult> AnalyzeAsync(
         SourceAsset source,
@@ -35,6 +48,8 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
             throw new InvalidDataException("分析 ROI 超出源图范围。");
         }
 
+        ValidateResourceEnvelope(source, options.RegionOfInterest, channel);
+
         return Task.Run(
             () => AnalyzeCore(
                 source,
@@ -42,6 +57,7 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
                 frameIndex,
                 sourceRevision,
                 channel,
+                ResourcePolicy,
                 cancellationToken),
             cancellationToken);
     }
@@ -52,6 +68,7 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
         int frameIndex,
         long sourceRevision,
         ImageAnalysisChannel channel,
+        AnalysisResourcePolicy resourcePolicy,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -70,49 +87,58 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
                 pixelBuffer.MaximumValue,
                 pixelBuffer.SourceBitDepth == 16 ? 4096 : 256)
             : options.ThresholdNormalized * pixelBuffer.MaximumValue;
-        bool[] foreground = new bool[pixels.Count];
+        var pixelState = new byte[pixels.Count];
         long foregroundCount = 0;
         for (int index = 0; index < pixels.Count; index++)
         {
             bool isForeground = options.DetectDarkRegions
                 ? pixels[index] <= threshold
                 : pixels[index] > threshold;
-            foreground[index] = isForeground;
             if (isForeground)
             {
+                pixelState[index] = 1;
                 foregroundCount++;
             }
         }
 
-        bool[] visited = new bool[pixels.Count];
         var candidates = new List<AssistedRegionCandidate>();
-        var queue = new Queue<int>();
-        for (int seed = 0; seed < foreground.Length; seed++)
+        var floodQueue = new int[pixels.Count];
+        var rowMinimumX = new int[height];
+        var rowMaximumX = new int[height];
+        Array.Fill(rowMinimumX, int.MaxValue);
+        Array.Fill(rowMaximumX, -1);
+        var touchedRows = new List<int>(Math.Min(height, resourcePolicy.MaxBoundaryPoints / 4));
+        for (int seed = 0; seed < pixelState.Length; seed++)
         {
-            if (!foreground[seed] || visited[seed])
+            if (pixelState[seed] != 1)
             {
                 continue;
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            visited[seed] = true;
-            queue.Enqueue(seed);
+            int queueHead = 0;
+            int queueTail = 0;
+            pixelState[seed] = 2;
+            floodQueue[queueTail++] = seed;
             int area = 0;
             int perimeter = 0;
             double intensitySum = 0;
             long sumX = 0;
             long sumY = 0;
-            var boundaryPoints = new List<ComponentPoint>();
             int minX = width;
             int minY = height;
             int maxX = 0;
             int maxY = 0;
-            while (queue.Count > 0)
+            while (queueHead < queueTail)
             {
-                int current = queue.Dequeue();
+                int current = floodQueue[queueHead++];
                 int x = current % width;
                 int y = current / width;
                 area++;
+                if ((area & 0x3FFF) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
                 intensitySum += pixels[current];
                 sumX += x;
                 sumY += y;
@@ -120,11 +146,28 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
                 minY = Math.Min(minY, y);
                 maxX = Math.Max(maxX, x);
                 maxY = Math.Max(maxY, y);
-                int boundaryEdges = BoundaryEdges(foreground, width, height, x, y);
+                int boundaryEdges = BoundaryEdges(pixelState, width, height, x, y);
                 perimeter += boundaryEdges;
-                if (boundaryEdges > 0)
+                if (rowMaximumX[y] < 0)
                 {
-                    AddPixelCorners(boundaryPoints, x, y);
+                    touchedRows.Add(y);
+                    long retainedBoundaryPoints = touchedRows.Count * 4L;
+                    if (retainedBoundaryPoints > resourcePolicy.MaxBoundaryPoints)
+                    {
+                        throw new AnalysisTooComplexException(
+                            AnalysisResourceLimitKind.MaxBoundaryPoints,
+                            retainedBoundaryPoints,
+                            resourcePolicy.MaxBoundaryPoints,
+                            "单个连通域需要保留的凸包支持点过多");
+                    }
+
+                    rowMinimumX[y] = x;
+                    rowMaximumX[y] = x;
+                }
+                else
+                {
+                    rowMinimumX[y] = Math.Min(rowMinimumX[y], x);
+                    rowMaximumX[y] = Math.Max(rowMaximumX[y], x);
                 }
 
                 for (int offsetY = -1; offsetY <= 1; offsetY++)
@@ -144,10 +187,10 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
                         }
 
                         int next = nextY * width + nextX;
-                        if (foreground[next] && !visited[next])
+                        if (pixelState[next] == 1)
                         {
-                            visited[next] = true;
-                            queue.Enqueue(next);
+                            pixelState[next] = 2;
+                            floodQueue[queueTail++] = next;
                         }
                     }
                 }
@@ -155,6 +198,7 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
 
             if (area < options.MinimumAreaPixels)
             {
+                ResetRows(touchedRows, rowMinimumX, rowMaximumX);
                 continue;
             }
 
@@ -164,11 +208,23 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
                                  (double)Math.Max(1, Math.Min(componentWidth, componentHeight));
             if (options.RequiresElongatedShape && aspectRatio < 3)
             {
+                ResetRows(touchedRows, rowMinimumX, rowMaximumX);
                 continue;
             }
 
-            ComponentPoint[] hull = CreateConvexHull(boundaryPoints);
+            if (candidates.Count >= resourcePolicy.MaxComponentsSafety)
+            {
+                throw new AnalysisTooComplexException(
+                    AnalysisResourceLimitKind.MaxComponentsSafety,
+                    candidates.Count + 1L,
+                    resourcePolicy.MaxComponentsSafety,
+                    "符合筛选条件的连通域数量过多");
+            }
+
+            ComponentPoint[] hull = CreateConvexHull(
+                CreateRowExtremePoints(touchedRows, rowMinimumX, rowMaximumX));
             (double feretMaximum, double feretMinimum) = CalculateFeretDiameters(hull);
+            ResetRows(touchedRows, rowMinimumX, rowMaximumX);
 
             candidates.Add(new AssistedRegionCandidate(
                 candidates.Count + 1,
@@ -209,25 +265,127 @@ public sealed class WpfAssistedRegionAnalyzer : IAssistedRegionAnalyzer
             AnalyzerId = AnalyzerVersion,
             AnalyzedAt = DateTimeOffset.UtcNow,
             SourceBitDepth = pixelBuffer.SourceBitDepth,
+            ResourcePolicy = resourcePolicy,
         };
     }
 
-    private static int BoundaryEdges(bool[] foreground, int width, int height, int x, int y)
+    private void ValidateResourceEnvelope(
+        SourceAsset source,
+        SciCanvas.Core.Geometry.PixelRect64 region,
+        ImageAnalysisChannel channel)
+    {
+        long pixelCount;
+        try
+        {
+            pixelCount = checked(region.Width * region.Height);
+        }
+        catch (OverflowException)
+        {
+            pixelCount = long.MaxValue;
+        }
+
+        long effectivePixelLimit = Math.Min(ResourcePolicy.MaxPixels, int.MaxValue);
+        if (pixelCount > effectivePixelLimit)
+        {
+            throw new AnalysisTooComplexException(
+                AnalysisResourceLimitKind.MaxPixels,
+                pixelCount,
+                effectivePixelLimit,
+                "分析 ROI 的像素数量过大");
+        }
+
+        long estimatedBytes = EstimatePeakWorkingBytes(
+            source,
+            region.Height,
+            pixelCount,
+            channel,
+            ResourcePolicy);
+        if (estimatedBytes > ResourcePolicy.MemoryBudgetBytes)
+        {
+            throw new AnalysisTooComplexException(
+                AnalysisResourceLimitKind.MemoryBudget,
+                estimatedBytes,
+                ResourcePolicy.MemoryBudgetBytes,
+                "分析所需的峰值工作内存估算超过预算（字节）");
+        }
+    }
+
+    private static long EstimatePeakWorkingBytes(
+        SourceAsset source,
+        long regionHeight,
+        long pixelCount,
+        ImageAnalysisChannel channel,
+        AnalysisResourcePolicy resourcePolicy)
+    {
+        try
+        {
+            long sourcePlaneCount =
+                source.Metadata.Channels > 1 && channel == ImageAnalysisChannel.Luminance ? 3 : 1;
+            long sourceBytesPerSample = source.Metadata.BitsPerChannel > 8 ? 2 : 1;
+            long perPixelBytes =
+                8 + // normalized/raw intensity buffer
+                1 + // background/unvisited/visited state
+                4 + // reusable connected-component queue
+                4 + // conservative decoder/conversion overhead
+                sourcePlaneCount * sourceBytesPerSample;
+            long maximumBoundaryPointsForRegion = Math.Min(
+                resourcePolicy.MaxBoundaryPoints,
+                checked(regionHeight * 4));
+            long maximumComponentsForRegion = Math.Min(
+                resourcePolicy.MaxComponentsSafety,
+                pixelCount);
+            return checked(
+                1_048_576L +
+                pixelCount * perPixelBytes +
+                regionHeight * 12 +
+                // Distinct/hash + sorted point array + two-sided hull workspace.
+                maximumBoundaryPointsForRegion * 96L +
+                // Candidate records plus ordering/re-numbering buffers.
+                maximumComponentsForRegion * 256L);
+        }
+        catch (OverflowException)
+        {
+            return long.MaxValue;
+        }
+    }
+
+    private static int BoundaryEdges(byte[] pixelState, int width, int height, int x, int y)
     {
         int edges = 0;
-        if (x == 0 || !foreground[y * width + x - 1]) edges++;
-        if (x == width - 1 || !foreground[y * width + x + 1]) edges++;
-        if (y == 0 || !foreground[(y - 1) * width + x]) edges++;
-        if (y == height - 1 || !foreground[(y + 1) * width + x]) edges++;
+        if (x == 0 || pixelState[y * width + x - 1] == 0) edges++;
+        if (x == width - 1 || pixelState[y * width + x + 1] == 0) edges++;
+        if (y == 0 || pixelState[(y - 1) * width + x] == 0) edges++;
+        if (y == height - 1 || pixelState[(y + 1) * width + x] == 0) edges++;
         return edges;
     }
 
-    private static void AddPixelCorners(ICollection<ComponentPoint> points, int x, int y)
+    private static IEnumerable<ComponentPoint> CreateRowExtremePoints(
+        IEnumerable<int> touchedRows,
+        IReadOnlyList<int> rowMinimumX,
+        IReadOnlyList<int> rowMaximumX)
     {
-        points.Add(new ComponentPoint(x, y));
-        points.Add(new ComponentPoint(x + 1, y));
-        points.Add(new ComponentPoint(x + 1, y + 1));
-        points.Add(new ComponentPoint(x, y + 1));
+        foreach (int y in touchedRows)
+        {
+            int left = rowMinimumX[y];
+            int right = rowMaximumX[y] + 1;
+            yield return new ComponentPoint(left, y);
+            yield return new ComponentPoint(right, y);
+            yield return new ComponentPoint(right, y + 1);
+            yield return new ComponentPoint(left, y + 1);
+        }
+    }
+
+    private static void ResetRows(
+        ICollection<int> touchedRows,
+        IList<int> rowMinimumX,
+        IList<int> rowMaximumX)
+    {
+        foreach (int y in touchedRows)
+        {
+            rowMinimumX[y] = int.MaxValue;
+            rowMaximumX[y] = -1;
+        }
+        touchedRows.Clear();
     }
 
     private static ComponentPoint[] CreateConvexHull(IEnumerable<ComponentPoint> points)

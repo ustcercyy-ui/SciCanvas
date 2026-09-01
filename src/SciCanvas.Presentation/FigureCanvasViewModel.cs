@@ -4,7 +4,9 @@ using System.Windows;
 using System.Windows.Media;
 using SciCanvas.Core.Channels;
 using SciCanvas.Core.Cropping;
+using SciCanvas.Core.Data;
 using SciCanvas.Core.Export;
+using SciCanvas.Core.Plotting;
 using LinkGroup = SciCanvas.Core.Linking.LinkGroup;
 using LinkSyncOptions = SciCanvas.Core.Linking.LinkSyncOptions;
 using SpatialMapping = SciCanvas.Core.Linking.SpatialMapping;
@@ -37,10 +39,13 @@ public sealed class FigureCanvasViewModel : ObservableObject
 {
     private readonly TemplateCanvasLayout _layout;
     private FigurePanelViewModel? _selectedPanel;
+    private FigurePlotPanelViewModel? _selectedPlotPanel;
     private FigureAnnotationViewModel? _selectedAnnotation;
     private FigureScientificObjectViewModel? _selectedScientificObject;
     private FigureGuideViewModel? _selectedGuide;
     private bool _isUpdatingPanelSelection;
+    private bool _isUpdatingPlotPanelSelection;
+    private bool _isUpdatingAnnotationSelection;
     private bool _isSnappingEnabled = true;
     private double _snapTolerancePixels = 12;
     private long _exactSpacingPixels = 24;
@@ -69,12 +74,14 @@ public sealed class FigureCanvasViewModel : ObservableObject
     private double _scaleBarFontSizePt = FigureGlobalStyle.Default.EffectiveScaleBarFontSizePt;
     private bool _scaleBarLabelIsBold = FigureGlobalStyle.Default.ScaleBarLabelIsBold;
     private double _scaleBarThicknessPt = FigureGlobalStyle.Default.EffectiveScaleBarThicknessPt;
-    private bool _isSynchronizingLinkedViews;
     private bool _isUpdatingLinkGroupMembership;
-    private string _linkSynchronizationStatusText = "尚未创建跨素材联动组。";
     private ScientificColorEntryViewModel? _selectedScientificColor;
     private ScientificColorApplicationTarget _scientificColorApplicationTarget;
     private FigureAnnotationStyle? _copiedAnnotationStyle;
+    private readonly Dictionary<Guid, RoiProjectionPanelState> _roiProjectionPanelStates = [];
+    private bool _isRestoringRoiProjectionPanelState;
+    private readonly List<FigureScientificPoint> _polygonAnnotationDraftPoints = [];
+    private bool _isCreatingPolygonAnnotation;
 
     public event EventHandler? DocumentChanged;
 
@@ -92,6 +99,9 @@ public sealed class FigureCanvasViewModel : ObservableObject
         RemoveSelectedCommand = new RelayCommand(
             RemoveSelected,
             () => SelectedPanels.Any(panel => !panel.IsLocked));
+        RemoveSelectedPlotPanelCommand = new RelayCommand(
+            RemoveSelectedPlotPanel,
+            () => SelectedPlotPanel is { IsLocked: false });
         MoveLayerUpCommand = new RelayCommand(MoveLayerUp, () => SelectedPanel is { IsLocked: false });
         MoveLayerDownCommand = new RelayCommand(MoveLayerDown, () => SelectedPanel is { IsLocked: false });
         SelectAllPanelsCommand = new RelayCommand(SelectAllPanels, () => Panels.Count > 0);
@@ -168,7 +178,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
         ResetBackgroundCommand = new RelayCommand(() => BackgroundColor = "#FFFFFFFF");
         RenumberPanelLabelsCommand = new RelayCommand(
             () => RenumberPanelLabels(force: true),
-            () => Panels.Count > 0);
+            () => Panels.Count > 0 || PlotPanels.Count > 0);
         ApplyGlobalStyleCommand = new RelayCommand(ApplyGlobalStyleToAnnotations, () => IsGlobalStyleValid);
         ResetSelectedPanelLabelStyleCommand = new RelayCommand(
             ResetSelectedPanelLabelStyle,
@@ -202,8 +212,36 @@ public sealed class FigureCanvasViewModel : ObservableObject
         AddLineAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Line));
         AddRectangleAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Rectangle));
         AddEllipseAnnotationCommand = new RelayCommand(() => AddAnnotation(FigureAnnotationKind.Ellipse));
+        SelectAllAnnotationsCommand = new RelayCommand(SelectAllAnnotations, () => Annotations.Count > 0);
+        ClearAnnotationSelectionCommand = new RelayCommand(
+            () => SelectOnlyAnnotation(null),
+            () => SelectedAnnotationCount > 0);
+        AlignAnnotationLeftCommand = new RelayCommand(
+            () => AlignAnnotationSelection(PanelAlignment.Left),
+            CanAlignAnnotationSelection);
+        AlignAnnotationHorizontalCenterCommand = new RelayCommand(
+            () => AlignAnnotationSelection(PanelAlignment.HorizontalCenter),
+            CanAlignAnnotationSelection);
+        AlignAnnotationRightCommand = new RelayCommand(
+            () => AlignAnnotationSelection(PanelAlignment.Right),
+            CanAlignAnnotationSelection);
+        AlignAnnotationTopCommand = new RelayCommand(
+            () => AlignAnnotationSelection(PanelAlignment.Top),
+            CanAlignAnnotationSelection);
+        AlignAnnotationVerticalCenterCommand = new RelayCommand(
+            () => AlignAnnotationSelection(PanelAlignment.VerticalCenter),
+            CanAlignAnnotationSelection);
+        AlignAnnotationBottomCommand = new RelayCommand(
+            () => AlignAnnotationSelection(PanelAlignment.Bottom),
+            CanAlignAnnotationSelection);
+        SetAnnotationDirectionHorizontalCommand = new RelayCommand(
+            () => SetSelectedAnnotationDirection(0),
+            CanSetSelectedAnnotationDirection);
+        SetAnnotationDirectionVerticalCommand = new RelayCommand(
+            () => SetSelectedAnnotationDirection(90),
+            CanSetSelectedAnnotationDirection);
+        BeginPolygonAnnotationCommand = new RelayCommand(BeginPolygonAnnotationCreation);
         AddPolygonScientificObjectCommand = new RelayCommand(() => AddScientificObject(FigureScientificObjectKind.PolygonAnnotation));
-        AddRoiScientificObjectCommand = new RelayCommand(() => AddScientificObject(FigureScientificObjectKind.Roi));
         AddDirectionMarkerCommand = new RelayCommand(() => AddScientificObject(FigureScientificObjectKind.DirectionMarker));
         AddColorbarCommand = new RelayCommand(() => AddScientificObject(FigureScientificObjectKind.Colorbar));
         AddChannelLegendCommand = new RelayCommand(() => AddScientificObject(FigureScientificObjectKind.ChannelLegend));
@@ -234,27 +272,53 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
     public FigureTemplateDefinition Template { get; }
 
-    public ObservableCollection<FigurePanelViewModel> Panels { get; } = [];
+    public FigurePanelCollectionViewModel PanelCollection { get; } = new();
 
-    public ObservableCollection<FigureAnnotationViewModel> Annotations { get; } = [];
+    public FigureObjectCollectionViewModel ObjectCollection { get; } = new();
 
-    public ObservableCollection<FigureScientificObjectViewModel> ScientificObjects { get; } = [];
+    public FigureLinkCoordinator LinkCoordinator { get; } = new();
 
-    public ObservableCollection<FigureMeasurementOverlayViewModel> MeasurementOverlays { get; } = [];
+    public ObservableCollection<FigurePanelViewModel> Panels => PanelCollection.Panels;
 
-    public ObservableCollection<FigureGuideViewModel> Guides { get; } = [];
+    public ObservableCollection<FigurePlotPanelViewModel> PlotPanels { get; } = [];
 
-    public ObservableCollection<ScientificColorEntryViewModel> ScientificColors { get; } = [];
+    public ObservableCollection<FigureAnnotationViewModel> Annotations =>
+        ObjectCollection.Annotations;
 
-    public ObservableCollection<LinkGroup> LinkGroups { get; } = [];
+    public ObservableCollection<FigureScientificObjectViewModel> ScientificObjects =>
+        ObjectCollection.ScientificObjects;
+
+    public IReadOnlyList<ChannelGroupMember> ColorbarChannels { get; private set; } = [];
+
+    public ObservableCollection<FigureMeasurementOverlayViewModel> MeasurementOverlays =>
+        PanelCollection.MeasurementOverlays;
+
+    public ObservableCollection<FigureRoiProjectionViewModel> RoiProjections =>
+        PanelCollection.RoiProjections;
+
+    public ObservableCollection<FigureGuideViewModel> Guides => ObjectCollection.Guides;
+
+    public ObservableCollection<ScientificColorEntryViewModel> ScientificColors =>
+        ObjectCollection.ScientificColors;
+
+    public ObservableCollection<LinkGroup> LinkGroups => LinkCoordinator.LinkGroups;
 
     public string LinkSynchronizationStatusText
     {
-        get => _linkSynchronizationStatusText;
-        private set => SetProperty(ref _linkSynchronizationStatusText, value);
+        get => LinkCoordinator.StatusText;
+        private set
+        {
+            if (!string.Equals(LinkCoordinator.StatusText, value, StringComparison.Ordinal))
+            {
+                LinkCoordinator.StatusText = value;
+                OnPropertyChanged();
+            }
+        }
     }
 
     public RelayCommand RemoveSelectedCommand { get; }
+
+    public RelayCommand RemoveSelectedPlotPanelCommand { get; }
 
     public RelayCommand MoveLayerUpCommand { get; }
 
@@ -320,9 +384,29 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
     public RelayCommand AddEllipseAnnotationCommand { get; }
 
-    public RelayCommand AddPolygonScientificObjectCommand { get; }
+    public RelayCommand SelectAllAnnotationsCommand { get; }
 
-    public RelayCommand AddRoiScientificObjectCommand { get; }
+    public RelayCommand ClearAnnotationSelectionCommand { get; }
+
+    public RelayCommand AlignAnnotationLeftCommand { get; }
+
+    public RelayCommand AlignAnnotationHorizontalCenterCommand { get; }
+
+    public RelayCommand AlignAnnotationRightCommand { get; }
+
+    public RelayCommand AlignAnnotationTopCommand { get; }
+
+    public RelayCommand AlignAnnotationVerticalCenterCommand { get; }
+
+    public RelayCommand AlignAnnotationBottomCommand { get; }
+
+    public RelayCommand SetAnnotationDirectionHorizontalCommand { get; }
+
+    public RelayCommand SetAnnotationDirectionVerticalCommand { get; }
+
+    public RelayCommand BeginPolygonAnnotationCommand { get; }
+
+    public RelayCommand AddPolygonScientificObjectCommand { get; }
 
     public RelayCommand AddDirectionMarkerCommand { get; }
 
@@ -932,9 +1016,10 @@ public sealed class FigureCanvasViewModel : ObservableObject
         {
             int insetCount = Panels.Count(panel => panel.IsInset);
             int regularCount = Panels.Count - insetCount;
-            return insetCount == 0
+            string imageText = insetCount == 0
                 ? $"{regularCount} / {SlotCount} 个面板"
                 : $"{regularCount} / {SlotCount} 个面板 · {insetCount} Inset";
+            return PlotPanels.Count == 0 ? imageText : $"{imageText} · {PlotPanels.Count} Plot";
         }
     }
 
@@ -949,9 +1034,35 @@ public sealed class FigureCanvasViewModel : ObservableObject
         ? Visibility.Visible
         : Visibility.Collapsed;
 
+    public IReadOnlyList<FigureAnnotationViewModel> SelectedAnnotations =>
+        Annotations.Where(annotation => annotation.IsSelected).ToArray();
+
+    public int SelectedAnnotationCount => Annotations.Count(annotation => annotation.IsSelected);
+
+    public string SelectedAnnotationCountText => $"已选择 {SelectedAnnotationCount} 个标注";
+
+    public Visibility MultipleAnnotationSelectionVisibility => SelectedAnnotationCount >= 2
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+
     public string AnnotationCountText => $"{Annotations.Count} 个标注";
 
     public string ScientificObjectCountText => $"{ScientificObjects.Count} 个科研对象";
+
+    public bool HasPendingPolygonAnnotation => _isCreatingPolygonAnnotation;
+
+    public Visibility PolygonAnnotationDraftVisibility => _isCreatingPolygonAnnotation
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+
+    public PointCollection PolygonAnnotationDraftPoints => new(
+        _polygonAnnotationDraftPoints.Select(point => new Point(point.X, point.Y)));
+
+    public string PolygonAnnotationDraftHint => !_isCreatingPolygonAnnotation
+        ? "点击“Polygon Annotation”后在 Figure Canvas 逐点创建。"
+        : _polygonAnnotationDraftPoints.Count < 3
+            ? $"已添加 {_polygonAnnotationDraftPoints.Count} 个点；至少需要 3 个点。"
+            : $"已添加 {_polygonAnnotationDraftPoints.Count} 个点；Enter 或双击完成，Esc 取消。";
 
     public string GuideCountText => $"{Guides.Count} 条";
 
@@ -1019,7 +1130,8 @@ public sealed class FigureCanvasViewModel : ObservableObject
         ? Visibility.Collapsed
         : Visibility.Visible;
 
-    public Visibility EmptyVisibility => Panels.Count == 0 && Annotations.Count == 0 && ScientificObjects.Count == 0
+    public Visibility EmptyVisibility => Panels.Count == 0 && PlotPanels.Count == 0 && Annotations.Count == 0 &&
+        ScientificObjects.Count == 0 && RoiProjections.Count == 0
         ? Visibility.Visible
         : Visibility.Collapsed;
 
@@ -1030,6 +1142,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
         {
             if (value is not null)
             {
+                SelectedPlotPanel = null;
                 SelectedAnnotation = null;
                 SelectedScientificObject = null;
                 SelectedGuide = null;
@@ -1039,40 +1152,79 @@ public sealed class FigureCanvasViewModel : ObservableObject
         }
     }
 
+    public FigurePlotPanelViewModel? SelectedPlotPanel
+    {
+        get => _selectedPlotPanel;
+        set
+        {
+            if (value is not null)
+            {
+                SelectOnlyPanel(null);
+                SelectedAnnotation = null;
+                SelectedScientificObject = null;
+                SelectedGuide = null;
+            }
+
+            SelectOnlyPlotPanel(value);
+        }
+    }
+
     public FigureAnnotationViewModel? SelectedAnnotation
     {
         get => _selectedAnnotation;
         set
         {
-            if (ReferenceEquals(_selectedAnnotation, value))
+            if (value is not null)
             {
+                SelectOnlyPanel(null);
+                SelectedPlotPanel = null;
+                SelectedScientificObject = null;
+                SelectedGuide = null;
+            }
+
+            SelectOnlyAnnotation(value);
+        }
+    }
+
+    public void SelectAnnotation(FigureAnnotationViewModel annotation, bool toggle)
+    {
+        ArgumentNullException.ThrowIfNull(annotation);
+        if (!Annotations.Contains(annotation))
+        {
+            throw new InvalidOperationException("只能选择当前拼版中的标注。");
+        }
+
+        SelectOnlyPanel(null);
+        SelectedPlotPanel = null;
+        SelectedScientificObject = null;
+        SelectedGuide = null;
+
+        if (!toggle)
+        {
+            if (annotation.IsSelected && SelectedAnnotationCount > 1)
+            {
+                SetPrimaryAnnotation(annotation);
                 return;
             }
 
-            if (_selectedAnnotation is not null)
-            {
-                _selectedAnnotation.IsSelected = false;
-            }
-
-            _selectedAnnotation = value;
-            if (_selectedAnnotation is not null)
-            {
-                SelectOnlyPanel(null);
-                SelectedScientificObject = null;
-                SelectedGuide = null;
-                _selectedAnnotation.IsSelected = true;
-            }
-
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(SelectedAnnotationVisibility));
-            RemoveSelectedAnnotationCommand.NotifyCanExecuteChanged();
-            MoveAnnotationUpCommand.NotifyCanExecuteChanged();
-            MoveAnnotationDownCommand.NotifyCanExecuteChanged();
-            ResetSelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
-            CopySelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
-            PasteSelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
-            ApplyAnnotationStyleToSameTypeCommand.NotifyCanExecuteChanged();
+            SelectOnlyAnnotation(annotation);
+            return;
         }
+
+        _isUpdatingAnnotationSelection = true;
+        try
+        {
+            annotation.IsSelected = !annotation.IsSelected;
+        }
+        finally
+        {
+            _isUpdatingAnnotationSelection = false;
+        }
+
+        SetPrimaryAnnotation(annotation.IsSelected
+            ? annotation
+            : SelectedAnnotations.LastOrDefault());
+        NotifyAnnotationSelectionChanged();
     }
     public FigureScientificObjectViewModel? SelectedScientificObject
     {
@@ -1084,12 +1236,19 @@ public sealed class FigureCanvasViewModel : ObservableObject
                 return;
             }
 
+            if (_selectedScientificObject is not null)
+            {
+                _selectedScientificObject.IsSelected = false;
+            }
+
             _selectedScientificObject = value;
             if (_selectedScientificObject is not null)
             {
                 SelectOnlyPanel(null);
+                SelectedPlotPanel = null;
                 SelectedAnnotation = null;
                 SelectedGuide = null;
+                _selectedScientificObject.IsSelected = true;
             }
 
             OnPropertyChanged();
@@ -1097,6 +1256,88 @@ public sealed class FigureCanvasViewModel : ObservableObject
             RemoveSelectedScientificObjectCommand.NotifyCanExecuteChanged();
         }
     }
+
+    public void MoveScientificObject(
+        FigureScientificObjectViewModel scientificObject,
+        double deltaX,
+        double deltaY)
+    {
+        ArgumentNullException.ThrowIfNull(scientificObject);
+        if (!ScientificObjects.Contains(scientificObject))
+        {
+            throw new InvalidOperationException("只能移动当前拼版中的科研对象。");
+        }
+
+        scientificObject.MoveBy(deltaX, deltaY);
+    }
+
+    public void BeginPolygonAnnotationCreation()
+    {
+        _polygonAnnotationDraftPoints.Clear();
+        _isCreatingPolygonAnnotation = true;
+        SelectedScientificObject = null;
+        NotifyPolygonAnnotationDraftChanged();
+    }
+
+    public bool TryAddPolygonAnnotationDraftVertex(double x, double y)
+    {
+        if (!_isCreatingPolygonAnnotation ||
+            !double.IsFinite(x) || !double.IsFinite(y) ||
+            x < 0 || x > CanvasWidth || y < 0 || y > CanvasHeight)
+        {
+            return false;
+        }
+
+        _polygonAnnotationDraftPoints.Add(new FigureScientificPoint(x, y));
+        NotifyPolygonAnnotationDraftChanged();
+        return true;
+    }
+
+    public bool CompletePendingPolygonAnnotation()
+    {
+        if (!_isCreatingPolygonAnnotation || _polygonAnnotationDraftPoints.Count < 3)
+        {
+            return false;
+        }
+
+        FigureScientificObjectViewModel scientificObject = CreateScientificObject(
+            FigureScientificObjectKind.PolygonAnnotation);
+        if (!scientificObject.TrySetPolygonPoints(_polygonAnnotationDraftPoints))
+        {
+            return false;
+        }
+
+        AddScientificObject(scientificObject);
+        _polygonAnnotationDraftPoints.Clear();
+        _isCreatingPolygonAnnotation = false;
+        NotifyPolygonAnnotationDraftChanged();
+        return true;
+    }
+
+    public bool CancelPendingPolygonAnnotation()
+    {
+        if (!_isCreatingPolygonAnnotation)
+        {
+            return false;
+        }
+
+        _polygonAnnotationDraftPoints.Clear();
+        _isCreatingPolygonAnnotation = false;
+        NotifyPolygonAnnotationDraftChanged();
+        return true;
+    }
+
+    public bool TryMoveSelectedPolygonAnnotationVertex(int index, double x, double y) =>
+        SelectedScientificObject is { Kind: FigureScientificObjectKind.PolygonAnnotation } scientificObject &&
+        scientificObject.TryMovePolygonVertex(index, x, y);
+
+    public bool TryInsertSelectedPolygonAnnotationVertex(double x, double y) =>
+        SelectedScientificObject is { Kind: FigureScientificObjectKind.PolygonAnnotation } scientificObject &&
+        scientificObject.TryInsertPolygonVertex(x, y, out _);
+
+    public bool TryDeleteSelectedPolygonAnnotationVertex(int index) =>
+        SelectedScientificObject is { Kind: FigureScientificObjectKind.PolygonAnnotation } scientificObject &&
+        scientificObject.TryDeletePolygonVertex(index);
 
     public FigureGuideViewModel? SelectedGuide
     {
@@ -1117,6 +1358,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
             if (_selectedGuide is not null)
             {
                 SelectOnlyPanel(null);
+                SelectedPlotPanel = null;
                 SelectedAnnotation = null;
                 SelectedScientificObject = null;
                 _selectedGuide.IsSelected = true;
@@ -1136,6 +1378,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
             throw new InvalidOperationException("只能选择当前拼版中的面板。");
         }
 
+        SelectedPlotPanel = null;
         SelectedAnnotation = null;
         SelectedGuide = null;
 
@@ -1165,6 +1408,17 @@ public sealed class FigureCanvasViewModel : ObservableObject
             ? panel
             : SelectedPanels.LastOrDefault());
         NotifyPanelSelectionChanged();
+    }
+
+    public void SelectPlotPanel(FigurePlotPanelViewModel panel)
+    {
+        ArgumentNullException.ThrowIfNull(panel);
+        if (!PlotPanels.Contains(panel))
+        {
+            throw new InvalidOperationException("只能选择当前拼版中的 Plot panel。");
+        }
+
+        SelectedPlotPanel = panel;
     }
 
     public void RestorePanelSelection(IEnumerable<Guid> selectedPanelIds, Guid? primaryPanelId)
@@ -1396,6 +1650,90 @@ public sealed class FigureCanvasViewModel : ObservableObject
         return panel;
     }
 
+    public FigurePlotPanelViewModel AddPlotPanel(PlotObject plot, TabularDataAsset dataAsset)
+    {
+        ArgumentNullException.ThrowIfNull(plot);
+        ArgumentNullException.ThrowIfNull(dataAsset);
+        plot.EnsureValid(dataAsset);
+        long width = Math.Min(720, Math.Max(120, CanvasWidth * 2L / 5));
+        long height = Math.Min(520, Math.Max(100, CanvasHeight * 2L / 5));
+        long offset = 24L * (PlotPanels.Count + 1);
+        var panel = new FigurePlotPanelViewModel(
+            plot,
+            dataAsset,
+            new PixelRect64(
+                Math.Min(offset, Math.Max(0, CanvasWidth - width)),
+                Math.Min(offset, Math.Max(0, CanvasHeight - height)),
+                width,
+                height),
+            string.Empty,
+            Panels.Count + PlotPanels.Count,
+            Dpi);
+        AttachPlotPanel(panel);
+        PlotPanels.Add(panel);
+        RenumberPanelLabels(force: false);
+        SelectedPlotPanel = panel;
+        NotifyPlotPanelCollectionChanged();
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+        return panel;
+    }
+
+    public FigurePlotPanelViewModel RestorePlotPanel(
+        PlotObject plot,
+        TabularDataAsset dataAsset,
+        Guid id,
+        PixelRect64 destinationRect,
+        string label,
+        bool isVisible,
+        bool isLocked,
+        int zIndex,
+        StyleOverride? styleOverride = null,
+        FigurePlotTypographyOverride? typographyOverride = null)
+    {
+        if (id == Guid.Empty || PlotPanels.Any(panel => panel.Id == id))
+        {
+            throw new InvalidOperationException("Figure Plot panel ID 必须唯一且非空。");
+        }
+        if (destinationRect.Right > CanvasWidth || destinationRect.Bottom > CanvasHeight)
+        {
+            throw new InvalidOperationException("Figure Plot panel 超出画布范围。");
+        }
+
+        var panel = new FigurePlotPanelViewModel(
+            plot,
+            dataAsset,
+            destinationRect,
+            label,
+            zIndex,
+            Dpi,
+            id);
+        panel.RestoreState(isVisible, isLocked, styleOverride, typographyOverride);
+        AttachPlotPanel(panel);
+        PlotPanels.Add(panel);
+        SelectedPlotPanel = panel;
+        NotifyPlotPanelCollectionChanged();
+        return panel;
+    }
+
+    public bool IsPlotReferenced(Guid plotId) =>
+        PlotPanels.Any(panel => panel.PlotId == plotId);
+
+    public void SynchronizePlotReferences(
+        IReadOnlyCollection<PlotObject> plots,
+        IReadOnlyCollection<TabularDataAsset> dataAssets)
+    {
+        ArgumentNullException.ThrowIfNull(plots);
+        ArgumentNullException.ThrowIfNull(dataAssets);
+        foreach (FigurePlotPanelViewModel panel in PlotPanels)
+        {
+            PlotObject plot = plots.SingleOrDefault(candidate => candidate.Id == panel.PlotId)
+                ?? throw new InvalidOperationException($"Figure Plot panel 引用的 Plot {panel.PlotId} 不存在。");
+            TabularDataAsset dataAsset = dataAssets.SingleOrDefault(candidate => candidate.Id == plot.Data.DataAssetId)
+                ?? throw new InvalidOperationException($"Plot {plot.Name} 引用的 DataAsset 不存在。");
+            panel.UpdatePlot(plot, dataAsset);
+        }
+    }
+
     public void Clear()
     {
         foreach (FigurePanelViewModel panel in Panels)
@@ -1405,6 +1743,12 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
         Panels.Clear();
         SelectedPanel = null;
+        foreach (FigurePlotPanelViewModel panel in PlotPanels)
+        {
+            panel.PropertyChanged -= OnPlotPanelPropertyChanged;
+        }
+        PlotPanels.Clear();
+        SelectedPlotPanel = null;
         LinkGroups.Clear();
         LinkGroupsChanged?.Invoke(this, EventArgs.Empty);
         LinkSynchronizationStatusText = "当前没有跨素材联动组。";
@@ -1421,7 +1765,10 @@ public sealed class FigureCanvasViewModel : ObservableObject
         }
         ScientificObjects.Clear();
         SelectedScientificObject = null;
+        CancelPendingPolygonAnnotation();
         MeasurementOverlays.Clear();
+        RoiProjections.Clear();
+        _roiProjectionPanelStates.Clear();
         foreach (FigureGuideViewModel guide in Guides)
         {
             guide.PropertyChanged -= OnGuidePropertyChanged;
@@ -1447,10 +1794,27 @@ public sealed class FigureCanvasViewModel : ObservableObject
         panel.Y = Math.Clamp(y, 0, Math.Max(0, CanvasHeight - panel.Height));
     }
 
+    public void MovePlotPanel(FigurePlotPanelViewModel panel, long x, long y)
+    {
+        ArgumentNullException.ThrowIfNull(panel);
+        if (!PlotPanels.Contains(panel) || panel.IsLocked)
+        {
+            return;
+        }
+
+        panel.X = Math.Clamp(x, 0, Math.Max(0, CanvasWidth - panel.Width));
+        panel.Y = Math.Clamp(y, 0, Math.Max(0, CanvasHeight - panel.Height));
+    }
+
     public FigureExportDocument CreateExportDocument(
         IReadOnlyList<MultiChannelAssetGroup>? multiChannelGroups = null,
         IReadOnlyCollection<SourceAssetItemViewModel>? sources = null)
     {
+        if (multiChannelGroups is not null)
+        {
+            SynchronizeScientificObjectChannels(multiChannelGroups);
+        }
+
         FigurePanelExportItem[] panels = Panels
             .OrderBy(panel => panel.ZIndex)
             .Select(panel => new FigurePanelExportItem(
@@ -1466,7 +1830,8 @@ public sealed class FigureCanvasViewModel : ObservableObject
                 panel.StyleOverride,
                 panel.Id,
                 panel.CreateScaleBarExportSpecs(),
-                CreateChannelLayers(panel, multiChannelGroups, sources)))
+                CreateChannelLayers(panel, multiChannelGroups, sources),
+                panel.Source.SourceRevision))
             .ToArray();
         FigureAnnotationExportItem[] annotations = Annotations
             .OrderBy(annotation => annotation.ZIndex)
@@ -1475,6 +1840,10 @@ public sealed class FigureCanvasViewModel : ObservableObject
         FigureScientificObjectExportItem[] scientificObjects = ScientificObjects
             .OrderBy(scientificObject => scientificObject.ZIndex)
             .Select(scientificObject => scientificObject.CreateExportItem())
+            .ToArray();
+        FigurePlotPanelExportItem[] plotPanels = PlotPanels
+            .OrderBy(panel => panel.ZIndex)
+            .Select(panel => panel.CreateExportItem(ShowPanelLabels))
             .ToArray();
         return new FigureExportDocument(
             CanvasWidth,
@@ -1485,7 +1854,9 @@ public sealed class FigureCanvasViewModel : ObservableObject
             NormalizedBackgroundColor,
             globalStyle: GlobalStyle,
             measurementOverlays: MeasurementOverlays.Select(overlay => overlay.CreateExportItem()).ToArray(),
-            scientificObjects: scientificObjects);
+            scientificObjects: scientificObjects,
+            roiProjections: RoiProjections.Select(projection => projection.CreateExportItem()).ToArray(),
+            plotPanels: plotPanels);
     }
 
     private IReadOnlyList<FigureChannelLayerExportItem> CreateChannelLayers(
@@ -1509,6 +1880,11 @@ public sealed class FigureCanvasViewModel : ObservableObject
             throw new InvalidOperationException(
                 $"Composite panel {panel.Label} source does not belong to group {group.Name}.");
         }
+        if (panel.Source.Asset.Id != group.ReferenceAssetId)
+        {
+            throw new InvalidOperationException(
+                $"Composite panel {panel.Label} must use the group reference channel as its output grid.");
+        }
 
         LinkGroup? linkGroup = LinkGroups.FirstOrDefault(link =>
             link.ContainsAsset(panel.Source.Asset.Id) &&
@@ -1521,6 +1897,12 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
         if (linkGroup is not null)
         {
+            if (linkGroup.ReferenceAssetId != group.ReferenceAssetId)
+            {
+                throw new InvalidOperationException(
+                    $"Composite group {group.Name} and LinkGroup must share the same reference asset.");
+            }
+
             IReadOnlyDictionary<Guid, long> revisions = availableSources
                 .Where(item => linkGroup.ContainsAsset(item.Asset.Id))
                 .ToDictionary(item => item.Asset.Id, item => item.SourceRevision);
@@ -1531,27 +1913,43 @@ public sealed class FigureCanvasViewModel : ObservableObject
             }
         }
 
+        ChannelGroupMember referenceMember = group.Members.Single(
+            member => member.AssetId == group.ReferenceAssetId);
+        var referenceGrid = new RegisteredReferenceGrid(
+            new ScientificPlaneRef(
+                group.ReferenceAssetId,
+                panel.Source.SourceRevision,
+                referenceMember.PlaneSelector),
+            panel.SourceRect).EnsureValid();
         return group.Members.Select(member =>
         {
             SourceAssetItemViewModel source = availableSources.Single(item => item.Asset.Id == member.AssetId);
-            PixelRect64 sourceRect = member.AssetId == panel.Source.Asset.Id || linkGroup is null
-                ? panel.SourceRect
-                : linkGroup.MapCrop(panel.Source.Asset.Id, member.AssetId, panel.SourceRect);
+            RegisteredPlaneResamplingSpec? resampling = null;
+            PixelRect64 sourceRect = panel.SourceRect;
+            if (member.AssetId != group.ReferenceAssetId && linkGroup is not null)
+            {
+                SpatialMapping mapping = linkGroup.Mappings.Single(
+                    candidate => candidate.TargetAssetId == member.AssetId);
+                resampling = new RegisteredPlaneResamplingSpec(
+                    mapping,
+                    referenceGrid,
+                    source.Asset.Metadata.PixelSize,
+                    RegisteredInterpolation.Bilinear,
+                    RegisteredBorderPolicy.Transparent,
+                    RegisteredPlaneSemantic.ContinuousDisplay).EnsureValid();
+                sourceRect = RegisteredPlaneResampler.CalculateSourceReadRegion(resampling);
+            }
+
             ScientificSampleType sampleType = source.Asset.Metadata.BitsPerChannel <= 8
                 ? ScientificSampleType.UInt8
                 : ScientificSampleType.UInt16;
-            ScientificChannelSourceKind sourceKind = source.Asset.Metadata.Channels == 1
-                ? ScientificChannelSourceKind.ExternalAsset
-                : ScientificChannelSourceKind.InterleavedComponent;
-            var selector = new ScientificChannelDescriptor(
+            ScientificChannelDescriptor selector = member.PlaneSelector.CreateChannelDescriptor(
                 member.ChannelId,
-                Index: 0,
                 member.Name,
-                sourceKind,
                 sampleType,
                 source.Asset.Metadata.BitsPerChannel,
-                Role: member.Role,
-                DefaultColor: member.Color).EnsureValid();
+                member.Role,
+                member.Color);
             return new FigureChannelLayerExportItem(
                 group.Id,
                 source.Asset,
@@ -1559,7 +1957,8 @@ public sealed class FigureCanvasViewModel : ObservableObject
                 sourceRect,
                 member.FrameIndex,
                 selector,
-                member.DisplaySettings).EnsureValid();
+                member.DisplaySettings,
+                RegistrationResampling: resampling).EnsureValid();
         }).ToArray();
     }
 
@@ -1658,6 +2057,126 @@ public sealed class FigureCanvasViewModel : ObservableObject
         NotifyMeasurementOverlayCollectionChanged();
         return overlay;
     }
+
+    public FigureRoiProjectionViewModel AddRoiProjection(RoiObject roi) =>
+        AddRoiProjection(
+            roi,
+            SelectedPanel ?? throw new InvalidOperationException(
+                "请先在 Figure 中选择一个与 ROI 同源的 Panel。"));
+
+    public FigureRoiProjectionViewModel AddRoiProjection(
+        RoiObject roi,
+        FigurePanelViewModel panel)
+    {
+        ArgumentNullException.ThrowIfNull(roi);
+        ArgumentNullException.ThrowIfNull(panel);
+        roi.EnsureValid();
+        if (roi.Validity.State == ScientificValidityState.Invalid ||
+            roi.AssetId != panel.Source.Asset.Id ||
+            roi.SourceRevision != panel.Source.SourceRevision ||
+            roi.FrameIndex != panel.FrameIndex)
+        {
+            throw new InvalidOperationException(
+                "只有当前 source revision/frame 上的可用 canonical ROI 才能投影到同源 Figure Panel。");
+        }
+
+        if (!FigureRoiProjectionMapper.FitsPanelSourceRect(roi, panel.SourceRect))
+        {
+            throw new InvalidOperationException(
+                "Canonical ROI 未完全位于所选 Panel crop 内；请调整 crop 后再创建 Figure projection。");
+        }
+
+        FigureRoiProjectionViewModel? existing = RoiProjections.FirstOrDefault(projection =>
+            projection.RoiId == roi.Id && projection.PanelId == panel.Id);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var projectionObject = new RoiFigureProjectionObject
+        {
+            Id = Guid.NewGuid(),
+            RoiId = roi.Id,
+            PanelId = panel.Id,
+            AssetId = roi.AssetId,
+            SourceRevision = roi.SourceRevision,
+            IsVisible = true,
+            ZIndex = RoiProjections.Count,
+        };
+        var projection = new FigureRoiProjectionViewModel(projectionObject, roi, panel);
+        RoiProjections.Add(projection);
+        RememberRoiProjectionPanelState(panel);
+        NotifyRoiProjectionCollectionChanged();
+        return projection;
+    }
+
+    public FigureRoiProjectionViewModel RestoreRoiProjection(
+        RoiFigureProjectionObject projectionObject,
+        RoiObject roi)
+    {
+        ArgumentNullException.ThrowIfNull(projectionObject);
+        ArgumentNullException.ThrowIfNull(roi);
+        FigurePanelViewModel panel = Panels.SingleOrDefault(candidate => candidate.Id == projectionObject.PanelId)
+            ?? throw new InvalidOperationException("ROI Figure Projection 引用了不存在的 Figure Panel。");
+        if (projectionObject.RoiId != roi.Id)
+        {
+            throw new InvalidOperationException("ROI Figure Projection 引用了错误的 canonical ROI。");
+        }
+
+        var projection = new FigureRoiProjectionViewModel(projectionObject, roi, panel);
+        RoiProjections.Add(projection);
+        RememberRoiProjectionPanelState(panel);
+        NotifyRoiProjectionCollectionChanged();
+        return projection;
+    }
+
+    public bool RemoveRoiProjection(Guid projectionId)
+    {
+        FigureRoiProjectionViewModel? projection =
+            RoiProjections.FirstOrDefault(item => item.Id == projectionId);
+        if (projection is null)
+        {
+            return false;
+        }
+
+        RoiProjections.Remove(projection);
+        if (!RoiProjections.Any(item => item.PanelId == projection.PanelId))
+        {
+            _roiProjectionPanelStates.Remove(projection.PanelId);
+        }
+        NotifyRoiProjectionCollectionChanged();
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+        return true;
+    }
+
+    public void RefreshRoiProjectionSource(RoiObject canonicalRoi)
+    {
+        ArgumentNullException.ThrowIfNull(canonicalRoi);
+        foreach (FigureRoiProjectionViewModel projection in RoiProjections
+                     .Where(item => item.RoiId == canonicalRoi.Id))
+        {
+            projection.UpdateCanonicalRoi(canonicalRoi);
+        }
+
+        if (RoiProjections.Any(item => item.RoiId == canonicalRoi.Id))
+        {
+            DocumentChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    public void ValidateRoiProjectionSource(RoiObject canonicalRoi)
+    {
+        ArgumentNullException.ThrowIfNull(canonicalRoi);
+        foreach (FigureRoiProjectionViewModel projection in RoiProjections
+                     .Where(item => item.RoiId == canonicalRoi.Id))
+        {
+            projection.ValidateCanonicalRoi(canonicalRoi);
+        }
+    }
+
+    public bool HasRoiProjections(Guid panelId) =>
+        RoiProjections.Any(item => item.PanelId == panelId);
+
     public int ResetRegularPanelsToTemplateLayout()
     {
         int updated = 0;
@@ -1835,12 +2354,18 @@ public sealed class FigureCanvasViewModel : ObservableObject
         string unit,
         string colormap,
         string channelEntriesText,
-        Guid? channelId = null)
+        Guid? channelId = null,
+        ColorbarBindingState? colorbarBindingState = null,
+        FigureObjectOrientation colorbarOrientation = FigureObjectOrientation.Vertical,
+        string? colorbarTicksText = null,
+        double channelLegendPadding = 5)
     {
         var scientificObject = new FigureScientificObjectViewModel(kind, CanvasWidth, CanvasHeight, Dpi, zIndex, id);
         scientificObject.Restore(pointsText, label, strokeColor, fillColor, fillOpacityPercent, textColor,
             fontFamily, fontSizePt, strokeWidthPt, isBold, isVisible, isLocked, minimum, maximum, unit,
-            colormap, channelEntriesText, channelId);
+            colormap, channelEntriesText, channelId, colorbarBindingState, colorbarOrientation,
+            colorbarTicksText, channelLegendPadding);
+        scientificObject.SetAvailableChannels(ColorbarChannels);
         scientificObject.PropertyChanged += OnScientificObjectPropertyChanged;
         ScientificObjects.Add(scientificObject);
         SelectedScientificObject = scientificObject;
@@ -1850,8 +2375,18 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
     private void AddScientificObject(FigureScientificObjectKind kind)
     {
+        AddScientificObject(CreateScientificObject(kind));
+    }
+
+    private FigureScientificObjectViewModel CreateScientificObject(FigureScientificObjectKind kind)
+    {
         FigureScientificObjectViewModel? previous = ScientificObjects.LastOrDefault();
-        var scientificObject = new FigureScientificObjectViewModel(kind, CanvasWidth, CanvasHeight, Dpi, ScientificObjects.Count)
+        var scientificObject = new FigureScientificObjectViewModel(
+            kind,
+            CanvasWidth,
+            CanvasHeight,
+            Dpi,
+            ScientificObjects.Count)
         {
             StrokeColor = previous?.StrokeColor ?? GlobalShapeColor,
             FillColor = previous?.FillColor ?? GlobalShapeColor,
@@ -1860,11 +2395,45 @@ public sealed class FigureCanvasViewModel : ObservableObject
             FontSizePt = previous?.FontSizePt ?? GlobalFontSizePt,
             StrokeWidthPt = previous?.StrokeWidthPt ?? GlobalStrokeWidthPt,
         };
+        scientificObject.SetAvailableChannels(ColorbarChannels);
+        if (kind == FigureScientificObjectKind.Colorbar && ColorbarChannels.FirstOrDefault() is { } channel)
+        {
+            scientificObject.LinkColorbarToChannel(channel);
+        }
+        return scientificObject;
+    }
+
+    public void SynchronizeScientificObjectChannels(IReadOnlyList<MultiChannelAssetGroup> groups)
+    {
+        ArgumentNullException.ThrowIfNull(groups);
+        ColorbarChannels = groups
+            .SelectMany(group => group.Members)
+            .GroupBy(member => member.ChannelId)
+            .Select(group => group.Last())
+            .OrderBy(member => member.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        OnPropertyChanged(nameof(ColorbarChannels));
+        foreach (FigureScientificObjectViewModel scientificObject in ScientificObjects)
+        {
+            scientificObject.SetAvailableChannels(ColorbarChannels);
+        }
+    }
+
+    private void AddScientificObject(FigureScientificObjectViewModel scientificObject)
+    {
         scientificObject.PropertyChanged += OnScientificObjectPropertyChanged;
         ScientificObjects.Add(scientificObject);
         SelectedScientificObject = scientificObject;
         NotifyScientificObjectCollectionChanged();
         EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void NotifyPolygonAnnotationDraftChanged()
+    {
+        OnPropertyChanged(nameof(HasPendingPolygonAnnotation));
+        OnPropertyChanged(nameof(PolygonAnnotationDraftVisibility));
+        OnPropertyChanged(nameof(PolygonAnnotationDraftPoints));
+        OnPropertyChanged(nameof(PolygonAnnotationDraftHint));
     }
 
     private void RemoveSelectedScientificObject()
@@ -1891,7 +2460,110 @@ public sealed class FigureCanvasViewModel : ObservableObject
     public void MoveAnnotation(FigureAnnotationViewModel annotation, double deltaX, double deltaY)
     {
         ArgumentNullException.ThrowIfNull(annotation);
+        if (annotation.IsSelected)
+        {
+            MoveSelectedAnnotationsBy(deltaX, deltaY);
+            return;
+        }
+
         annotation.MoveBy(deltaX, deltaY);
+    }
+
+    public (double DeltaX, double DeltaY) MoveSelectedAnnotationsBy(double deltaX, double deltaY)
+    {
+        FigureAnnotationViewModel[] movable = SelectedAnnotations
+            .Where(annotation => !annotation.IsLocked)
+            .ToArray();
+        if (movable.Length == 0 || !double.IsFinite(deltaX) || !double.IsFinite(deltaY))
+        {
+            return (0, 0);
+        }
+
+        double minimumX = movable.Min(annotation => annotation.Bounds.Left);
+        double maximumX = movable.Max(annotation => annotation.Bounds.Right);
+        double minimumY = movable.Min(annotation => annotation.Bounds.Top);
+        double maximumY = movable.Max(annotation => annotation.Bounds.Bottom);
+        double adjustedX = Math.Clamp(deltaX, -minimumX, CanvasWidth - maximumX);
+        double adjustedY = Math.Clamp(deltaY, -minimumY, CanvasHeight - maximumY);
+        foreach (FigureAnnotationViewModel annotation in movable)
+        {
+            annotation.MoveBy(adjustedX, adjustedY);
+        }
+
+        return (adjustedX, adjustedY);
+    }
+
+    private void AlignAnnotationSelection(PanelAlignment alignment)
+    {
+        if (SelectedAnnotation is not { } reference || SelectedAnnotationCount < 2)
+        {
+            return;
+        }
+
+        Rect referenceBounds = reference.Bounds;
+        foreach (FigureAnnotationViewModel annotation in SelectedAnnotations.Where(
+                     annotation => !annotation.IsLocked && !ReferenceEquals(annotation, reference)))
+        {
+            Rect bounds = annotation.Bounds;
+            (double deltaX, double deltaY) = alignment switch
+            {
+                PanelAlignment.Left => (referenceBounds.Left - bounds.Left, 0d),
+                PanelAlignment.HorizontalCenter => (referenceBounds.Left + referenceBounds.Width / 2 -
+                                                     (bounds.Left + bounds.Width / 2), 0d),
+                PanelAlignment.Right => (referenceBounds.Right - bounds.Right, 0d),
+                PanelAlignment.Top => (0d, referenceBounds.Top - bounds.Top),
+                PanelAlignment.VerticalCenter => (0d, referenceBounds.Top + referenceBounds.Height / 2 -
+                                                   (bounds.Top + bounds.Height / 2)),
+                PanelAlignment.Bottom => (0d, referenceBounds.Bottom - bounds.Bottom),
+                _ => (0d, 0d),
+            };
+            annotation.MoveBy(deltaX, deltaY);
+        }
+
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private bool CanAlignAnnotationSelection() =>
+        SelectedAnnotationCount >= 2 &&
+        SelectedAnnotation is not null &&
+        SelectedAnnotations.Any(annotation => !annotation.IsLocked);
+
+    private void SetSelectedAnnotationDirection(double angleDegrees)
+    {
+        foreach (FigureAnnotationViewModel annotation in SelectedAnnotations.Where(
+                     annotation => !annotation.IsLocked &&
+                                   annotation.Kind is FigureAnnotationKind.Arrow or FigureAnnotationKind.Line))
+        {
+            annotation.SetDirectionAngle(angleDegrees);
+        }
+
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private bool CanSetSelectedAnnotationDirection() =>
+        SelectedAnnotations.Any(annotation => !annotation.IsLocked &&
+            annotation.Kind is FigureAnnotationKind.Arrow or FigureAnnotationKind.Line);
+
+    private void SelectAllAnnotations()
+    {
+        SelectOnlyPanel(null);
+        SelectedScientificObject = null;
+        SelectedGuide = null;
+        _isUpdatingAnnotationSelection = true;
+        try
+        {
+            foreach (FigureAnnotationViewModel annotation in Annotations)
+            {
+                annotation.IsSelected = true;
+            }
+        }
+        finally
+        {
+            _isUpdatingAnnotationSelection = false;
+        }
+
+        SetPrimaryAnnotation(Annotations.LastOrDefault());
+        NotifyAnnotationSelectionChanged();
     }
 
     private void RemoveSelected()
@@ -1907,6 +2579,13 @@ public sealed class FigureCanvasViewModel : ObservableObject
         int index = selected.Min(Panels.IndexOf);
         foreach (FigurePanelViewModel panel in selected)
         {
+            foreach (FigureRoiProjectionViewModel projection in RoiProjections
+                         .Where(item => item.PanelId == panel.Id)
+                         .ToArray())
+            {
+                RoiProjections.Remove(projection);
+            }
+            _roiProjectionPanelStates.Remove(panel.Id);
             panel.PropertyChanged -= OnPanelPropertyChanged;
             Panels.Remove(panel);
         }
@@ -1916,7 +2595,30 @@ public sealed class FigureCanvasViewModel : ObservableObject
             : Panels[Math.Clamp(index, 0, Panels.Count - 1)];
         NormalizeZIndexes();
         RenumberPanelLabels(force: false);
+        NotifyRoiProjectionCollectionChanged();
         NotifyPanelCollectionChanged();
+        EditCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void RemoveSelectedPlotPanel()
+    {
+        if (SelectedPlotPanel is not { IsLocked: false } panel)
+        {
+            return;
+        }
+
+        int index = PlotPanels.IndexOf(panel);
+        panel.PropertyChanged -= OnPlotPanelPropertyChanged;
+        PlotPanels.Remove(panel);
+        SelectedPlotPanel = PlotPanels.Count == 0
+            ? null
+            : PlotPanels[Math.Clamp(index, 0, PlotPanels.Count - 1)];
+        for (int plotIndex = 0; plotIndex < PlotPanels.Count; plotIndex++)
+        {
+            PlotPanels[plotIndex].ZIndex = Panels.Count + plotIndex;
+        }
+        RenumberPanelLabels(force: false);
+        NotifyPlotPanelCollectionChanged();
         EditCompleted?.Invoke(this, EventArgs.Empty);
     }
 
@@ -3002,6 +3704,10 @@ public sealed class FigureCanvasViewModel : ObservableObject
         {
             panel.UpdateInheritedGlobalStyle(GlobalStyle);
         }
+        foreach (FigurePlotPanelViewModel panel in PlotPanels)
+        {
+            panel.UpdateInheritedStyle(GlobalStyle);
+        }
         NotifySelectedPanelStyleChanged();
         ApplyGlobalStyleCommand.NotifyCanExecuteChanged();
         DocumentChanged?.Invoke(this, EventArgs.Empty);
@@ -3036,6 +3742,97 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
         SetPrimaryPanel(panel);
         NotifyPanelSelectionChanged();
+    }
+
+    private void SelectOnlyPlotPanel(FigurePlotPanelViewModel? panel)
+    {
+        if (panel is not null && !PlotPanels.Contains(panel))
+        {
+            throw new InvalidOperationException("只能选择当前拼版中的 Plot panel。");
+        }
+
+        _isUpdatingPlotPanelSelection = true;
+        try
+        {
+            foreach (FigurePlotPanelViewModel candidate in PlotPanels)
+            {
+                candidate.IsSelected = ReferenceEquals(candidate, panel);
+            }
+        }
+        finally
+        {
+            _isUpdatingPlotPanelSelection = false;
+        }
+
+        if (SetProperty(ref _selectedPlotPanel, panel, nameof(SelectedPlotPanel)))
+        {
+            RemoveSelectedPlotPanelCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    private void AttachPlotPanel(FigurePlotPanelViewModel panel)
+    {
+        panel.UpdateInheritedStyle(GlobalStyle);
+        panel.PropertyChanged += OnPlotPanelPropertyChanged;
+    }
+
+    private void SelectOnlyAnnotation(FigureAnnotationViewModel? annotation)
+    {
+        if (annotation is not null && !Annotations.Contains(annotation))
+        {
+            throw new InvalidOperationException("只能选择当前拼版中的标注。");
+        }
+
+        _isUpdatingAnnotationSelection = true;
+        try
+        {
+            foreach (FigureAnnotationViewModel candidate in Annotations)
+            {
+                candidate.IsSelected = ReferenceEquals(candidate, annotation);
+            }
+        }
+        finally
+        {
+            _isUpdatingAnnotationSelection = false;
+        }
+
+        SetPrimaryAnnotation(annotation);
+        NotifyAnnotationSelectionChanged();
+    }
+
+    private void SetPrimaryAnnotation(FigureAnnotationViewModel? annotation)
+    {
+        if (!SetProperty(ref _selectedAnnotation, annotation, nameof(SelectedAnnotation)))
+        {
+            return;
+        }
+
+        OnPropertyChanged(nameof(SelectedAnnotationVisibility));
+        RemoveSelectedAnnotationCommand.NotifyCanExecuteChanged();
+        MoveAnnotationUpCommand.NotifyCanExecuteChanged();
+        MoveAnnotationDownCommand.NotifyCanExecuteChanged();
+        ResetSelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
+        CopySelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
+        PasteSelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
+        ApplyAnnotationStyleToSameTypeCommand.NotifyCanExecuteChanged();
+    }
+
+    private void NotifyAnnotationSelectionChanged()
+    {
+        OnPropertyChanged(nameof(SelectedAnnotations));
+        OnPropertyChanged(nameof(SelectedAnnotationCount));
+        OnPropertyChanged(nameof(SelectedAnnotationCountText));
+        OnPropertyChanged(nameof(MultipleAnnotationSelectionVisibility));
+        SelectAllAnnotationsCommand.NotifyCanExecuteChanged();
+        ClearAnnotationSelectionCommand.NotifyCanExecuteChanged();
+        AlignAnnotationLeftCommand.NotifyCanExecuteChanged();
+        AlignAnnotationHorizontalCenterCommand.NotifyCanExecuteChanged();
+        AlignAnnotationRightCommand.NotifyCanExecuteChanged();
+        AlignAnnotationTopCommand.NotifyCanExecuteChanged();
+        AlignAnnotationVerticalCenterCommand.NotifyCanExecuteChanged();
+        AlignAnnotationBottomCommand.NotifyCanExecuteChanged();
+        SetAnnotationDirectionHorizontalCommand.NotifyCanExecuteChanged();
+        SetAnnotationDirectionVerticalCommand.NotifyCanExecuteChanged();
     }
 
     private void SetPrimaryPanel(FigurePanelViewModel? panel)
@@ -3116,8 +3913,23 @@ public sealed class FigureCanvasViewModel : ObservableObject
         DocumentChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    private void NotifyPlotPanelCollectionChanged()
+    {
+        OnPropertyChanged(nameof(PanelCountText));
+        OnPropertyChanged(nameof(EmptyVisibility));
+        RemoveSelectedPlotPanelCommand.NotifyCanExecuteChanged();
+        RenumberPanelLabelsCommand.NotifyCanExecuteChanged();
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     private void NotifyMeasurementOverlayCollectionChanged()
     {
+        DocumentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void NotifyRoiProjectionCollectionChanged()
+    {
+        OnPropertyChanged(nameof(EmptyVisibility));
         DocumentChanged?.Invoke(this, EventArgs.Empty);
     }
     private void NotifyAnnotationCollectionChanged()
@@ -3125,6 +3937,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
         OnPropertyChanged(nameof(AnnotationCountText));
         OnPropertyChanged(nameof(GlobalStyleStatusText));
         OnPropertyChanged(nameof(EmptyVisibility));
+        NotifyAnnotationSelectionChanged();
         DocumentChanged?.Invoke(this, EventArgs.Empty);
     }
     private void NotifyScientificObjectCollectionChanged()
@@ -3142,157 +3955,36 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
     private void SynchronizeLinkedCrop(FigurePanelViewModel changedPanel)
     {
-        if (changedPanel.CropLinkGroupId is not Guid groupId || _isSynchronizingLinkedViews)
-        {
-            return;
-        }
-
-        _isSynchronizingLinkedViews = true;
-        try
-        {
-            LinkGroup? group = LinkGroups.FirstOrDefault(candidate => candidate.Id == groupId);
-            if (group is null)
-            {
-                foreach (FigurePanelViewModel linked in Panels.Where(panel =>
-                             !ReferenceEquals(panel, changedPanel) &&
-                             panel.CropLinkGroupId == groupId &&
-                             panel.Source.Asset.Id == changedPanel.Source.Asset.Id &&
-                             !panel.IsLocked))
-                {
-                    linked.ApplyLinkedCrop(changedPanel.SourceRect);
-                }
-
-                LinkSynchronizationStatusText = "同素材裁剪已同步。";
-                return;
-            }
-
-            if (!group.SyncOptions.HasFlag(LinkSyncOptions.Crop))
-            {
-                LinkSynchronizationStatusText = "当前联动组未启用裁剪同步。";
-                return;
-            }
-
-            Dictionary<Guid, long> revisions = Panels
-                .Where(panel => group.ContainsAsset(panel.Source.Asset.Id))
-                .GroupBy(panel => panel.Source.Asset.Id)
-                .ToDictionary(items => items.Key, items => items.First().Source.SourceRevision);
-            if (group.AssetIds.Any(assetId => !revisions.ContainsKey(assetId)) ||
-                !group.AreMappingsCurrent(revisions))
-            {
-                LinkSynchronizationStatusText = "联动映射已过期或缺少成员素材；已停止同步，请复核映射修订。";
-                return;
-            }
-
-            int synchronizedCount = 0;
-            int skippedCount = 0;
-            foreach (FigurePanelViewModel linked in Panels.Where(panel =>
-                         !ReferenceEquals(panel, changedPanel) &&
-                         panel.CropLinkGroupId == groupId &&
-                         !panel.IsLocked))
-            {
-                if (!group.ContainsAsset(changedPanel.Source.Asset.Id) ||
-                    !group.ContainsAsset(linked.Source.Asset.Id))
-                {
-                    skippedCount++;
-                    continue;
-                }
-
-                Guid originalAssetId = linked.Source.Asset.Id;
-                try
-                {
-                    PixelRect64 mapped = group.MapCrop(
-                        changedPanel.Source.Asset.Id,
-                        linked.Source.Asset.Id,
-                        changedPanel.SourceRect);
-                    if (!CropBoundsValidator.Validate(mapped, linked.Source.Asset.Metadata.PixelSize).IsValid)
-                    {
-                        skippedCount++;
-                        continue;
-                    }
-
-                    linked.ApplyLinkedCrop(mapped);
-                    if (linked.Source.Asset.Id != originalAssetId)
-                    {
-                        throw new InvalidOperationException("跨素材裁剪同步不得替换目标面板的 SourceAsset。");
-                    }
-
-                    synchronizedCount++;
-                }
-                catch (ArgumentOutOfRangeException)
-                {
-                    skippedCount++;
-                }
-                catch (OverflowException)
-                {
-                    skippedCount++;
-                }
-            }
-
-            LinkSynchronizationStatusText = skippedCount == 0
-                ? $"已按 SpatialMapping 同步 {synchronizedCount} 个目标面板；各面板 SourceAsset 保持不变。"
-                : $"已同步 {synchronizedCount} 个目标面板，跳过 {skippedCount} 个越界或无映射目标。";
-        }
-        finally
-        {
-            _isSynchronizingLinkedViews = false;
-        }
+        LinkCoordinator.SynchronizeCrop(changedPanel, Panels);
+        OnPropertyChanged(nameof(LinkSynchronizationStatusText));
     }
 
     private void SynchronizeLinkedColorScale(FigurePanelViewModel changedPanel)
     {
-        if (changedPanel.CropLinkGroupId is not Guid groupId || _isSynchronizingLinkedViews)
-        {
-            return;
-        }
-
-        LinkGroup? group = LinkGroups.FirstOrDefault(candidate => candidate.Id == groupId);
-        if (group is null || !group.SyncOptions.HasFlag(LinkSyncOptions.ColorScale))
-        {
-            return;
-        }
-
-        Dictionary<Guid, long> revisions = Panels
-            .Where(panel => group.ContainsAsset(panel.Source.Asset.Id))
-            .GroupBy(panel => panel.Source.Asset.Id)
-            .ToDictionary(items => items.Key, items => items.First().Source.SourceRevision);
-        if (group.AssetIds.Any(assetId => !revisions.ContainsKey(assetId)) ||
-            !group.AreMappingsCurrent(revisions))
-        {
-            LinkSynchronizationStatusText = "联动映射已过期；颜色尺度同步已停止。";
-            return;
-        }
-
-        _isSynchronizingLinkedViews = true;
-        try
-        {
-            foreach (FigurePanelViewModel linked in Panels.Where(panel =>
-                         !ReferenceEquals(panel, changedPanel) &&
-                         panel.CropLinkGroupId == groupId &&
-                         !panel.IsLocked))
-            {
-                Guid originalAssetId = linked.Source.Asset.Id;
-                linked.Adjustments = linked.Adjustments with
-                {
-                    BlackPoint = changedPanel.BlackPoint,
-                    WhitePoint = changedPanel.WhitePoint,
-                };
-                if (linked.Source.Asset.Id != originalAssetId)
-                {
-                    throw new InvalidOperationException("颜色尺度同步不得替换目标面板的 SourceAsset。");
-                }
-            }
-
-            LinkSynchronizationStatusText = "已同步 BlackPoint / WhitePoint；各面板 SourceAsset 保持不变。";
-        }
-        finally
-        {
-            _isSynchronizingLinkedViews = false;
-        }
+        LinkCoordinator.SynchronizeColorScale(changedPanel, Panels);
+        OnPropertyChanged(nameof(LinkSynchronizationStatusText));
     }
+
     private void OnPanelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        if (_isRestoringRoiProjectionPanelState)
+        {
+            return;
+        }
+
+        if (sender is FigurePanelViewModel relationshipPanel &&
+            e.PropertyName is nameof(FigurePanelViewModel.Source) or
+                nameof(FigurePanelViewModel.SourceRect) or
+                nameof(FigurePanelViewModel.FrameIndex) &&
+            HasRoiProjections(relationshipPanel.Id) &&
+            !TryAcceptRoiProjectionPanelState(relationshipPanel))
+        {
+            return;
+        }
+
         if (e.PropertyName is nameof(FigurePanelViewModel.Source) or
             nameof(FigurePanelViewModel.SourceRect) or
+            nameof(FigurePanelViewModel.FrameIndex) or
             nameof(FigurePanelViewModel.X) or
             nameof(FigurePanelViewModel.Y) or
             nameof(FigurePanelViewModel.Width) or
@@ -3332,6 +4024,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
         if (sender is FigurePanelViewModel overlayPanel &&
             e.PropertyName is nameof(FigurePanelViewModel.SourceRect) or
+                nameof(FigurePanelViewModel.FrameIndex) or
                 nameof(FigurePanelViewModel.X) or
                 nameof(FigurePanelViewModel.Y) or
                 nameof(FigurePanelViewModel.Width) or
@@ -3342,6 +4035,10 @@ public sealed class FigureCanvasViewModel : ObservableObject
             {
                 overlay.RefreshLayout(overlayPanel);
             }
+            foreach (FigureRoiProjectionViewModel projection in RoiProjections)
+            {
+                projection.RefreshLayout(overlayPanel);
+            }
         }
         if (e.PropertyName == nameof(FigurePanelViewModel.StyleOverride) &&
             ReferenceEquals(sender, SelectedPanel))
@@ -3351,7 +4048,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
         if (sender is FigurePanelViewModel linkedPanel &&
             linkedPanel.CropLinkGroupId.HasValue &&
-            !_isSynchronizingLinkedViews)
+            !LinkCoordinator.IsSynchronizing)
         {
             if (e.PropertyName == nameof(FigurePanelViewModel.SourceRect))
             {
@@ -3366,6 +4063,7 @@ public sealed class FigureCanvasViewModel : ObservableObject
 
         if (e.PropertyName is nameof(FigurePanelViewModel.Source) or
             nameof(FigurePanelViewModel.SourceRect) or
+            nameof(FigurePanelViewModel.FrameIndex) or
             nameof(FigurePanelViewModel.X) or
             nameof(FigurePanelViewModel.Y) or
             nameof(FigurePanelViewModel.Width) or
@@ -3404,6 +4102,106 @@ public sealed class FigureCanvasViewModel : ObservableObject
         }
     }
 
+    private void OnPlotPanelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (sender is not FigurePlotPanelViewModel panel)
+        {
+            return;
+        }
+
+        if (e.PropertyName == nameof(FigurePlotPanelViewModel.IsSelected) &&
+            !_isUpdatingPlotPanelSelection)
+        {
+            SelectOnlyPlotPanel(panel.IsSelected ? panel : null);
+            return;
+        }
+
+        if (e.PropertyName is nameof(FigurePlotPanelViewModel.X) or
+            nameof(FigurePlotPanelViewModel.Y) or
+            nameof(FigurePlotPanelViewModel.Width) or
+            nameof(FigurePlotPanelViewModel.Height) or
+            nameof(FigurePlotPanelViewModel.Label) or
+            nameof(FigurePlotPanelViewModel.IsVisible) or
+            nameof(FigurePlotPanelViewModel.IsLocked) or
+            nameof(FigurePlotPanelViewModel.ZIndex) or
+            nameof(FigurePlotPanelViewModel.StyleOverride) or
+            nameof(FigurePlotPanelViewModel.TypographyOverride) or
+            nameof(FigurePlotPanelViewModel.Plot))
+        {
+            RemoveSelectedPlotPanelCommand.NotifyCanExecuteChanged();
+            DocumentChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void RememberRoiProjectionPanelState(FigurePanelViewModel panel)
+    {
+        _roiProjectionPanelStates[panel.Id] = new RoiProjectionPanelState(
+            panel.Source,
+            panel.SourceRect,
+            panel.FrameIndex);
+    }
+
+    private bool TryAcceptRoiProjectionPanelState(FigurePanelViewModel panel)
+    {
+        FigureRoiProjectionViewModel[] projections = RoiProjections
+            .Where(item => item.PanelId == panel.Id)
+            .ToArray();
+        try
+        {
+            foreach (FigureRoiProjectionViewModel projection in projections)
+            {
+                projection.ValidatePanel(panel);
+            }
+
+            foreach (FigureRoiProjectionViewModel projection in projections)
+            {
+                projection.RefreshLayout(panel);
+            }
+            RememberRoiProjectionPanelState(panel);
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or InvalidOperationException)
+        {
+            if (!_roiProjectionPanelStates.TryGetValue(panel.Id, out RoiProjectionPanelState? previous))
+            {
+                throw;
+            }
+
+            _isRestoringRoiProjectionPanelState = true;
+            try
+            {
+                if (!ReferenceEquals(panel.Source, previous.Source))
+                {
+                    panel.ReplaceSource(previous.Source, previous.SourceRect);
+                }
+                else if (panel.SourceRect != previous.SourceRect)
+                {
+                    panel.ApplyLinkedCrop(previous.SourceRect);
+                }
+
+                panel.FrameIndex = previous.FrameIndex;
+            }
+            finally
+            {
+                _isRestoringRoiProjectionPanelState = false;
+            }
+
+            foreach (FigureRoiProjectionViewModel projection in projections)
+            {
+                projection.RefreshLayout(panel);
+            }
+            LinkSynchronizationStatusText =
+                $"Panel 修改已回滚：会破坏 ROI Projection 引用关系。{exception.Message}";
+            return false;
+        }
+    }
+
+    private sealed record RoiProjectionPanelState(
+        SourceAssetItemViewModel Source,
+        PixelRect64 SourceRect,
+        int FrameIndex);
+
     private void OnAnnotationPropertyChanged(
         object? sender,
         System.ComponentModel.PropertyChangedEventArgs e)
@@ -3435,6 +4233,19 @@ public sealed class FigureCanvasViewModel : ObservableObject
             MoveAnnotationDownCommand.NotifyCanExecuteChanged();
             ResetSelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
             PasteSelectedAnnotationStyleCommand.NotifyCanExecuteChanged();
+            NotifyAnnotationSelectionChanged();
+        }
+
+        if (e.PropertyName == nameof(FigureAnnotationViewModel.IsSelected) &&
+            !_isUpdatingAnnotationSelection &&
+            sender is FigureAnnotationViewModel annotation)
+        {
+            SetPrimaryAnnotation(annotation.IsSelected
+                ? annotation
+                : ReferenceEquals(annotation, SelectedAnnotation)
+                    ? SelectedAnnotations.LastOrDefault()
+                    : SelectedAnnotation);
+            NotifyAnnotationSelectionChanged();
         }
     }
     private void OnScientificObjectPropertyChanged(
@@ -3500,16 +4311,19 @@ public sealed class FigureCanvasViewModel : ObservableObject
             return;
         }
 
-        FigurePanelViewModel[] readingOrder = Panels
+        var readingOrder = Panels
+            .Select(panel => new PanelLabelTarget(panel.X, panel.Y, panel.ZIndex, value => panel.Label = value))
+            .Concat(PlotPanels.Select(panel =>
+                new PanelLabelTarget(panel.X, panel.Y, panel.ZIndex, value => panel.Label = value)))
             .OrderBy(panel => panel.Y)
             .ThenBy(panel => panel.X)
             .ThenBy(panel => panel.ZIndex)
             .ToArray();
         for (int index = 0; index < readingOrder.Length; index++)
         {
-            readingOrder[index].Label = PanelLabelGenerator.Generate(
+            readingOrder[index].SetLabel(PanelLabelGenerator.Generate(
                 index,
-                PanelLabelGenerator.FromLegacySettings(PanelLabelSequence));
+                PanelLabelGenerator.FromLegacySettings(PanelLabelSequence)));
         }
 
         OnPropertyChanged(nameof(PanelLabelSettingsText));
@@ -3579,4 +4393,10 @@ public sealed class FigureCanvasViewModel : ObservableObject
         Frame,
         AspectRatio,
     }
+
+    private sealed record PanelLabelTarget(
+        long X,
+        long Y,
+        int ZIndex,
+        Action<string> SetLabel);
 }

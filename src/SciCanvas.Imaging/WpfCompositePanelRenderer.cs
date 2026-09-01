@@ -12,6 +12,40 @@ internal static class WpfCompositePanelRenderer
         IReadOnlyList<FigureChannelLayerExportItem> layers,
         CancellationToken cancellationToken)
     {
+        ScientificChannelCompositeResult composite = ComposeHighPrecision(layers, cancellationToken);
+        byte[] pixels = new byte[checked(composite.Width * composite.Height * 4)];
+        for (int index = 0; index < composite.Pixels.Count; index++)
+        {
+            if ((index & 0x3FFF) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            ScientificDisplayPixel pixel = composite.Pixels[index];
+            int offset = index * 4;
+            pixels[offset] = pixel.Blue8;
+            pixels[offset + 1] = pixel.Green8;
+            pixels[offset + 2] = pixel.Red8;
+            pixels[offset + 3] = pixel.Alpha8;
+        }
+
+        BitmapSource bitmap = BitmapSource.Create(
+            composite.Width,
+            composite.Height,
+            96,
+            96,
+            PixelFormats.Bgra32,
+            palette: null,
+            pixels,
+            checked(composite.Width * 4));
+        bitmap.Freeze();
+        return bitmap;
+    }
+
+    internal static ScientificChannelCompositeResult ComposeHighPrecision(
+        IReadOnlyList<FigureChannelLayerExportItem> layers,
+        CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(layers);
         if (layers.Count == 0)
         {
@@ -30,36 +64,18 @@ internal static class WpfCompositePanelRenderer
                 [layer.ChannelSelector],
                 layer.SourceRevision,
                 cancellationToken)[0];
-            inputs.Add(new ScientificChannelCompositeInput(plane, layer.DisplaySettings));
+            RegisteredPlaneResamplingResult? registered = layer.RegistrationResampling is null
+                ? null
+                : RegisteredPlaneResampler.Resample(
+                    plane,
+                    layer.RegistrationResampling,
+                    cancellationToken);
+            inputs.Add(new ScientificChannelCompositeInput(
+                plane,
+                layer.DisplaySettings,
+                registered));
         }
 
-        ScientificChannelCompositeResult composite = ScientificChannelComposite.Compose(inputs);
-        byte[] pixels = new byte[checked(composite.Width * composite.Height * 4)];
-        for (int index = 0; index < composite.Pixels.Count; index++)
-        {
-            if ((index & 0x3FFF) == 0)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-            }
-
-            ScientificDisplayPixel pixel = composite.Pixels[index];
-            int offset = index * 4;
-            pixels[offset] = pixel.Blue8;
-            pixels[offset + 1] = pixel.Green8;
-            pixels[offset + 2] = pixel.Red8;
-            pixels[offset + 3] = byte.MaxValue;
-        }
-
-        BitmapSource bitmap = BitmapSource.Create(
-            composite.Width,
-            composite.Height,
-            96,
-            96,
-            PixelFormats.Bgra32,
-            palette: null,
-            pixels,
-            checked(composite.Width * 4));
-        bitmap.Freeze();
-        return bitmap;
+        return ScientificChannelComposite.ComposeHighPrecision(inputs);
     }
 }

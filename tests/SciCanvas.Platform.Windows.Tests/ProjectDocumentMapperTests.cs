@@ -5,6 +5,7 @@ using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
 using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
+using SciCanvas.Core.Workspace;
 using SciCanvas.Persistence;
 using SciCanvas.Presentation;
 using SciCanvas.Templates;
@@ -272,6 +273,9 @@ public sealed class ProjectDocumentMapperTests
             ScientificChannelId = Guid.NewGuid(),
             LinkGroupId = Guid.NewGuid(),
             MappingId = Guid.NewGuid(),
+            Validity = AnalysisResultValidity.ReviewRequired("ROI clipped to source image."),
+            ClippedToImage = true,
+            CoverageFraction = 0.82,
             PolygonMask =
             [
                 new MeasurementPoint(2, 3),
@@ -337,6 +341,11 @@ public sealed class ProjectDocumentMapperTests
             AnalyzerId = "test.particle.v2",
             AnalyzedAt = DateTimeOffset.Parse("2026-08-26T08:02:00Z"),
             SourceBitDepth = 8,
+            ResourcePolicy = new AnalysisResourcePolicy(
+                MaxPixels: 12_345,
+                MaxComponentsSafety: 321,
+                MaxBoundaryPoints: 456,
+                MemoryBudgetBytes: 7_654_321),
         };
         source.AddAnalysisResult(roi);
         source.AddAnalysisResult(profile);
@@ -353,28 +362,121 @@ public sealed class ProjectDocumentMapperTests
         RoiStatisticsResult restoredRoi = Assert.IsType<RoiStatisticsResult>(
             ProjectDocumentMapper.ToAnalysis(Assert.Single(document.Analyses, item => item.Kind == "roiStatistics")));
         Assert.Equal(65535, restoredRoi.Maximum);
-Assert.Equal(new PixelRect64(2, 3, 2, 2), restoredRoi.Region);
+        Assert.Equal(new PixelRect64(2, 3, 2, 2), restoredRoi.Region);
         Assert.Equal(3, restoredRoi.PixelCount);
         Assert.Equal(roi.RoiId, restoredRoi.RoiId);
         Assert.Equal(roi.ScientificChannelId, restoredRoi.ScientificChannelId);
         Assert.Equal(roi.LinkGroupId, restoredRoi.LinkGroupId);
         Assert.Equal(roi.MappingId, restoredRoi.MappingId);
         Assert.Equal(roi.PolygonMask, restoredRoi.PolygonMask);
+        Assert.True(restoredRoi.ClippedToImage);
+        Assert.Equal(0.82, restoredRoi.CoverageFraction, 12);
+        Assert.Equal(AnalysisResultState.ReviewRequired, restoredRoi.Validity.State);
         Assert.True(restoredRoi.IsValid);
         IntensityProfileResult restoredProfile = Assert.IsType<IntensityProfileResult>(
             ProjectDocumentMapper.ToAnalysis(Assert.Single(document.Analyses, item => item.Kind == "lineProfile")));
         Assert.Equal(65535, restoredProfile.Samples[1].RawIntensity);
         Assert.Equal(1.25, restoredProfile.Samples[1].PhysicalDistance);
         Assert.Equal(ImageAnalysisChannel.Green, restoredProfile.Channel);
+        ProjectScientificAnalysisSnapshot particleSnapshot = Assert.Single(
+            document.Analyses,
+            item => item.Kind == "particleAnalysis");
+        Assert.Equal(12_345, particleSnapshot.AnalysisMaxPixels);
+        Assert.Equal(321, particleSnapshot.AnalysisMaxComponentsSafety);
+        Assert.Equal(456, particleSnapshot.AnalysisMaxBoundaryPoints);
+        Assert.Equal(7_654_321, particleSnapshot.AnalysisMemoryBudgetBytes);
         AssistedRegionAnalysisResult restoredParticles = Assert.IsType<AssistedRegionAnalysisResult>(
-            ProjectDocumentMapper.ToAnalysis(Assert.Single(
-                document.Analyses,
-                item => item.Kind == "particleAnalysis")));
+            ProjectDocumentMapper.ToAnalysis(particleSnapshot));
         AssistedRegionCandidate restoredParticle = Assert.Single(restoredParticles.Candidates);
         Assert.Equal(200, restoredParticle.RawMeanIntensity);
         Assert.Equal(0.6, restoredParticles.AppliedThresholdNormalized);
         Assert.Equal(AssistedRegionMode.BrightParticles, restoredParticles.Options.Mode);
         Assert.Equal(ImageAnalysisChannel.Blue, restoredParticles.Channel);
+        Assert.Equal(particles.ResourcePolicy, restoredParticles.ResourcePolicy);
+    }
+
+    [Fact]
+    public async Task CreateAndJsonStore_RoundTripsRoiProjectionAsReferencesWithoutGeometryCopy()
+    {
+        using var workspace = new TestWorkspace();
+        string projectPath = Path.Combine(workspace.Root, "roi-projection.scicanvas");
+        SourceAssetItemViewModel source = CreateSourceItem();
+        var crop = new CropEditorViewModel();
+        Assert.True(crop.RestoreForSource(
+            source.Asset.Metadata.PixelSize,
+            new PixelRect64(0, 0, 80, 60)));
+        var figure = new FigureCanvasViewModel(new BuiltInTemplateCatalog().LoadAll()[0]);
+        FigurePanelViewModel panel = Assert.IsType<FigurePanelViewModel>(
+            figure.AddPanel(source, new PixelRect64(0, 0, 80, 60)));
+        var roi = new RoiObject
+        {
+            Id = Guid.NewGuid(),
+            AssetId = source.Asset.Id,
+            SourceRevision = source.SourceRevision,
+            GeometryKind = RoiGeometryKind.Polygon,
+            SourceGeometry =
+            [
+                new MeasurementPoint(10, 10),
+                new MeasurementPoint(30, 10),
+                new MeasurementPoint(20, 30),
+            ],
+            Style = RoiStyle.Default with { Label = "nucleus-7" },
+        }.EnsureValid();
+        var projectionObject = new RoiFigureProjectionObject
+        {
+            Id = Guid.NewGuid(),
+            RoiId = roi.Id,
+            PanelId = panel.Id,
+            AssetId = source.Asset.Id,
+            SourceRevision = source.SourceRevision,
+            StyleOverride = new StyleOverride(
+                Annotation: new TextStyle("Arial", 9, true, "#FF123456"),
+                Shapes: new ShapeStyle("#FFABCDEF", "#FF102030", 25, 1.75)),
+            IsVisible = true,
+            ZIndex = 4,
+        };
+        figure.RestoreRoiProjection(projectionObject, roi);
+
+        SciCanvasProjectDocument document = ProjectDocumentMapper.Create(
+            Guid.NewGuid(),
+            DateTimeOffset.UtcNow,
+            "ROI Projection 工程",
+            [source],
+            source,
+            crop,
+            figure,
+            WorkspaceMode.Figure,
+            lockCropSizeAcrossSources: false,
+            cropOverlayVisible: true,
+            rois: [roi]);
+
+        ProjectRoiFigureProjectionSnapshot savedProjection =
+            Assert.Single(document.TemplateSnapshot!.RoiProjections);
+        Assert.Equal(roi.Id, savedProjection.RoiId);
+        Assert.Equal(panel.Id, savedProjection.PanelId);
+        Assert.Equal(source.Asset.Id, savedProjection.AssetId);
+        Assert.Equal(source.SourceRevision, savedProjection.SourceRevision);
+        Assert.Equal("#FFABCDEF", savedProjection.StyleOverride!.Shapes!.StrokeColor);
+        Assert.Equal("Arial", savedProjection.StyleOverride.Annotation!.FontFamily);
+        string projectionJson = JsonSerializer.Serialize(savedProjection);
+        Assert.DoesNotContain("sourceGeometry", projectionJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\"points\"", projectionJson, StringComparison.OrdinalIgnoreCase);
+
+        var store = new JsonProjectStore();
+        await store.SaveAsync(projectPath, document);
+        SciCanvasProjectDocument loaded = await store.LoadAsync(projectPath);
+
+        ProjectRoiFigureProjectionSnapshot loadedProjection =
+            Assert.Single(loaded.TemplateSnapshot!.RoiProjections);
+        ProjectRoiSnapshot loadedRoiSnapshot = Assert.Single(loaded.Rois);
+        RoiFigureProjectionObject restoredProjection =
+            ProjectDocumentMapper.ToRoiFigureProjection(loadedProjection);
+        RoiObject restoredRoi = ProjectDocumentMapper.ToRoiObject(loadedRoiSnapshot);
+        Assert.Equal(roi.SourceGeometry, restoredRoi.SourceGeometry);
+        Assert.Equal(restoredRoi.Id, restoredProjection.RoiId);
+        Assert.Equal(panel.Id, restoredProjection.PanelId);
+        Assert.Equal("#FFABCDEF", restoredProjection.StyleOverride!.Shapes!.StrokeColor);
+        Assert.Equal("#FF123456", restoredProjection.StyleOverride.Annotation!.Color);
     }
 
     [Fact]

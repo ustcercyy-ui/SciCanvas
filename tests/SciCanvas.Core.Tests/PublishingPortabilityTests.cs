@@ -124,6 +124,7 @@ public sealed class PublishingPortabilityTests
     [InlineData(0x0008, FontEmbeddingPermission.Editable, true)]
     [InlineData(0x0002, FontEmbeddingPermission.Restricted, true)]
     [InlineData(0x0104, FontEmbeddingPermission.PreviewAndPrint, false)]
+    [InlineData(0x0204, FontEmbeddingPermission.BitmapOnly, true)]
     public void OpenTypeRightsReader_ParsesOs2FsType(
         ushort fsType,
         FontEmbeddingPermission expectedPermission,

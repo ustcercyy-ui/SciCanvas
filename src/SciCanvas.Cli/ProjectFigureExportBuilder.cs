@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.IO;
 using SciCanvas.Core.Channels;
+using SciCanvas.Core.Data;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Linking;
+using SciCanvas.Core.Plotting;
 using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
 using SciCanvas.Core.Workspace;
@@ -18,10 +20,11 @@ namespace SciCanvas.Cli;
 internal sealed record ProjectFigureExportContext(
     FigureExportDocument Document,
     IReadOnlyList<LinkingLinkGroup> LinkGroups,
-    IReadOnlyList<RoiObject> Rois);
+    IReadOnlyList<RoiObject> Rois,
+    IReadOnlyList<MultiChannelAssetGroup> MultiChannelGroups);
 
 /// <summary>
-/// Converts the persisted 2.4 project contract into the immutable export contract.
+/// Converts the persisted project contract into the immutable export contract.
 /// This mapper deliberately has no ViewModel dependency so GUI and CLI exporters
 /// consume the same Core scientific types.
 /// </summary>
@@ -38,13 +41,25 @@ internal static class ProjectFigureExportBuilder
             source => source.Id,
             source => source.SourceRevision);
         MultiChannelAssetGroup[] groups = project.MultiChannelGroups
-            .Select(ToMultiChannelAssetGroup)
+            .Select(group => ToMultiChannelAssetGroup(group, sourceMap))
             .ToArray();
         LinkingLinkGroup[] linkGroups = project.LinkGroups.Select(ToLinkGroup).ToArray();
         RoiObject[] rois = project.Rois.Select(ToRoiObject).ToArray();
+        IReadOnlyDictionary<Guid, RoiObject> roisById = rois.ToDictionary(roi => roi.Id);
         ProjectTemplateSnapshot? template = project.TemplateSnapshot;
         IReadOnlyDictionary<Guid, ProjectScaleBarSnapshot> scaleBars =
             template?.ScaleBars ?? new Dictionary<Guid, ProjectScaleBarSnapshot>();
+        Dictionary<Guid, TabularDataAsset> dataAssets = project.DataAssets
+            .Select(TabularDataSnapshotMapper.ToModel)
+            .ToDictionary(asset => asset.Id);
+        Dictionary<Guid, PlotObject> plots = project.Plots
+            .Select(snapshot =>
+            {
+                TabularDataAsset asset = dataAssets.GetValueOrDefault(snapshot.Data.DataAssetId)
+                    ?? throw new InvalidDataException($"Plot {snapshot.Name} 引用了不存在的 DataAsset。");
+                return PlotSnapshotMapper.ToModel(snapshot, asset);
+            })
+            .ToDictionary(plot => plot.Id);
 
         FigurePanelExportItem[] panels = project.Layers
             .OrderBy(layer => layer.ZIndex)
@@ -69,6 +84,23 @@ internal static class ProjectFigureExportBuilder
             .OrderBy(item => item.ZIndex)
             .Select(item => new FigureMeasurementOverlayExportItem(ToMeasurementOverlay(item)))
             .ToArray();
+        FigureRoiProjectionExportItem[] roiProjections = (template?.RoiProjections ?? [])
+            .OrderBy(item => item.ZIndex)
+            .Select(item => new FigureRoiProjectionExportItem(
+                ToRoiFigureProjection(item),
+                roisById.TryGetValue(item.RoiId, out RoiObject? roi)
+                    ? roi
+                    : throw new InvalidDataException(
+                        "ROI Figure Projection 引用了不存在的 canonical ROI。")))
+            .ToArray();
+        FigurePlotPanelExportItem[] plotPanels = (template?.PlotPanels ?? [])
+            .OrderBy(item => item.ZIndex)
+            .Select(item => CreatePlotPanel(
+                item,
+                template?.ShowPanelLabels ?? true,
+                plots,
+                dataAssets))
+            .ToArray();
         string background = project.Canvas.BackgroundColor ?? project.Canvas.Background switch
         {
             "black" => "#FF000000",
@@ -84,8 +116,10 @@ internal static class ProjectFigureExportBuilder
             background,
             globalStyle: ToGlobalStyle(template?.GlobalStyle),
             measurementOverlays: measurements,
-            scientificObjects: scientificObjects);
-        return new ProjectFigureExportContext(document, linkGroups, rois);
+            scientificObjects: scientificObjects,
+            roiProjections: roiProjections,
+            plotPanels: plotPanels);
+        return new ProjectFigureExportContext(document, linkGroups, rois, groups);
     }
 
     private static FigurePanelExportItem CreatePanel(
@@ -130,7 +164,30 @@ internal static class ProjectFigureExportBuilder
             StyleOverride: ToStyleOverride(layer.StyleOverride),
             PanelId: layer.Id,
             ScaleBars: bars,
-            ChannelLayers: channelLayers);
+            ChannelLayers: channelLayers,
+            SourceRevision: revisions.GetValueOrDefault(layer.SourceAssetId, 1));
+    }
+
+    private static FigurePlotPanelExportItem CreatePlotPanel(
+        ProjectFigurePlotPanelSnapshot snapshot,
+        bool showPanelLabels,
+        IReadOnlyDictionary<Guid, PlotObject> plots,
+        IReadOnlyDictionary<Guid, TabularDataAsset> dataAssets)
+    {
+        PlotObject plot = plots.GetValueOrDefault(snapshot.PlotId)
+            ?? throw new InvalidDataException("Figure Plot panel 引用了不存在的 Plot。");
+        TabularDataAsset asset = dataAssets.GetValueOrDefault(plot.Data.DataAssetId)
+            ?? throw new InvalidDataException($"Plot {plot.Name} 引用了不存在的 DataAsset。");
+        return FigurePlotPanelExportItem.Create(
+            plot,
+            asset,
+            ToRect(snapshot.DestinationRect),
+            showPanelLabels ? snapshot.Label : string.Empty,
+            snapshot.Visible,
+            ToStyleOverride(snapshot.StyleOverride),
+            ToPlotTypographyOverride(snapshot.TypographyOverride),
+            snapshot.ZIndex,
+            snapshot.Id);
     }
 
     private static IEnumerable<FigureScaleBarExportSpec> CreateScaleBars(ProjectScaleBarSnapshot? saved)
@@ -180,6 +237,10 @@ internal static class ProjectFigureExportBuilder
         {
             throw new InvalidDataException("Composite panel 的源素材不属于对应多通道组。");
         }
+        if (panel.SourceAssetId != group.ReferenceAssetId)
+        {
+            throw new InvalidDataException("Composite panel 必须以多通道组参考通道定义输出网格。");
+        }
 
         LinkingLinkGroup? linkGroup = linkGroups.FirstOrDefault(link =>
             link.ContainsAsset(panel.SourceAssetId) &&
@@ -192,7 +253,19 @@ internal static class ProjectFigureExportBuilder
         {
             throw new InvalidDataException("Composite group 的 SpatialMapping 已因 source revision 变化而失效。");
         }
+        if (linkGroup is not null && linkGroup.ReferenceAssetId != group.ReferenceAssetId)
+        {
+            throw new InvalidDataException("Composite group 与 LinkGroup 必须使用相同参考素材。");
+        }
 
+        ChannelGroupMember referenceMember = group.Members.Single(
+            member => member.AssetId == group.ReferenceAssetId);
+        var referenceGrid = new RegisteredReferenceGrid(
+            new ScientificPlaneRef(
+                group.ReferenceAssetId,
+                revisions.GetValueOrDefault(group.ReferenceAssetId, 1),
+                referenceMember.PlaneSelector),
+            panelSourceRect).EnsureValid();
         return group.Members.Select(member =>
         {
             SourceAsset memberSource = sourceMap.GetValueOrDefault(member.AssetId)
@@ -204,24 +277,32 @@ internal static class ProjectFigureExportBuilder
                     $"多通道成员 {member.Name} 的 source revision 已失效，需要重新确认后再导出。");
             }
 
-            PixelRect64 memberRect = member.AssetId == panel.SourceAssetId || linkGroup is null
-                ? panelSourceRect
-                : linkGroup.MapCrop(panel.SourceAssetId, member.AssetId, panelSourceRect);
+            RegisteredPlaneResamplingSpec? resampling = null;
+            PixelRect64 memberRect = panelSourceRect;
+            if (member.AssetId != group.ReferenceAssetId && linkGroup is not null)
+            {
+                LinkingSpatialMapping mapping = linkGroup.Mappings.Single(
+                    candidate => candidate.TargetAssetId == member.AssetId);
+                resampling = new RegisteredPlaneResamplingSpec(
+                    mapping,
+                    referenceGrid,
+                    memberSource.Metadata.PixelSize,
+                    RegisteredInterpolation.Bilinear,
+                    RegisteredBorderPolicy.Transparent,
+                    RegisteredPlaneSemantic.ContinuousDisplay).EnsureValid();
+                memberRect = RegisteredPlaneResampler.CalculateSourceReadRegion(resampling);
+            }
+
             ScientificSampleType sampleType = memberSource.Metadata.BitsPerChannel <= 8
                 ? ScientificSampleType.UInt8
                 : ScientificSampleType.UInt16;
-            ScientificChannelSourceKind sourceKind = memberSource.Metadata.Channels == 1
-                ? ScientificChannelSourceKind.ExternalAsset
-                : ScientificChannelSourceKind.InterleavedComponent;
-            var selector = new ScientificChannelDescriptor(
+            ScientificChannelDescriptor selector = member.PlaneSelector.CreateChannelDescriptor(
                 member.ChannelId,
-                0,
                 member.Name,
-                sourceKind,
                 sampleType,
                 memberSource.Metadata.BitsPerChannel,
-                Role: member.Role,
-                DefaultColor: member.Color).EnsureValid();
+                member.Role,
+                member.Color);
             return new FigureChannelLayerExportItem(
                 group.Id,
                 memberSource,
@@ -229,11 +310,14 @@ internal static class ProjectFigureExportBuilder
                 memberRect,
                 member.FrameIndex,
                 selector,
-                member.DisplaySettings).EnsureValid();
+                member.DisplaySettings,
+                RegistrationResampling: resampling).EnsureValid();
         }).ToArray();
     }
 
-    private static MultiChannelAssetGroup ToMultiChannelAssetGroup(ProjectMultiChannelAssetGroupSnapshot snapshot) =>
+    private static MultiChannelAssetGroup ToMultiChannelAssetGroup(
+        ProjectMultiChannelAssetGroupSnapshot snapshot,
+        IReadOnlyDictionary<Guid, SourceAsset> sources) =>
         new MultiChannelAssetGroup(
             snapshot.Id,
             snapshot.Name,
@@ -241,7 +325,7 @@ internal static class ProjectFigureExportBuilder
             snapshot.Members.Select(member => new ChannelGroupMember(
                 member.ChannelId,
                 member.AssetId,
-                member.FrameIndex,
+                ToChannelPlaneSelector(member, snapshot, sources),
                 member.Name,
                 member.Role,
                 member.Color,
@@ -261,11 +345,42 @@ internal static class ProjectFigureExportBuilder
                     member.DisplayMinimum,
                     member.DisplayMaximum,
                     member.Gamma,
-                    member.Invert))
+                    member.Invert,
+                    member.Colormap))
             {
                 SourceRevision = member.SourceRevision,
             }).ToArray(),
             snapshot.SameFieldOfViewConfirmed).EnsureValid();
+
+    private static ChannelPlaneSelector ToChannelPlaneSelector(
+        ProjectChannelGroupMemberSnapshot member,
+        ProjectMultiChannelAssetGroupSnapshot group,
+        IReadOnlyDictionary<Guid, SourceAsset> sources)
+    {
+        if (member.PlaneSelector is { } selector)
+        {
+            return new ChannelPlaneSelector(
+                selector.SourceKind?.ToLowerInvariant() switch
+                {
+                    "externalasset" => ScientificChannelSourceKind.ExternalAsset,
+                    "interleavedcomponent" => ScientificChannelSourceKind.InterleavedComponent,
+                    "frameplane" => ScientificChannelSourceKind.FramePlane,
+                    _ => throw new InvalidDataException("工程包含未知 scientific plane source kind。"),
+                },
+                selector.FrameIndex,
+                selector.ComponentIndex,
+                selector.ZIndex,
+                selector.CIndex,
+                selector.TIndex).EnsureValid();
+        }
+
+        int channels = sources.GetValueOrDefault(member.AssetId)?.Metadata.Channels ?? 1;
+        return channels > 1
+            ? ChannelPlaneSelector.InterleavedComponent(member.FrameIndex, 0)
+            : group.Members.Count(item => item.AssetId == member.AssetId) > 1 || member.FrameIndex > 0
+                ? ChannelPlaneSelector.FramePlane(member.FrameIndex)
+                : ChannelPlaneSelector.ExternalAsset(member.FrameIndex);
+    }
 
     private static LinkingLinkGroup ToLinkGroup(ProjectLinkGroupSnapshot snapshot)
     {
@@ -327,6 +442,13 @@ internal static class ProjectFigureExportBuilder
         },
         FrameIndex = snapshot.FrameIndex,
         SourceGeometry = snapshot.SourceGeometry.Select(point => new MeasurementPoint(point.X, point.Y)).ToArray(),
+        Validity = snapshot.Validity.State?.ToLowerInvariant() switch
+        {
+            "warning" => ScientificValidity.Warning(snapshot.Validity.Reasons.ToArray()),
+            "invalid" => ScientificValidity.Invalid(snapshot.Validity.Reasons.ToArray()),
+            "reviewrequired" => ScientificValidity.ReviewRequired(snapshot.Validity.Reasons.ToArray()),
+            _ => ScientificValidity.Valid,
+        },
         Style = new RoiStyle(
             snapshot.Style.StrokeColor,
             snapshot.Style.StrokeWidth,
@@ -334,15 +456,31 @@ internal static class ProjectFigureExportBuilder
             snapshot.Style.FillOpacity,
             snapshot.Style.Label,
             snapshot.Style.LabelFont,
-            snapshot.Style.LabelColor),
+            snapshot.Style.LabelColor,
+            snapshot.Style.LabelFontSizePt,
+            snapshot.Style.LabelIsBold),
         Propagation = snapshot.Propagation is null
             ? null
             : new RoiPropagationProvenance(
                 snapshot.Propagation.ReferenceRoiId,
                 snapshot.Propagation.TargetRoiId,
                 snapshot.Propagation.LinkGroupId,
-                snapshot.Propagation.MappingId),
+                snapshot.Propagation.MappingId,
+                snapshot.Propagation.TargetCoverageFraction),
     }.EnsureValid();
+
+    private static RoiFigureProjectionObject ToRoiFigureProjection(
+        ProjectRoiFigureProjectionSnapshot snapshot) => new()
+    {
+        Id = snapshot.Id,
+        RoiId = snapshot.RoiId,
+        PanelId = snapshot.PanelId,
+        AssetId = snapshot.AssetId,
+        SourceRevision = snapshot.SourceRevision,
+        StyleOverride = ToStyleOverride(snapshot.StyleOverride),
+        IsVisible = snapshot.Visible,
+        ZIndex = snapshot.ZIndex,
+    };
 
     private static MeasurementOverlayObject ToMeasurementOverlay(ProjectMeasurementOverlaySnapshot snapshot)
     {
@@ -418,13 +556,40 @@ internal static class ProjectFigureExportBuilder
             }).ToArray();
         FigureChannelLegendEntry[] entries = snapshot.ChannelEntries
             .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-            .Select(token => token.Split('|', 2, StringSplitOptions.TrimEntries))
-            .Where(pair => pair.Length == 2)
-            .Select(pair => new FigureChannelLegendEntry(pair[0], pair[1]))
+            .Select(token => token.Split('|', 3, StringSplitOptions.TrimEntries))
+            .Where(pair => pair.Length is 2 or 3)
+            .Select(pair => pair.Length == 3 && Guid.TryParse(pair[0], out Guid channelId)
+                ? new FigureChannelLegendEntry(pair[1], pair[2], channelId)
+                : new FigureChannelLegendEntry(pair[0], pair[1]))
             .ToArray();
+        FigureScientificObjectKind kind = ParseScientificObjectKind(snapshot.Kind);
+        FigureColorbarExportSpec? colorbar = kind == FigureScientificObjectKind.Colorbar
+            ? new FigureColorbarExportSpec(
+                snapshot.Minimum,
+                snapshot.Maximum,
+                snapshot.Unit,
+                snapshot.Colormap,
+                snapshot.ChannelId,
+                ParseColorbarBindingState(snapshot.ColorbarBindingState),
+                ParseScientificObjectOrientation(snapshot.Orientation),
+                snapshot.Ticks.Select(tick => new ColorbarTick(tick.Value, tick.Label)).ToArray())
+            : null;
+        FigureChannelLegendExportSpec? channelLegend = kind == FigureScientificObjectKind.ChannelLegend
+            ? new FigureChannelLegendExportSpec(
+                entries,
+                snapshot.FontFamily,
+                snapshot.FontSizePt,
+                snapshot.IsBold,
+                snapshot.TextColor,
+                snapshot.FillColor,
+                snapshot.FillOpacityPercent,
+                snapshot.StrokeColor,
+                snapshot.StrokeWidthPt,
+                snapshot.ChannelLegendPadding)
+            : null;
         var item = new FigureScientificObjectExportItem(
             snapshot.Id,
-            ParseScientificObjectKind(snapshot.Kind),
+            kind,
             points,
             snapshot.Label,
             snapshot.StrokeColor,
@@ -442,7 +607,9 @@ internal static class ProjectFigureExportBuilder
             snapshot.Unit,
             snapshot.Colormap,
             entries,
-            ChannelId: snapshot.ChannelId);
+            ChannelId: snapshot.ChannelId,
+            Colorbar: colorbar,
+            ChannelLegend: channelLegend);
         item.EnsureValid(canvasWidth, canvasHeight);
         return item;
     }
@@ -492,13 +659,21 @@ internal static class ProjectFigureExportBuilder
         }
         var result = new StyleOverride(
             PanelLabel: ToTextStyle(snapshot.PanelLabel),
+            Annotation: ToTextStyle(snapshot.Annotation),
             ScaleBarText: ToTextStyle(snapshot.ScaleBarText),
             ScaleBar: snapshot.ScaleBar is null
                 ? null
                 : new ScaleBarStyle(
                     ParseScaleBarAnchor(snapshot.ScaleBar.DefaultPosition),
                     snapshot.ScaleBar.BarThicknessPt,
-                    snapshot.ScaleBar.Color));
+                    snapshot.ScaleBar.Color),
+            Shapes: snapshot.Shapes is null
+                ? null
+                : new ShapeStyle(
+                    snapshot.Shapes.StrokeColor,
+                    snapshot.Shapes.FillColor,
+                    snapshot.Shapes.FillOpacityPercent,
+                    snapshot.Shapes.StrokeWidthPt));
         result.EnsureValid();
         return result.IsEmpty ? null : result;
     }
@@ -506,6 +681,22 @@ internal static class ProjectFigureExportBuilder
     private static TextStyle? ToTextStyle(ProjectTextStyleSnapshot? snapshot) => snapshot is null
         ? null
         : new TextStyle(snapshot.FontFamily, snapshot.FontSizePt, snapshot.IsBold, snapshot.Color);
+
+    private static FigurePlotTypographyOverride? ToPlotTypographyOverride(
+        ProjectPlotTypographyOverrideSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return null;
+        }
+        var result = new FigurePlotTypographyOverride(
+            ToTextStyle(snapshot.Axis),
+            ToTextStyle(snapshot.Tick),
+            ToTextStyle(snapshot.Legend),
+            ToTextStyle(snapshot.Annotation));
+        result.EnsureValid();
+        return result.IsEmpty ? null : result;
+    }
 
     private static int ResolveCanvasDpi(SciCanvasProjectDocument project) =>
         project.ExportProfiles.FirstOrDefault()?.Dpi is > 0 and var dpi ? dpi : 300;
@@ -539,11 +730,26 @@ internal static class ProjectFigureExportBuilder
         value?.ToLowerInvariant() switch
         {
             "polygonannotation" => FigureScientificObjectKind.PolygonAnnotation,
-            "roi" => FigureScientificObjectKind.Roi,
             "directionmarker" => FigureScientificObjectKind.DirectionMarker,
             "colorbar" => FigureScientificObjectKind.Colorbar,
             "channellegend" => FigureScientificObjectKind.ChannelLegend,
             _ => throw new InvalidDataException($"工程包含未知科研对象类型：{value}"),
+        };
+
+    private static ColorbarBindingState ParseColorbarBindingState(string? value) =>
+        value?.ToLowerInvariant() switch
+        {
+            "linked" => ColorbarBindingState.Linked,
+            "detached" => ColorbarBindingState.Detached,
+            _ => throw new InvalidDataException($"工程包含未知 Colorbar 绑定状态：{value}"),
+        };
+
+    private static FigureObjectOrientation ParseScientificObjectOrientation(string? value) =>
+        value?.ToLowerInvariant() switch
+        {
+            "vertical" => FigureObjectOrientation.Vertical,
+            "horizontal" => FigureObjectOrientation.Horizontal,
+            _ => throw new InvalidDataException($"工程包含未知科研对象方向：{value}"),
         };
 
     private static ScientificMeasurementKind ParseMeasurementKind(string? value) =>

@@ -1,5 +1,6 @@
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using SciCanvas.Core.Channels;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
@@ -7,11 +8,33 @@ using SciCanvas.Core.Sources;
 using SciCanvas.Core.Workspace;
 using SciCanvas.Presentation;
 using SciCanvas.Templates;
+using LinkingLinkGroup = SciCanvas.Core.Linking.LinkGroup;
+using LinkingLinkSyncOptions = SciCanvas.Core.Linking.LinkSyncOptions;
+using LinkingSpatialMapping = SciCanvas.Core.Linking.SpatialMapping;
 
 namespace SciCanvas.Platform.Windows.Tests;
 
 public sealed class FigureCanvasMultiSelectionTests
 {
+    [Fact]
+    public void ArchitectureCollections_ExposeOwnedAggregatesThroughStableCanvasAliases()
+    {
+        FigureCanvasViewModel figure = CreateFigure();
+
+        Assert.Same(figure.PanelCollection.Panels, figure.Panels);
+        Assert.Same(figure.PanelCollection.MeasurementOverlays, figure.MeasurementOverlays);
+        Assert.Same(figure.PanelCollection.RoiProjections, figure.RoiProjections);
+        Assert.Same(figure.ObjectCollection.Annotations, figure.Annotations);
+        Assert.Same(figure.ObjectCollection.ScientificObjects, figure.ScientificObjects);
+        Assert.Same(figure.ObjectCollection.Guides, figure.Guides);
+        Assert.Same(figure.ObjectCollection.ScientificColors, figure.ScientificColors);
+        Assert.Same(figure.LinkCoordinator.LinkGroups, figure.LinkGroups);
+
+        figure.LinkCoordinator.StatusText = "同步边界测试";
+
+        Assert.Equal("同步边界测试", figure.LinkSynchronizationStatusText);
+    }
+
     [Fact]
     public void MultiSelection_AlignsEdgesAndDistributesEqualHorizontalGaps()
     {
@@ -63,6 +86,37 @@ public sealed class FigureCanvasMultiSelectionTests
         Assert.Equal((400L, 100L), (locked.X, locked.Y));
         Assert.Equal((700L, 0L), (third.X, third.Y));
         Assert.False(figure.DistributeSelectionHorizontallyCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void AnnotationMultiSelection_AlignsToPrimaryAndSharesDirection()
+    {
+        FigureCanvasViewModel figure = CreateFigure();
+        figure.AddLineAnnotationCommand.Execute(null);
+        FigureAnnotationViewModel first = Assert.IsType<FigureAnnotationViewModel>(figure.SelectedAnnotation);
+        first.X = 100;
+        first.Y = 120;
+        first.EndX = 300;
+        first.EndY = 120;
+        figure.AddLineAnnotationCommand.Execute(null);
+        FigureAnnotationViewModel reference = Assert.IsType<FigureAnnotationViewModel>(figure.SelectedAnnotation);
+        reference.X = 500;
+        reference.Y = 300;
+        reference.EndX = 700;
+        reference.EndY = 360;
+
+        figure.SelectAnnotation(first, toggle: false);
+        figure.SelectAnnotation(reference, toggle: true);
+
+        Assert.Equal(2, figure.SelectedAnnotationCount);
+        Assert.Same(reference, figure.SelectedAnnotation);
+        figure.AlignAnnotationLeftCommand.Execute(null);
+        Assert.Equal(reference.Bounds.Left, first.Bounds.Left, 8);
+
+        figure.SetAnnotationDirectionVerticalCommand.Execute(null);
+        Assert.All(
+            figure.SelectedAnnotations,
+            annotation => Assert.Equal(90, annotation.DirectionAngleDegrees, 8));
     }
 
     [Fact]
@@ -268,6 +322,70 @@ public sealed class FigureCanvasMultiSelectionTests
     }
 
     [Fact]
+    public void CreateExportDocument_UsesReferenceGridAndBilinearRegistrationForLinkedComposite()
+    {
+        FigureCanvasViewModel figure = CreateFigure();
+        SourceAssetItemViewModel reference = CreateSource(2, 1);
+        SourceAssetItemViewModel target = CreateSource(3, 1);
+        Guid groupId = Guid.NewGuid();
+        Guid referenceChannelId = Guid.NewGuid();
+        Guid targetChannelId = Guid.NewGuid();
+        ChannelGroupMember referenceMember = CreateChannelMember(
+            referenceChannelId,
+            reference.Asset.Id,
+            "reference",
+            "#FFFFFFFF");
+        ChannelGroupMember targetMember = CreateChannelMember(
+            targetChannelId,
+            target.Asset.Id,
+            "target",
+            "#FFFF0000");
+        var group = new MultiChannelAssetGroup(
+            groupId,
+            "registered",
+            reference.Asset.Id,
+            [referenceMember, targetMember],
+            SameFieldOfViewConfirmed: false).EnsureValid();
+        LinkingSpatialMapping mapping = LinkingSpatialMapping.CreateTranslation(
+            reference.Asset.Id,
+            target.Asset.Id,
+            reference.SourceRevision,
+            target.SourceRevision,
+            1,
+            0,
+            DateTimeOffset.UnixEpoch);
+        figure.LinkGroups.Add(new LinkingLinkGroup(
+            Guid.NewGuid(),
+            "registered",
+            reference.Asset.Id,
+            [reference.Asset.Id, target.Asset.Id],
+            LinkingLinkSyncOptions.Crop | LinkingLinkSyncOptions.Roi,
+            [mapping]).EnsureValid());
+        FigurePanelViewModel panel = Assert.IsType<FigurePanelViewModel>(
+            figure.AddPanel(reference, new PixelRect64(0, 0, 2, 1)));
+        panel.CompositeGroupId = groupId;
+
+        FigurePanelExportItem exported = Assert.Single(
+            figure.CreateExportDocument([group], [reference, target]).Panels);
+
+        FigureChannelLayerExportItem referenceLayer = Assert.Single(
+            exported.EffectiveChannelLayers,
+            layer => layer.Source.Id == reference.Asset.Id);
+        FigureChannelLayerExportItem targetLayer = Assert.Single(
+            exported.EffectiveChannelLayers,
+            layer => layer.Source.Id == target.Asset.Id);
+        Assert.Null(referenceLayer.RegistrationResampling);
+        RegisteredPlaneResamplingSpec resampling = Assert.IsType<RegisteredPlaneResamplingSpec>(
+            targetLayer.RegistrationResampling);
+        Assert.Equal(mapping.Id, resampling.Mapping.Id);
+        Assert.Equal(RegisteredInterpolation.Bilinear, resampling.Interpolation);
+        Assert.Equal(RegisteredBorderPolicy.Transparent, resampling.BorderPolicy);
+        Assert.Equal(panel.SourceRect, resampling.ReferenceGrid.Region);
+        Assert.Equal(referenceLayer.OutputWidth, targetLayer.OutputWidth);
+        Assert.NotEqual(referenceLayer.SourceRect, targetLayer.SourceRect);
+    }
+
+    [Fact]
     public void CreateInset_CreatesCenteredDetailCropAndMarksExportPanel()
     {
         FigureCanvasViewModel figure = CreateFigure();
@@ -407,4 +525,22 @@ public sealed class FigureCanvasMultiSelectionTests
             SourceLinkState.Verified);
         return new SourceAssetItemViewModel(asset, preview);
     }
+
+    private static ChannelGroupMember CreateChannelMember(
+        Guid channelId,
+        Guid assetId,
+        string name,
+        string color) => new(
+        channelId,
+        assetId,
+        ChannelPlaneSelector.InterleavedComponent(0, 0),
+        name,
+        null,
+        color,
+        ChannelNameOrigin.User,
+        true,
+        new ChannelDisplaySettings(channelId, true, color, 1, 0, byte.MaxValue, 1, false))
+    {
+        SourceRevision = 1,
+    };
 }

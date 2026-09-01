@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://scicanvas.org/schemas/scicanvas-project.schema.json",
-  "title": "SciCanvas Project 2.4",
+  "title": "SciCanvas Project 3.0",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,6 +11,8 @@
     "updatedAt",
     "canvas",
     "sources",
+    "dataAssets",
+    "plots",
     "layers",
     "cropPresets",
     "guides",
@@ -24,8 +26,8 @@
     "schemaVersion": {
       "type": "string",
       "pattern": "^[0-9]+\\.[0-9]+$",
-      "description": "Current writer emits 2.4; older supported versions are migrated before validation.",
-      "examples": ["2.4"]
+      "description": "Current writer emits 3.0; older supported versions are migrated before validation.",
+      "examples": ["3.0"]
     },
     "projectId": {
       "type": "string",
@@ -51,6 +53,14 @@
       "items": {
         "$ref": "#/$defs/sourceAsset"
       }
+    },
+    "dataAssets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/tabularDataAsset" }
+    },
+    "plots": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/plotObject" }
     },
     "layers": {
       "type": "array",
@@ -229,9 +239,17 @@
           "type": "array",
           "items": { "$ref": "#/$defs/figureScientificObject" }
         },
+        "roiProjections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/roiFigureProjection" }
+        },
         "measurementOverlays": {
           "type": "array",
           "items": { "$ref": "#/$defs/measurementOverlay" }
+        },
+        "plotPanels": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/figurePlotPanel" }
         },
         "globalStyle": {
           "anyOf": [
@@ -270,6 +288,46 @@
         "scaleBarFontSizePt": { "type": "number", "minimum": 4, "maximum": 72 },
         "scaleBarLabelIsBold": { "type": "boolean" },
         "scaleBarThicknessPt": { "type": "number", "minimum": 0.25, "maximum": 10 }
+      }
+    },
+    "figurePlotPanel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "plotId", "destinationRect", "label", "visible", "locked", "zIndex",
+        "styleOverride", "typographyOverride"
+      ],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "plotId": { "type": "string", "format": "uuid" },
+        "destinationRect": { "$ref": "#/$defs/pixelRect" },
+        "label": { "type": "string", "maxLength": 128 },
+        "visible": { "type": "boolean" },
+        "locked": { "type": "boolean" },
+        "zIndex": { "type": "integer", "minimum": 0 },
+        "styleOverride": {
+          "anyOf": [
+            { "$ref": "#/$defs/panelStyleOverride" },
+            { "type": "null" }
+          ]
+        },
+        "typographyOverride": {
+          "anyOf": [
+            { "$ref": "#/$defs/plotTypographyOverride" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "plotTypographyOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["axis", "tick", "legend", "annotation"],
+      "properties": {
+        "axis": { "anyOf": [{ "$ref": "#/$defs/textStyle" }, { "type": "null" }] },
+        "tick": { "anyOf": [{ "$ref": "#/$defs/textStyle" }, { "type": "null" }] },
+        "legend": { "anyOf": [{ "$ref": "#/$defs/textStyle" }, { "type": "null" }] },
+        "annotation": { "anyOf": [{ "$ref": "#/$defs/textStyle" }, { "type": "null" }] }
       }
     },
     "scientificColor": {
@@ -359,6 +417,226 @@
         "lastWriteTimeUtc": { "type": "string", "format": "date-time" },
         "sha256": { "type": "string", "pattern": "^[0-9A-Fa-f]{64}$" },
         "windowsFileId": { "type": ["string", "null"] }
+      }
+    },
+    "tabularDataAsset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "sourceRevision", "columns", "rows", "importMetadata"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "sourcePath": { "type": ["string", "null"], "minLength": 1 },
+        "fingerprint": {
+          "anyOf": [
+            { "$ref": "#/$defs/fingerprint" },
+            { "type": "null" }
+          ]
+        },
+        "sourceRevision": { "type": "integer", "minimum": 1 },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/dataColumn" }
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/tabularDataRow" }
+        },
+        "importMetadata": { "$ref": "#/$defs/tabularImportMetadata" }
+      }
+    },
+    "dataColumn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "dataType"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "dataType": { "type": "string", "enum": ["numeric", "text", "boolean", "dateTime"] },
+        "unit": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+        "role": { "type": ["string", "null"], "enum": ["x", "y", "yError", "category", "label", "other", null] }
+      }
+    },
+    "tabularDataRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["values"],
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/tabularDataValue" }
+        }
+      }
+    },
+    "tabularDataValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rawText": { "type": ["string", "null"] },
+        "numericValue": { "type": ["number", "null"] },
+        "booleanValue": { "type": ["boolean", "null"] },
+        "dateTimeValue": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "tabularImportMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format", "importedAt", "encodingName", "headerRow", "dataRowCount",
+        "inferenceRowCount", "originalHeaders"
+      ],
+      "properties": {
+        "format": { "type": "string", "enum": ["csv", "tsv", "xlsx"] },
+        "importedAt": { "type": "string", "format": "date-time" },
+        "encodingName": { "type": "string", "minLength": 1 },
+        "delimiter": { "type": ["string", "null"], "minLength": 1, "maxLength": 1 },
+        "sheetName": { "type": ["string", "null"], "minLength": 1 },
+        "selectedRange": { "type": ["string", "null"], "minLength": 1 },
+        "headerRow": { "type": "integer", "minimum": 1 },
+        "dataRowCount": { "type": "integer", "minimum": 1 },
+        "inferenceRowCount": { "type": "integer", "minimum": 1 },
+        "originalHeaders": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "plotObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "name", "plotType", "data", "xAxis", "yAxis",
+        "typography", "style", "transforms"
+      ],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "plotType": {
+          "type": "string",
+          "enum": ["line", "scatter", "lineAndSymbol", "errorBar", "histogram", "boxPlot", "heatmap"]
+        },
+        "data": { "$ref": "#/$defs/plotDataBinding" },
+        "xAxis": { "$ref": "#/$defs/plotAxis" },
+        "yAxis": { "$ref": "#/$defs/plotAxis" },
+        "typography": { "$ref": "#/$defs/plotTypography" },
+        "style": { "$ref": "#/$defs/plotSeriesStyle" },
+        "filter": {
+          "anyOf": [
+            { "$ref": "#/$defs/plotFilter" },
+            { "type": "null" }
+          ]
+        },
+        "transforms": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/plotTransform" }
+        }
+      }
+    },
+    "plotDataBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataAssetId", "sourceRevision", "yColumnId"],
+      "properties": {
+        "dataAssetId": { "type": "string", "format": "uuid" },
+        "sourceRevision": { "type": "integer", "minimum": 1 },
+        "xColumnId": { "type": ["string", "null"], "format": "uuid" },
+        "yColumnId": { "type": "string", "format": "uuid" },
+        "valueColumnId": { "type": ["string", "null"], "format": "uuid" },
+        "errorBars": {
+          "anyOf": [
+            { "$ref": "#/$defs/plotErrorBarBinding" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "plotErrorBarBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["symmetric", "asymmetric"] },
+        "symmetricColumnId": { "type": ["string", "null"], "format": "uuid" },
+        "lowerColumnId": { "type": ["string", "null"], "format": "uuid" },
+        "upperColumnId": { "type": ["string", "null"], "format": "uuid" }
+      }
+    },
+    "plotAxis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "scale", "minorTickCount"],
+      "properties": {
+        "title": { "type": "string", "maxLength": 256 },
+        "unit": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+        "scale": { "type": "string", "enum": ["linear", "log10"] },
+        "minimum": { "type": ["number", "null"] },
+        "maximum": { "type": ["number", "null"] },
+        "majorTickInterval": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "minorTickCount": { "type": "integer", "minimum": 0, "maximum": 20 }
+      }
+    },
+    "plotTypography": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["axis", "tick", "legend", "annotation"],
+      "properties": {
+        "axis": { "$ref": "#/$defs/textStyle" },
+        "tick": { "$ref": "#/$defs/textStyle" },
+        "legend": { "$ref": "#/$defs/textStyle" },
+        "annotation": { "$ref": "#/$defs/textStyle" }
+      }
+    },
+    "plotSeriesStyle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lineColor", "lineWidthPt", "lineStyle", "markerShape",
+        "markerSizePt", "markerFill", "markerStroke"
+      ],
+      "properties": {
+        "lineColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "lineWidthPt": { "type": "number", "minimum": 0.25, "maximum": 10 },
+        "lineStyle": { "type": "string", "enum": ["solid", "dash", "dot", "dashDot"] },
+        "markerShape": { "type": "string", "enum": ["none", "circle", "square", "triangle", "diamond", "cross"] },
+        "markerSizePt": { "type": "number", "minimum": 1, "maximum": 72 },
+        "markerFill": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "markerStroke": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" }
+      }
+    },
+    "plotFilter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["columnId", "operator", "expression", "excludedRowCount"],
+      "properties": {
+        "columnId": { "type": "string", "format": "uuid" },
+        "operator": {
+          "type": "string",
+          "enum": [
+            "equal", "notEqual", "lessThan", "lessThanOrEqual",
+            "greaterThan", "greaterThanOrEqual", "isMissing", "isNotMissing"
+          ]
+        },
+        "operand": { "type": ["string", "null"], "maxLength": 512 },
+        "expression": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "excludedRowCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "plotTransform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["columnId", "kind"],
+      "properties": {
+        "columnId": { "type": "string", "format": "uuid" },
+        "kind": {
+          "type": "string",
+          "enum": ["normalizeMinMax", "offset", "log10", "movingAverage"]
+        },
+        "parameter": { "type": ["number", "null"] },
+        "windowSize": { "type": ["integer", "null"], "minimum": 2, "maximum": 10000 },
+        "alignment": { "type": ["string", "null"], "enum": ["centered", "trailing", null] }
       }
     },
     "imageMetadata": {
@@ -542,9 +820,15 @@
     "panelStyleOverride": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["panelLabel", "scaleBarText", "scaleBar"],
+      "required": ["panelLabel", "annotation", "scaleBarText", "scaleBar", "shapes"],
       "properties": {
         "panelLabel": {
+          "anyOf": [
+            { "$ref": "#/$defs/textStyle" },
+            { "type": "null" }
+          ]
+        },
+        "annotation": {
           "anyOf": [
             { "$ref": "#/$defs/textStyle" },
             { "type": "null" }
@@ -561,7 +845,24 @@
             { "$ref": "#/$defs/scaleBarStyle" },
             { "type": "null" }
           ]
+        },
+        "shapes": {
+          "anyOf": [
+            { "$ref": "#/$defs/shapeStyle" },
+            { "type": "null" }
+          ]
         }
+      }
+    },
+    "shapeStyle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strokeColor", "fillColor", "fillOpacityPercent", "strokeWidthPt"],
+      "properties": {
+        "strokeColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "fillColor": { "type": "string", "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "fillOpacityPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "strokeWidthPt": { "type": "number", "minimum": 0.25, "maximum": 10 }
       }
     },
     "textStyle": {
@@ -821,8 +1122,9 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "id", "sourceAssetId", "sourceRevision", "kind", "frameIndex",
-        "channel", "analyzerId", "analyzedAt", "validity", "sourceBitDepth"
+          "id", "sourceAssetId", "sourceRevision", "kind", "frameIndex",
+          "channel", "analyzerId", "analyzedAt", "validity", "sourceBitDepth",
+          "clippedToImage", "coverageFraction"
       ],
       "properties": {
         "id": { "type": "string", "format": "uuid" },
@@ -845,10 +1147,13 @@
         "scientificChannelId": { "type": ["string", "null"], "format": "uuid" },
         "linkGroupId": { "type": ["string", "null"], "format": "uuid" },
         "mappingId": { "type": ["string", "null"], "format": "uuid" },
-        "polygonMask": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/roiPoint" }
-        },        "pixelCount": { "type": ["integer", "null"], "minimum": 1 },
+          "polygonMask": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/roiPoint" }
+          },
+          "clippedToImage": { "type": "boolean" },
+          "coverageFraction": { "type": "number", "minimum": 0, "maximum": 1 },
+          "pixelCount": { "type": ["integer", "null"], "minimum": 1 },
         "minimum": { "type": ["number", "null"] },
         "maximum": { "type": ["number", "null"] },
         "mean": { "type": ["number", "null"] },
@@ -934,13 +1239,14 @@
         "id", "kind", "points", "label", "strokeColor", "fillColor",
         "fillOpacityPercent", "textColor", "fontFamily", "fontSizePt",
         "strokeWidthPt", "isBold", "visible", "locked", "zIndex",
-        "minimum", "maximum", "unit", "colormap", "channelEntries"
+        "minimum", "maximum", "unit", "colormap", "channelEntries",
+        "colorbarBindingState", "orientation", "ticks", "channelLegendPadding"
       ],
       "properties": {
         "id": { "type": "string", "format": "uuid" },
         "kind": {
           "type": "string",
-          "enum": ["PolygonAnnotation", "Roi", "DirectionMarker", "Colorbar", "ChannelLegend"]
+          "enum": ["PolygonAnnotation", "DirectionMarker", "Colorbar", "ChannelLegend"]
         },
         "points": { "type": "string" },
         "label": { "type": "string" },
@@ -958,9 +1264,25 @@
         "minimum": { "type": "number" },
         "maximum": { "type": "number" },
         "unit": { "type": "string" },
-        "colormap": { "type": "string", "enum": ["viridis", "magma", "grayscale"] },
+        "colormap": { "type": "string", "enum": ["viridis", "magma", "plasma", "inferno", "cividis", "turbo", "grayscale"] },
         "channelEntries": { "type": "string" },
-        "channelId": { "type": ["string", "null"], "format": "uuid" }
+        "channelId": { "type": ["string", "null"], "format": "uuid" },
+        "colorbarBindingState": { "type": "string", "enum": ["Linked", "Detached", "linked", "detached"] },
+        "orientation": { "type": "string", "enum": ["Vertical", "Horizontal", "vertical", "horizontal"] },
+        "ticks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/colorbarTick" }
+        },
+        "channelLegendPadding": { "type": "number", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "colorbarTick": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "label"],
+      "properties": {
+        "value": { "type": "number" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 128 }
       }
     },
     "measurementOverlay": {
@@ -1043,15 +1365,16 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "channelId", "assetId", "sourceRevision", "frameIndex", "name", "nameOrigin",
+        "channelId", "assetId", "sourceRevision", "frameIndex", "planeSelector", "name", "nameOrigin",
         "isNameConfirmed", "visible", "opacity", "displayMinimum",
-        "displayMaximum", "gamma", "invert"
+        "displayMaximum", "gamma", "invert", "colormap"
       ],
       "properties": {
         "channelId": { "type": "string", "format": "uuid" },
         "assetId": { "type": "string", "format": "uuid" },
         "sourceRevision": { "type": "integer", "minimum": 1 },
         "frameIndex": { "type": "integer", "minimum": 0 },
+        "planeSelector": { "$ref": "#/$defs/channelPlaneSelector" },
         "name": { "type": "string", "minLength": 1, "maxLength": 128 },
         "role": { "type": ["string", "null"], "maxLength": 128 },
         "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{8}$" },
@@ -1062,8 +1385,40 @@
         "displayMinimum": { "type": "number" },
         "displayMaximum": { "type": "number" },
         "gamma": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
-        "invert": { "type": "boolean" }
+        "invert": { "type": "boolean" },
+        "colormap": { "type": "string", "enum": ["viridis", "magma", "plasma", "inferno", "cividis", "turbo", "grayscale"] }
       }
+    },
+    "channelPlaneSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceKind", "frameIndex"],
+      "properties": {
+        "sourceKind": {
+          "type": "string",
+          "enum": ["externalAsset", "interleavedComponent", "framePlane"]
+        },
+        "frameIndex": { "type": "integer", "minimum": 0 },
+        "componentIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "zIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "cIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "tIndex": { "type": ["integer", "null"], "minimum": 0 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "sourceKind": { "const": "interleavedComponent" } },
+            "required": ["sourceKind"]
+          },
+          "then": {
+            "required": ["componentIndex"],
+            "properties": { "componentIndex": { "type": "integer", "minimum": 0 } }
+          },
+          "else": {
+            "properties": { "componentIndex": { "type": "null" } }
+          }
+        }
+      ]
     },
     "roiPoint": {
       "type": "object",
@@ -1077,7 +1432,7 @@
     "canonicalRoi": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "assetId", "sourceRevision", "geometryKind", "frameIndex", "sourceGeometry", "style"],
+      "required": ["id", "assetId", "sourceRevision", "geometryKind", "frameIndex", "sourceGeometry", "validity", "style"],
       "properties": {
         "id": { "type": "string", "format": "uuid" },
         "assetId": { "type": "string", "format": "uuid" },
@@ -1085,14 +1440,35 @@
         "geometryKind": { "type": "string", "enum": ["rectangle", "ellipse", "polygon", "polyline"] },
         "frameIndex": { "type": "integer", "minimum": 0 },
         "sourceGeometry": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/roiPoint" } },
+        "validity": { "$ref": "#/$defs/scientificValidity" },
         "style": { "$ref": "#/$defs/roiStyle" },
         "propagation": { "anyOf": [{ "$ref": "#/$defs/roiPropagation" }, { "type": "null" }] }
+      }
+    },
+    "roiFigureProjection": {
+      "type": "object",
+      "additionalProperties": false,
+        "required": ["id", "roiId", "panelId", "assetId", "sourceRevision", "styleOverride", "visible", "zIndex"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "roiId": { "type": "string", "format": "uuid" },
+        "panelId": { "type": "string", "format": "uuid" },
+        "assetId": { "type": "string", "format": "uuid" },
+          "sourceRevision": { "type": "integer", "minimum": 1 },
+          "styleOverride": {
+            "anyOf": [
+              { "$ref": "#/$defs/panelStyleOverride" },
+              { "type": "null" }
+            ]
+          },
+        "visible": { "type": "boolean" },
+        "zIndex": { "type": "integer" }
       }
     },
     "roiStyle": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["strokeColor", "strokeWidth", "fillColor", "fillOpacity"],
+      "required": ["strokeColor", "strokeWidth", "fillColor", "fillOpacity", "labelFontSizePt", "labelIsBold"],
       "properties": {
         "strokeColor": { "type": "string" },
         "strokeWidth": { "type": "number", "exclusiveMinimum": 0 },
@@ -1100,18 +1476,21 @@
         "fillOpacity": { "type": "number", "minimum": 0, "maximum": 1 },
         "label": { "type": ["string", "null"], "maxLength": 256 },
         "labelFont": { "type": ["string", "null"], "maxLength": 128 },
+        "labelFontSizePt": { "type": "number", "minimum": 4, "maximum": 72 },
+        "labelIsBold": { "type": "boolean" },
         "labelColor": { "type": ["string", "null"] }
       }
     },
     "roiPropagation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["referenceRoiId", "targetRoiId", "linkGroupId", "mappingId"],
+      "required": ["referenceRoiId", "targetRoiId", "linkGroupId", "mappingId", "targetCoverageFraction"],
       "properties": {
         "referenceRoiId": { "type": "string", "format": "uuid" },
         "targetRoiId": { "type": "string", "format": "uuid" },
         "linkGroupId": { "type": "string", "format": "uuid" },
-        "mappingId": { "type": "string", "format": "uuid" }
+          "mappingId": { "type": "string", "format": "uuid" },
+          "targetCoverageFraction": { "type": "number", "minimum": 0, "maximum": 1 }
       }
     },    "linkGroup": {
       "type": "object",

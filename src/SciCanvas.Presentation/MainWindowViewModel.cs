@@ -9,9 +9,11 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using SciCanvas.Core.Channels;
 using SciCanvas.Core.Cropping;
+using SciCanvas.Core.Data;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
+using SciCanvas.Core.Plotting;
 using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
 using SciCanvas.Core.Workspace;
@@ -38,25 +40,22 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly IImagePreviewLoader _previewLoader;
     private readonly IPathSafetyPolicy _pathSafetyPolicy;
     private readonly IImageCropExporter _cropExporter;
-    private readonly IFigureExporter _figureExporter;
     private readonly IProjectFilePicker _projectFilePicker;
-    private readonly IProjectStore _projectStore;
-    private readonly IProjectRecoveryStore _projectRecoveryStore;
-    private readonly IProjectRecoveryPrompt _projectRecoveryPrompt;
-    private readonly ISourceRelinkFilePicker _sourceRelinkFilePicker;
+    private readonly ProjectOpenSaveCoordinator _projectOpenSaveCoordinator;
     private readonly ISourceRevisionAcceptancePrompt _sourceRevisionAcceptancePrompt;
     private readonly ITemplateFilePicker? _templateFilePicker;
     private readonly IUserTemplateCatalog? _userTemplateCatalog;
     private readonly IBatchExportFolderPicker? _batchExportFolderPicker;
     private readonly ISubmissionPackageFolderPicker? _submissionPackageFolderPicker;
-    private readonly SubmissionPackageBuilder _submissionPackageBuilder;
+    private readonly SubmissionCoordinator _submissionCoordinator;
+    private readonly ScientificQcCoordinator _scientificQcCoordinator = new();
+    private readonly FigureExportCoordinator _figureExportCoordinator;
     private readonly IUnsavedChangesPrompt _unsavedChangesPrompt;
     private readonly IReadOnlyList<FigureTemplateDefinition> _figureTemplates;
-    private readonly IIntensityProfileAnalyzer _intensityProfileAnalyzer;
-    private readonly IRoiStatisticsAnalyzer _roiStatisticsAnalyzer;
-    private readonly IAssistedRegionAnalyzer _assistedRegionAnalyzer;
+    private readonly ScientificAnalysisCoordinator _scientificAnalysisCoordinator;
     private readonly EditorHistoryManager _history = new(100);
     private readonly List<ProjectAuditEntrySnapshot> _auditTrail = [];
+    private readonly HashSet<SourceAssetItemViewModel> _attachedSourceScience = [];
     private readonly DispatcherTimer _autosaveTimer;
     private FigureCanvasViewModel _figure;
     private FigureTemplateDefinition _selectedFigureTemplate;
@@ -75,6 +74,8 @@ public sealed class MainWindowViewModel : ObservableObject
     private bool _isRegistrationTabActive;
     private bool _isRoiPropagationTabActive;
     private bool _isPublishingPortabilityTabActive;
+    private bool _isScientificDataTabActive;
+    private bool _isPlotTabActive;
     private Guid _projectId = Guid.NewGuid();
     private DateTimeOffset _projectCreatedAt = DateTimeOffset.UtcNow;
     private string? _projectPath;
@@ -85,10 +86,16 @@ public sealed class MainWindowViewModel : ObservableObject
     private bool _historyGestureDirty;
     private bool _autosaveInProgress;
     private bool _autosavePending;
+    private bool _hasUnsavedDataAssetChanges;
+    private bool _hasUnsavedPlotChanges;
     private string _autosaveStatusText = "自动保存待命";
     private ScientificToolMode _activeScienceTool = ScientificToolMode.Crop;
     private ScientificMeasurementViewModel? _pendingMeasurement;
     private int _pendingAngleStep;
+    private readonly List<MeasurementPoint> _pendingCanonicalRoiPoints = [];
+    private MeasurementPoint? _pendingCanonicalRoiAnchor;
+    private MeasurementPoint? _pendingCanonicalRoiCurrent;
+    private bool _canonicalRoiHistoryGestureActive;
     private FigureQcIssueViewModel? _selectedFigureQcIssue;
     private string _figureQcStatusText = "尚未运行 Figure QC";
     private bool _isFigureQcStale = true;
@@ -136,7 +143,9 @@ public sealed class MainWindowViewModel : ObservableObject
         IAssistedRegionAnalyzer? assistedRegionAnalyzer = null,
         IUnsavedChangesPrompt? unsavedChangesPrompt = null,
         IRoiStatisticsAnalyzer? roiStatisticsAnalyzer = null,
-        ISubmissionPackageFolderPicker? submissionPackageFolderPicker = null)
+        ISubmissionPackageFolderPicker? submissionPackageFolderPicker = null,
+        ITabularDataImporter? tabularDataImporter = null,
+        ITabularDataFilePicker? tabularDataFilePicker = null)
     {
         _filePicker = filePicker ?? throw new ArgumentNullException(nameof(filePicker));
         _sourceReader = sourceReader ?? throw new ArgumentNullException(nameof(sourceReader));
@@ -144,22 +153,34 @@ public sealed class MainWindowViewModel : ObservableObject
         _exportFilePicker = exportFilePicker ?? throw new ArgumentNullException(nameof(exportFilePicker));
         _pathSafetyPolicy = pathSafetyPolicy ?? throw new ArgumentNullException(nameof(pathSafetyPolicy));
         _cropExporter = cropExporter ?? throw new ArgumentNullException(nameof(cropExporter));
-        _figureExporter = figureExporter ?? throw new ArgumentNullException(nameof(figureExporter));
+        IFigureExporter resolvedFigureExporter = figureExporter ??
+            throw new ArgumentNullException(nameof(figureExporter));
+        _figureExportCoordinator = new FigureExportCoordinator(
+            _sourceReader,
+            _pathSafetyPolicy,
+            resolvedFigureExporter);
         _projectFilePicker = projectFilePicker ?? throw new ArgumentNullException(nameof(projectFilePicker));
-        _projectStore = projectStore ?? throw new ArgumentNullException(nameof(projectStore));
-        _projectRecoveryStore = projectRecoveryStore ?? new NullProjectRecoveryStore();
-        _projectRecoveryPrompt = projectRecoveryPrompt ?? new DeclineProjectRecoveryPrompt();
+        _projectOpenSaveCoordinator = new ProjectOpenSaveCoordinator(
+            projectStore ?? throw new ArgumentNullException(nameof(projectStore)),
+            projectRecoveryStore ?? new NullProjectRecoveryStore(),
+            projectRecoveryPrompt ?? new DeclineProjectRecoveryPrompt(),
+            _pathSafetyPolicy,
+            _sourceReader,
+            _previewLoader,
+            sourceRelinkFilePicker ?? new NullSourceRelinkFilePicker());
         _templateFilePicker = templateFilePicker;
         _userTemplateCatalog = userTemplateCatalog;
         _batchExportFolderPicker = batchExportFolderPicker;
         _submissionPackageFolderPicker = submissionPackageFolderPicker;
-        _submissionPackageBuilder = new SubmissionPackageBuilder(_figureExporter);
-        _sourceRelinkFilePicker = sourceRelinkFilePicker ?? new NullSourceRelinkFilePicker();
+        _submissionCoordinator = new SubmissionCoordinator(
+            _figureExportCoordinator,
+            new SubmissionPackageBuilder(resolvedFigureExporter));
         _sourceRevisionAcceptancePrompt = sourceRevisionAcceptancePrompt ??
             new DeclineSourceRevisionAcceptancePrompt();
-        _intensityProfileAnalyzer = intensityProfileAnalyzer ?? new WpfIntensityProfileAnalyzer();
-        _roiStatisticsAnalyzer = roiStatisticsAnalyzer ?? new WpfRoiStatisticsAnalyzer();
-        _assistedRegionAnalyzer = assistedRegionAnalyzer ?? new WpfAssistedRegionAnalyzer();
+        _scientificAnalysisCoordinator = new ScientificAnalysisCoordinator(
+            intensityProfileAnalyzer ?? new WpfIntensityProfileAnalyzer(),
+            roiStatisticsAnalyzer ?? new WpfRoiStatisticsAnalyzer(),
+            assistedRegionAnalyzer ?? new WpfAssistedRegionAnalyzer());
         _unsavedChangesPrompt = unsavedChangesPrompt ?? new CancelUnsavedChangesPrompt();
         ArgumentNullException.ThrowIfNull(figureTemplates);
         if (figureTemplates.Count == 0)
@@ -175,14 +196,28 @@ public sealed class MainWindowViewModel : ObservableObject
         _customCanvasWidth = _figure.CanvasWidth;
         _customCanvasHeight = _figure.CanvasHeight;
         Sources.CollectionChanged += OnSourcesCollectionChanged;
+        DataAssets.CollectionChanged += OnDataAssetsCollectionChanged;
+        Plots.CollectionChanged += OnPlotsCollectionChanged;
         MultiChannelWorkspace = new MultiChannelWorkspaceViewModel(Sources, _figure);
         MultiChannelWorkspace.Changed += OnMultiChannelWorkspaceChanged;
         LinkedViewsWorkspace = new LinkedViewsWorkspaceViewModel(_figure);
         RegistrationWorkspace = new RegistrationWorkspaceViewModel(_figure);
         RoiPropagationWorkspace = new RoiPropagationWorkspaceViewModel(Sources, MultiChannelWorkspace, _figure);
         RoiPropagationWorkspace.Changed += OnRoiPropagationWorkspaceChanged;
-        PublishingPortabilityWorkspace = new PublishingPortabilityWorkspaceViewModel(_figure);
+        PublishingPortabilityWorkspace = new PublishingPortabilityWorkspaceViewModel(
+            _figure,
+            () => _figure.CreateExportDocument(MultiChannelWorkspace.CreateModels(), Sources));
         PublishingPortabilityWorkspace.Changed += OnPublishingPortabilityWorkspaceChanged;
+        ScientificDataWorkspace = new ScientificDataWorkspaceViewModel(
+            DataAssets,
+            tabularDataImporter ?? new TabularDataImporter(),
+            tabularDataFilePicker,
+            asset => Plots.All(plot => plot.Data.DataAssetId != asset.Id));
+        PlotWorkspace = new PlotWorkspaceViewModel(
+            DataAssets,
+            Plots,
+            (plot, dataAsset) => Figure.AddPlotPanel(plot, dataAsset),
+            plot => !Figure.IsPlotReferenced(plot.Id));
         foreach (FigureExportProfile profile in FigureExportProfile.BuiltIns)
         {
             var editor = new ExportProfileEditorViewModel(profile);
@@ -236,15 +271,15 @@ public sealed class MainWindowViewModel : ObservableObject
             HandleUnexpectedCommandError);
         ExportFigureCommand = new AsyncRelayCommand(
             ExportFigureAsync,
-            () => Figure.Panels.Count > 0 && !IsBusy,
+            () => HasFigurePanels && !IsBusy,
             HandleUnexpectedCommandError);
         ExportFigureVariantsCommand = new AsyncRelayCommand(
             ExportFigureVariantsAsync,
-            () => Figure.Panels.Count > 0 && !IsBusy && _batchExportFolderPicker is not null,
+            () => HasFigurePanels && !IsBusy && _batchExportFolderPicker is not null,
             HandleUnexpectedCommandError);
         BuildSubmissionPackageCommand = new AsyncRelayCommand(
             BuildSubmissionPackageAsync,
-            () => Figure.Panels.Count > 0 && !IsBusy && _submissionPackageFolderPicker is not null,
+            () => HasFigurePanels && !IsBusy && _submissionPackageFolderPicker is not null,
             HandleUnexpectedCommandError);
         RunFigureQcCommand = new RelayCommand(RunFigureQc, () => !IsBusy);
         ApplySmartLayoutCommand = new RelayCommand(ApplySmartLayout, () => !IsBusy);
@@ -269,6 +304,8 @@ public sealed class MainWindowViewModel : ObservableObject
             IsLinkedViewsTabActive = false;
             IsChannelsTabActive = false;
             IsLayersTabActive = false;
+            IsScientificDataTabActive = false;
+            IsPlotTabActive = false;
         });
         ShowLayersTabCommand = new RelayCommand(() => IsLayersTabActive = true);
         ShowChannelsTabCommand = new RelayCommand(() => IsChannelsTabActive = true);
@@ -276,6 +313,8 @@ public sealed class MainWindowViewModel : ObservableObject
         ShowRegistrationTabCommand = new RelayCommand(() => IsRegistrationTabActive = true);
         ShowRoiPropagationTabCommand = new RelayCommand(() => IsRoiPropagationTabActive = true);
         ShowPublishingPortabilityTabCommand = new RelayCommand(() => IsPublishingPortabilityTabActive = true);
+        ShowScientificDataTabCommand = new RelayCommand(() => IsScientificDataTabActive = true);
+        ShowPlotTabCommand = new RelayCommand(() => IsPlotTabActive = true);
         SelectCropToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Crop);
         SelectCalibrationToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Calibration);
         SelectLengthToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Length);
@@ -283,6 +322,16 @@ public sealed class MainWindowViewModel : ObservableObject
         SelectRectangleRoiToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.RectangleRoi);
         SelectCircleRoiToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.CircleRoi);
         SelectPolylineToolCommand = new RelayCommand(() => ActiveScienceTool = ScientificToolMode.Polyline);
+        SelectCanonicalRoiToolCommand = new RelayCommand(
+            () => ActiveScienceTool = ScientificToolMode.CanonicalRoiSelect);
+        SelectCanonicalRoiRectangleToolCommand = new RelayCommand(
+            () => ActiveScienceTool = ScientificToolMode.CanonicalRoiRectangle);
+        SelectCanonicalRoiEllipseToolCommand = new RelayCommand(
+            () => ActiveScienceTool = ScientificToolMode.CanonicalRoiEllipse);
+        SelectCanonicalRoiPolygonToolCommand = new RelayCommand(
+            () => ActiveScienceTool = ScientificToolMode.CanonicalRoiPolygon);
+        SelectCanonicalRoiPolylineToolCommand = new RelayCommand(
+            () => ActiveScienceTool = ScientificToolMode.CanonicalRoiPolyline);
         DeleteSelectedMeasurementCommand = new RelayCommand(
             DeleteSelectedMeasurement,
             () => SelectedSource?.SelectedMeasurement is { IsLocked: false } && !IsBusy);
@@ -395,6 +444,10 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public ObservableCollection<SourceAssetItemViewModel> Sources { get; } = [];
 
+    public ObservableCollection<TabularDataAsset> DataAssets { get; } = [];
+
+    public ObservableCollection<PlotObject> Plots { get; } = [];
+
     public MultiChannelWorkspaceViewModel MultiChannelWorkspace { get; }
 
     public LinkedViewsWorkspaceViewModel LinkedViewsWorkspace { get; }
@@ -404,6 +457,10 @@ public sealed class MainWindowViewModel : ObservableObject
     public RoiPropagationWorkspaceViewModel RoiPropagationWorkspace { get; }
 
     public PublishingPortabilityWorkspaceViewModel PublishingPortabilityWorkspace { get; }
+
+    public ScientificDataWorkspaceViewModel ScientificDataWorkspace { get; }
+
+    public PlotWorkspaceViewModel PlotWorkspace { get; }
 
     public ObservableCollection<SourceAssetItemViewModel> AssetsView { get; } = [];
 
@@ -767,6 +824,10 @@ public sealed class MainWindowViewModel : ObservableObject
     public RelayCommand ShowRoiPropagationTabCommand { get; }
 
     public RelayCommand ShowPublishingPortabilityTabCommand { get; }
+
+    public RelayCommand ShowScientificDataTabCommand { get; }
+
+    public RelayCommand ShowPlotTabCommand { get; }
     public RelayCommand SelectCropToolCommand { get; }
     public RelayCommand SelectCalibrationToolCommand { get; }
     public RelayCommand SelectLengthToolCommand { get; }
@@ -774,6 +835,11 @@ public sealed class MainWindowViewModel : ObservableObject
     public RelayCommand SelectRectangleRoiToolCommand { get; }
     public RelayCommand SelectCircleRoiToolCommand { get; }
     public RelayCommand SelectPolylineToolCommand { get; }
+    public RelayCommand SelectCanonicalRoiToolCommand { get; }
+    public RelayCommand SelectCanonicalRoiRectangleToolCommand { get; }
+    public RelayCommand SelectCanonicalRoiEllipseToolCommand { get; }
+    public RelayCommand SelectCanonicalRoiPolygonToolCommand { get; }
+    public RelayCommand SelectCanonicalRoiPolylineToolCommand { get; }
     public RelayCommand DeleteSelectedMeasurementCommand { get; }
 
     public RelayCommand ResetSelectedMeasurementStyleCommand { get; }
@@ -851,6 +917,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 }
 
                 CancelPendingScientificMeasurement();
+                CancelPendingCanonicalRoi(updateStatus: false);
 
                 OnPropertyChanged(nameof(HasSelection));
                 OnPropertyChanged(nameof(EmptyStateVisibility));
@@ -858,6 +925,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 OnPropertyChanged(nameof(MeasurementDockVisibility));
                 OnPropertyChanged(nameof(ActiveScienceToolHint));
                 OnPropertyChanged(nameof(CropOverlayVisibility));
+                OnPropertyChanged(nameof(SourceRois));
                 ExportCropCommand.NotifyCanExecuteChanged();
                 AddCurrentCropToBatchQueueCommand.NotifyCanExecuteChanged();
                 AcceptSourceRevisionCommand.NotifyCanExecuteChanged();
@@ -883,6 +951,8 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public bool HasSelection => SelectedSource is not null;
 
+    private bool HasFigurePanels => Figure.Panels.Count > 0 || Figure.PlotPanels.Count > 0;
+
     public Visibility EmptyStateVisibility => HasSelection ? Visibility.Collapsed : Visibility.Visible;
 
     public Visibility SourceCanvasVisibility => HasSelection ? Visibility.Visible : Visibility.Collapsed;
@@ -892,6 +962,12 @@ public sealed class MainWindowViewModel : ObservableObject
             ? Visibility.Visible
             : Visibility.Collapsed;
 
+    public IReadOnlyList<RoiObjectItemViewModel> SourceRois => SelectedSource is null
+        ? []
+        : RoiPropagationWorkspace.Rois
+            .Where(item => item.AssetId == SelectedSource.Asset.Id)
+            .ToArray();
+
     public ScientificToolMode ActiveScienceTool
     {
         get => _activeScienceTool;
@@ -900,6 +976,7 @@ public sealed class MainWindowViewModel : ObservableObject
             if (SetProperty(ref _activeScienceTool, value))
             {
                 CancelPendingScientificMeasurement();
+                CancelPendingCanonicalRoi(updateStatus: false);
                 WorkspaceMode = WorkspaceMode.Crop;
                 OnPropertyChanged(nameof(IsCropToolActive));
                 OnPropertyChanged(nameof(IsCalibrationToolActive));
@@ -908,6 +985,11 @@ public sealed class MainWindowViewModel : ObservableObject
                 OnPropertyChanged(nameof(IsRectangleRoiToolActive));
                 OnPropertyChanged(nameof(IsCircleRoiToolActive));
                 OnPropertyChanged(nameof(IsPolylineToolActive));
+                OnPropertyChanged(nameof(IsCanonicalRoiToolActive));
+                OnPropertyChanged(nameof(IsCanonicalRoiRectangleToolActive));
+                OnPropertyChanged(nameof(IsCanonicalRoiEllipseToolActive));
+                OnPropertyChanged(nameof(IsCanonicalRoiPolygonToolActive));
+                OnPropertyChanged(nameof(IsCanonicalRoiPolylineToolActive));
                 OnPropertyChanged(nameof(ActiveScienceToolHint));
                 OnPropertyChanged(nameof(CropOverlayVisibility));
             }
@@ -921,6 +1003,15 @@ public sealed class MainWindowViewModel : ObservableObject
     public bool IsRectangleRoiToolActive => ActiveScienceTool == ScientificToolMode.RectangleRoi;
     public bool IsCircleRoiToolActive => ActiveScienceTool == ScientificToolMode.CircleRoi;
     public bool IsPolylineToolActive => ActiveScienceTool == ScientificToolMode.Polyline;
+    public bool IsCanonicalRoiToolActive => ActiveScienceTool == ScientificToolMode.CanonicalRoiSelect;
+    public bool IsCanonicalRoiRectangleToolActive =>
+        ActiveScienceTool == ScientificToolMode.CanonicalRoiRectangle;
+    public bool IsCanonicalRoiEllipseToolActive =>
+        ActiveScienceTool == ScientificToolMode.CanonicalRoiEllipse;
+    public bool IsCanonicalRoiPolygonToolActive =>
+        ActiveScienceTool == ScientificToolMode.CanonicalRoiPolygon;
+    public bool IsCanonicalRoiPolylineToolActive =>
+        ActiveScienceTool == ScientificToolMode.CanonicalRoiPolyline;
 
     public Visibility CropOverlayVisibility =>
         HasSelection && Crop.IsConfigured && IsCropOverlayVisible && IsCropToolActive
@@ -935,8 +1026,76 @@ public sealed class MainWindowViewModel : ObservableObject
         ScientificToolMode.RectangleRoi => "矩形 ROI · 拖动建立研究区域",
         ScientificToolMode.CircleRoi => "圆形测量 · 拖动建立等宽高 ROI，自动计算等效直径、面积与周长",
         ScientificToolMode.Polyline => "折线工具 · 逐点单击添加路径，双击最后一点完成",
+        ScientificToolMode.CanonicalRoiSelect => "Canonical ROI 选择 · 拖动整体或顶点；双击 Polygon 边插入顶点",
+        ScientificToolMode.CanonicalRoiRectangle => "Canonical Rectangle ROI · 拖动建立 source-pixel 矩形",
+        ScientificToolMode.CanonicalRoiEllipse => "Canonical Ellipse ROI · 拖动建立 source-pixel 椭圆",
+        ScientificToolMode.CanonicalRoiPolygon => "Canonical Polygon ROI · 单击加点，Enter 或双击完成，Esc 取消",
+        ScientificToolMode.CanonicalRoiPolyline => "Canonical Polyline ROI · 单击加点，Enter 或双击完成，Esc 取消",
         _ => "裁剪工具 · 拖动空白处新建，拖动框体移动，拖动八个手柄调整大小",
     };
+
+    public Visibility CanonicalRoiDraftVisibility =>
+        _pendingCanonicalRoiAnchor is not null || _pendingCanonicalRoiPoints.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+    public Visibility CanonicalRoiDraftRectangleVisibility =>
+        ActiveScienceTool == ScientificToolMode.CanonicalRoiRectangle &&
+        _pendingCanonicalRoiAnchor is not null
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+    public Visibility CanonicalRoiDraftEllipseVisibility =>
+        ActiveScienceTool == ScientificToolMode.CanonicalRoiEllipse &&
+        _pendingCanonicalRoiAnchor is not null
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+    public Visibility CanonicalRoiDraftPathVisibility =>
+        ActiveScienceTool is ScientificToolMode.CanonicalRoiPolygon or
+            ScientificToolMode.CanonicalRoiPolyline &&
+        _pendingCanonicalRoiPoints.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+    public double CanonicalRoiDraftX => _pendingCanonicalRoiAnchor is { } start &&
+                                        _pendingCanonicalRoiCurrent is { } end
+        ? Math.Min(start.X, end.X)
+        : 0;
+
+    public double CanonicalRoiDraftY => _pendingCanonicalRoiAnchor is { } start &&
+                                        _pendingCanonicalRoiCurrent is { } end
+        ? Math.Min(start.Y, end.Y)
+        : 0;
+
+    public double CanonicalRoiDraftWidth => _pendingCanonicalRoiAnchor is { } start &&
+                                            _pendingCanonicalRoiCurrent is { } end
+        ? Math.Abs(end.X - start.X)
+        : 0;
+
+    public double CanonicalRoiDraftHeight => _pendingCanonicalRoiAnchor is { } start &&
+                                             _pendingCanonicalRoiCurrent is { } end
+        ? Math.Abs(end.Y - start.Y)
+        : 0;
+
+    public PointCollection CanonicalRoiDraftPoints
+    {
+        get
+        {
+            IEnumerable<MeasurementPoint> points = _pendingCanonicalRoiPoints;
+            if (_pendingCanonicalRoiCurrent is { } current &&
+                (_pendingCanonicalRoiPoints.Count == 0 ||
+                 DistanceSquared(_pendingCanonicalRoiPoints[^1], current) > 1e-12))
+            {
+                points = points.Append(current);
+            }
+
+            var collection = new PointCollection(
+                points.Select(point => new Point(point.X, point.Y)));
+            collection.Freeze();
+            return collection;
+        }
+    }
 
     public bool IsBusy
     {
@@ -1093,6 +1252,24 @@ public bool IsLayersTabActive
             nameof(IsPublishingPortabilityTabActive));
     }
 
+    public bool IsScientificDataTabActive
+    {
+        get => _isScientificDataTabActive;
+        set => SetExclusiveInspectorTab(
+            ref _isScientificDataTabActive,
+            value,
+            nameof(IsScientificDataTabActive));
+    }
+
+    public bool IsPlotTabActive
+    {
+        get => _isPlotTabActive;
+        set => SetExclusiveInspectorTab(
+            ref _isPlotTabActive,
+            value,
+            nameof(IsPlotTabActive));
+    }
+
     private void SetExclusiveInspectorTab(ref bool field, bool value, string propertyName)
     {
         if (field == value)
@@ -1110,12 +1287,16 @@ public bool IsLayersTabActive
             _isRegistrationTabActive = propertyName == nameof(IsRegistrationTabActive);
             _isRoiPropagationTabActive = propertyName == nameof(IsRoiPropagationTabActive);
             _isPublishingPortabilityTabActive = propertyName == nameof(IsPublishingPortabilityTabActive);
+            _isScientificDataTabActive = propertyName == nameof(IsScientificDataTabActive);
+            _isPlotTabActive = propertyName == nameof(IsPlotTabActive);
             OnPropertyChanged(nameof(IsLayersTabActive));
             OnPropertyChanged(nameof(IsChannelsTabActive));
             OnPropertyChanged(nameof(IsLinkedViewsTabActive));
             OnPropertyChanged(nameof(IsRegistrationTabActive));
             OnPropertyChanged(nameof(IsRoiPropagationTabActive));
             OnPropertyChanged(nameof(IsPublishingPortabilityTabActive));
+            OnPropertyChanged(nameof(IsScientificDataTabActive));
+            OnPropertyChanged(nameof(IsPlotTabActive));
         }
 
         NotifyInspectorTabStateChanged();
@@ -1123,7 +1304,8 @@ public bool IsLayersTabActive
 
     public bool IsInspectorTabActive =>
         !IsLayersTabActive && !IsChannelsTabActive && !IsLinkedViewsTabActive &&
-        !IsRegistrationTabActive && !IsRoiPropagationTabActive && !IsPublishingPortabilityTabActive;
+        !IsRegistrationTabActive && !IsRoiPropagationTabActive && !IsPublishingPortabilityTabActive &&
+        !IsScientificDataTabActive && !IsPlotTabActive;
 
     public Visibility InspectorTabVisibility =>
         IsInspectorTabActive ? Visibility.Visible : Visibility.Collapsed;
@@ -1146,6 +1328,12 @@ public bool IsLayersTabActive
     public Visibility PublishingPortabilityTabVisibility =>
         IsPublishingPortabilityTabActive ? Visibility.Visible : Visibility.Collapsed;
 
+    public Visibility ScientificDataTabVisibility =>
+        IsScientificDataTabActive ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility PlotTabVisibility =>
+        IsPlotTabActive ? Visibility.Visible : Visibility.Collapsed;
+
     private void NotifyInspectorTabStateChanged()
     {
         OnPropertyChanged(nameof(IsInspectorTabActive));
@@ -1156,6 +1344,8 @@ public bool IsLayersTabActive
         OnPropertyChanged(nameof(RegistrationTabVisibility));
         OnPropertyChanged(nameof(RoiPropagationTabVisibility));
         OnPropertyChanged(nameof(PublishingPortabilityTabVisibility));
+        OnPropertyChanged(nameof(ScientificDataTabVisibility));
+        OnPropertyChanged(nameof(PlotTabVisibility));
     }
     public string WorkspaceModeText => WorkspaceMode == WorkspaceMode.Crop ? "裁剪视图" : "拼版视图";
 
@@ -1195,6 +1385,20 @@ public bool IsLayersTabActive
         var point = new MeasurementPoint(x, y);
         switch (ActiveScienceTool)
         {
+            case ScientificToolMode.CanonicalRoiRectangle:
+            case ScientificToolMode.CanonicalRoiEllipse:
+                BeginCanonicalRoiHistoryGesture();
+                _pendingCanonicalRoiAnchor = point;
+                _pendingCanonicalRoiCurrent = point;
+                NotifyCanonicalRoiDraftChanged();
+                StatusMessage = ActiveScienceTool == ScientificToolMode.CanonicalRoiRectangle
+                    ? "正在创建 canonical Rectangle ROI…"
+                    : "正在创建 canonical Ellipse ROI…";
+                return true;
+            case ScientificToolMode.CanonicalRoiPolygon:
+            case ScientificToolMode.CanonicalRoiPolyline:
+                HandleCanonicalRoiPoint(source, point, finishMultiPoint);
+                return false;
             case ScientificToolMode.Calibration:
                 source.Calibration.BeginReferenceLine(x, y);
                 StatusMessage = "拖动参考线 · 松开后输入已知真实距离";
@@ -1241,6 +1445,15 @@ public bool IsLayersTabActive
             return;
         }
 
+        if (_pendingCanonicalRoiAnchor is not null &&
+            ActiveScienceTool is ScientificToolMode.CanonicalRoiRectangle or
+                ScientificToolMode.CanonicalRoiEllipse)
+        {
+            _pendingCanonicalRoiCurrent = new MeasurementPoint(x, y);
+            NotifyCanonicalRoiDraftChanged();
+            return;
+        }
+
         if (ActiveScienceTool == ScientificToolMode.Calibration)
         {
             SelectedSource.Calibration.UpdateReferenceLine(x, y);
@@ -1281,6 +1494,36 @@ public bool IsLayersTabActive
         if (source is null)
         {
             _pendingMeasurement = null;
+            CancelPendingCanonicalRoi(updateStatus: false);
+            return;
+        }
+
+        if (_pendingCanonicalRoiAnchor is { } start &&
+            _pendingCanonicalRoiCurrent is { } end &&
+            ActiveScienceTool is ScientificToolMode.CanonicalRoiRectangle or
+                ScientificToolMode.CanonicalRoiEllipse)
+        {
+            RoiGeometryKind kind = ActiveScienceTool == ScientificToolMode.CanonicalRoiRectangle
+                ? RoiGeometryKind.Rectangle
+                : RoiGeometryKind.Ellipse;
+            try
+            {
+                RoiObjectItemViewModel item = RoiPropagationWorkspace.AddDirectRoi(
+                    source,
+                    kind,
+                    [start, end]);
+                StatusMessage = $"已创建 {item.Label} · canonical {kind} · source pixels";
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException or InvalidOperationException)
+            {
+                StatusMessage = $"Canonical ROI 创建已拒绝：{exception.Message}";
+            }
+            finally
+            {
+                ClearCanonicalRoiDraft();
+                CompleteCanonicalRoiHistoryGesture();
+            }
             return;
         }
 
@@ -1419,6 +1662,195 @@ public bool IsLayersTabActive
 
         StatusMessage = $"已添加折线测量 · {completed.ValueText} · {completed.PathPoints.Count} points";
         CompleteHistoryGesture();
+    }
+
+    public bool IsCanonicalRoiCreationTool =>
+        ActiveScienceTool is ScientificToolMode.CanonicalRoiRectangle or
+            ScientificToolMode.CanonicalRoiEllipse or
+            ScientificToolMode.CanonicalRoiPolygon or
+            ScientificToolMode.CanonicalRoiPolyline;
+
+    public bool HasPendingCanonicalRoi =>
+        _pendingCanonicalRoiAnchor is not null || _pendingCanonicalRoiPoints.Count > 0;
+
+    public void UpdateCanonicalRoiHover(double x, double y)
+    {
+        if (ActiveScienceTool is not (
+                ScientificToolMode.CanonicalRoiPolygon or
+                ScientificToolMode.CanonicalRoiPolyline) ||
+            _pendingCanonicalRoiPoints.Count == 0)
+        {
+            return;
+        }
+
+        _pendingCanonicalRoiCurrent = new MeasurementPoint(x, y);
+        NotifyCanonicalRoiDraftChanged();
+    }
+
+    public bool CompletePendingCanonicalRoi()
+    {
+        SourceAssetItemViewModel? source = SelectedSource;
+        RoiGeometryKind? kind = ActiveScienceTool switch
+        {
+            ScientificToolMode.CanonicalRoiPolygon => RoiGeometryKind.Polygon,
+            ScientificToolMode.CanonicalRoiPolyline => RoiGeometryKind.Polyline,
+            _ => null,
+        };
+        int minimumPointCount = kind == RoiGeometryKind.Polygon ? 3 : 2;
+        if (source is null || kind is null || _pendingCanonicalRoiPoints.Count < minimumPointCount)
+        {
+            StatusMessage = kind == RoiGeometryKind.Polygon
+                ? "Polygon ROI 至少需要 3 个不同顶点。"
+                : "Polyline ROI 至少需要 2 个不同顶点。";
+            return false;
+        }
+
+        try
+        {
+            RoiObjectItemViewModel item = RoiPropagationWorkspace.AddDirectRoi(
+                source,
+                kind.Value,
+                _pendingCanonicalRoiPoints.ToArray());
+            StatusMessage =
+                $"已创建 {item.Label} · canonical {kind.Value} · {_pendingCanonicalRoiPoints.Count} points";
+            ClearCanonicalRoiDraft();
+            CompleteCanonicalRoiHistoryGesture();
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or InvalidOperationException)
+        {
+            StatusMessage = $"Canonical ROI 创建已拒绝：{exception.Message}";
+            return false;
+        }
+    }
+
+    public bool CancelPendingCanonicalRoi(bool updateStatus = true)
+    {
+        bool hadDraft = HasPendingCanonicalRoi;
+        ClearCanonicalRoiDraft();
+        CompleteCanonicalRoiHistoryGesture();
+        if (hadDraft && updateStatus)
+        {
+            StatusMessage = "已取消 canonical ROI 草稿；未写入工程。";
+        }
+        return hadDraft;
+    }
+
+    public void SelectCanonicalRoi(RoiObjectItemViewModel roi)
+    {
+        ArgumentNullException.ThrowIfNull(roi);
+        if (!RoiPropagationWorkspace.Rois.Contains(roi) ||
+            SelectedSource?.Asset.Id != roi.AssetId)
+        {
+            return;
+        }
+
+        SelectedSource.SelectedMeasurement = null;
+        RoiPropagationWorkspace.SelectedRoi = roi;
+        ActiveScienceTool = ScientificToolMode.CanonicalRoiSelect;
+        IsRoiPropagationTabActive = true;
+        StatusMessage = $"已选择 {roi.Label} · {roi.GeometryText}";
+    }
+
+    public bool TryMoveSelectedCanonicalRoi(double deltaX, double deltaY) =>
+        RoiPropagationWorkspace.TryMoveSelectedRoi(deltaX, deltaY);
+
+    public bool TryUpdateSelectedCanonicalRoiVertex(int vertexIndex, double x, double y) =>
+        RoiPropagationWorkspace.TryUpdateSelectedRoiVertex(
+            vertexIndex,
+            new MeasurementPoint(x, y));
+
+    public bool TryInsertSelectedCanonicalRoiVertex(double x, double y) =>
+        RoiPropagationWorkspace.TryInsertSelectedPolygonVertex(new MeasurementPoint(x, y));
+
+    public bool TryDeleteSelectedCanonicalRoiVertex(int vertexIndex) =>
+        RoiPropagationWorkspace.TryDeleteSelectedPolygonVertex(vertexIndex);
+
+    private void HandleCanonicalRoiPoint(
+        SourceAssetItemViewModel source,
+        MeasurementPoint point,
+        bool finish)
+    {
+        _ = source;
+        if (_pendingCanonicalRoiPoints.Count == 0)
+        {
+            BeginCanonicalRoiHistoryGesture();
+            _pendingCanonicalRoiPoints.Add(point);
+            _pendingCanonicalRoiCurrent = point;
+            NotifyCanonicalRoiDraftChanged();
+            StatusMessage = ActiveScienceTool == ScientificToolMode.CanonicalRoiPolygon
+                ? "Polygon ROI · 已设置第 1 个顶点；Enter 或双击完成"
+                : "Polyline ROI · 已设置起点；Enter 或双击完成";
+            return;
+        }
+
+        if (DistanceSquared(_pendingCanonicalRoiPoints[^1], point) > 1e-8)
+        {
+            _pendingCanonicalRoiPoints.Add(point);
+        }
+        _pendingCanonicalRoiCurrent = point;
+        NotifyCanonicalRoiDraftChanged();
+        if (finish)
+        {
+            _ = CompletePendingCanonicalRoi();
+            return;
+        }
+
+        StatusMessage =
+            $"{(ActiveScienceTool == ScientificToolMode.CanonicalRoiPolygon ? "Polygon" : "Polyline")} ROI · " +
+            $"{_pendingCanonicalRoiPoints.Count} points · Enter 或双击完成";
+    }
+
+    private void BeginCanonicalRoiHistoryGesture()
+    {
+        if (_canonicalRoiHistoryGestureActive)
+        {
+            return;
+        }
+
+        BeginHistoryGesture();
+        _canonicalRoiHistoryGestureActive = true;
+    }
+
+    private void CompleteCanonicalRoiHistoryGesture()
+    {
+        if (!_canonicalRoiHistoryGestureActive)
+        {
+            return;
+        }
+
+        _canonicalRoiHistoryGestureActive = false;
+        CompleteHistoryGesture();
+    }
+
+    private void ClearCanonicalRoiDraft()
+    {
+        _pendingCanonicalRoiAnchor = null;
+        _pendingCanonicalRoiCurrent = null;
+        _pendingCanonicalRoiPoints.Clear();
+        NotifyCanonicalRoiDraftChanged();
+    }
+
+    private void NotifyCanonicalRoiDraftChanged()
+    {
+        OnPropertyChanged(nameof(HasPendingCanonicalRoi));
+        OnPropertyChanged(nameof(CanonicalRoiDraftVisibility));
+        OnPropertyChanged(nameof(CanonicalRoiDraftRectangleVisibility));
+        OnPropertyChanged(nameof(CanonicalRoiDraftEllipseVisibility));
+        OnPropertyChanged(nameof(CanonicalRoiDraftPathVisibility));
+        OnPropertyChanged(nameof(CanonicalRoiDraftX));
+        OnPropertyChanged(nameof(CanonicalRoiDraftY));
+        OnPropertyChanged(nameof(CanonicalRoiDraftWidth));
+        OnPropertyChanged(nameof(CanonicalRoiDraftHeight));
+        OnPropertyChanged(nameof(CanonicalRoiDraftPoints));
+    }
+
+    private static double DistanceSquared(MeasurementPoint first, MeasurementPoint second)
+    {
+        double deltaX = first.X - second.X;
+        double deltaY = first.Y - second.Y;
+        return deltaX * deltaX + deltaY * deltaY;
     }
 
     private void PinSelectedMeasurementToFigure()
@@ -1588,6 +2020,18 @@ public bool IsLayersTabActive
     {
         if (WorkspaceMode == WorkspaceMode.Crop)
         {
+            if (RoiPropagationWorkspace.SelectedRoi is { } roi &&
+                roi.AssetId == SelectedSource?.Asset.Id)
+            {
+                BeginHistoryGesture();
+                bool removed = RoiPropagationWorkspace.RemoveSelectedRoi();
+                CompleteHistoryGesture();
+                StatusMessage = removed
+                    ? "已删除选中的 canonical ROI"
+                    : RoiPropagationWorkspace.StatusText;
+                return;
+            }
+
             DeleteSelectedMeasurement();
             return;
         }
@@ -1615,6 +2059,19 @@ public bool IsLayersTabActive
 
             Figure.RemoveSelectedGuideCommand.Execute(null);
             StatusMessage = "已删除选中参考线";
+            return;
+        }
+
+        if (Figure.SelectedPlotPanel is { } plotPanel)
+        {
+            if (plotPanel.IsLocked)
+            {
+                StatusMessage = "Plot 面板已锁定 · 请先解锁后删除";
+                return;
+            }
+
+            Figure.RemoveSelectedPlotPanelCommand.Execute(null);
+            StatusMessage = "已删除选中 Plot 面板";
             return;
         }
 
@@ -1802,6 +2259,11 @@ public bool IsLayersTabActive
 
     private void AttachSourceScience(SourceAssetItemViewModel source)
     {
+        if (!_attachedSourceScience.Add(source))
+        {
+            return;
+        }
+
         source.ScienceChanged -= OnSourceScienceChanged;
         source.ScienceEditCompleted -= OnSourceScienceEditCompleted;
         source.MeasurementSelectionChanged -= OnMeasurementSelectionChanged;
@@ -1810,6 +2272,19 @@ public bool IsLayersTabActive
         source.ScienceEditCompleted += OnSourceScienceEditCompleted;
         source.MeasurementSelectionChanged += OnMeasurementSelectionChanged;
         source.AnalysisChanged += OnAnalysisChanged;
+    }
+
+    private void DetachSourceScience(SourceAssetItemViewModel source)
+    {
+        if (!_attachedSourceScience.Remove(source))
+        {
+            return;
+        }
+
+        source.ScienceChanged -= OnSourceScienceChanged;
+        source.ScienceEditCompleted -= OnSourceScienceEditCompleted;
+        source.MeasurementSelectionChanged -= OnMeasurementSelectionChanged;
+        source.AnalysisChanged -= OnAnalysisChanged;
     }
 
     private void OnAnalysisChanged(object? sender, EventArgs e)
@@ -1824,6 +2299,7 @@ public bool IsLayersTabActive
         if (sender is SourceAssetItemViewModel { SelectedMeasurement: { } selected })
         {
             _measurementDrawingStyle = selected.VisualStyle;
+            RoiPropagationWorkspace.SelectedRoi = null;
         }
 
         DeleteSelectedMeasurementCommand.NotifyCanExecuteChanged();
@@ -1869,15 +2345,11 @@ public bool IsLayersTabActive
         StatusMessage = $"正在从原始 {source.Asset.Metadata.BitsPerChannel}-bit 文件统计 {AnalysisChannel} 通道…";
         try
         {
-            RoiStatisticsResult result = await _roiStatisticsAnalyzer.AnalyzeAsync(
+            RoiStatisticsResult result = await _scientificAnalysisCoordinator.AnalyzeRoiAsync(
                 source.Asset,
                 source.SourceRevision,
                 region,
                 AnalysisChannel);
-            if (!result.IsValid)
-            {
-                throw new InvalidDataException("ROI 统计结果无效。");
-            }
 
             source.AddAnalysisResult(result);
             RoiStatistics = result;
@@ -1917,17 +2389,13 @@ public bool IsLayersTabActive
         try
         {
             ScientificMeasurement model = measurement.Measurement;
-            IntensityProfileResult profile = await _intensityProfileAnalyzer.AnalyzeAsync(
+            IntensityProfileResult profile = await _scientificAnalysisCoordinator.AnalyzeProfileAsync(
                 source.Asset,
+                source.SourceRevision,
                 model.PointA,
                 model.PointB,
                 source.Calibration.Calibration,
-                channel: AnalysisChannel,
-                sourceRevision: source.SourceRevision);
-            if (!profile.IsValid)
-            {
-                throw new InvalidDataException("强度剖面结果无效或采样点不足。");
-            }
+                AnalysisChannel);
 
             source.AddAnalysisResult(profile);
             IntensityProfile = profile;
@@ -1990,20 +2458,17 @@ public bool IsLayersTabActive
             UseAutomaticRegionThreshold,
             RegionThresholdPercent / 100,
             MinimumRegionAreaPixels);
+        AnalysisResourcePolicy? resourcePolicy = _scientificAnalysisCoordinator.ResourcePolicy;
         IsBusy = true;
         LastError = null;
         StatusMessage = "正在从原始像素生成可复核候选；不会修改源文件…";
         try
         {
-            AssistedRegionAnalysisResult result = await _assistedRegionAnalyzer.AnalyzeAsync(
+            AssistedRegionAnalysisResult result = await _scientificAnalysisCoordinator.AnalyzeRegionsAsync(
                 source.Asset,
+                source.SourceRevision,
                 options,
-                sourceRevision: source.SourceRevision,
-                channel: AnalysisChannel);
-            if (!result.IsValid)
-            {
-                throw new InvalidDataException("候选区域分析结果无效。请调整阈值或最小面积。");
-            }
+                AnalysisChannel);
 
             source.AddAnalysisResult(result);
             ClearAssistedRegionAnalysis();
@@ -2038,6 +2503,11 @@ public bool IsLayersTabActive
                     ["candidateCount"] = result.Candidates.Count,
                     ["areaFraction"] = result.AreaFraction,
                     ["analyzerId"] = result.AnalyzerId,
+                    ["resultCompleteness"] = "complete-or-AnalysisTooComplex",
+                    ["maxPixels"] = resourcePolicy?.MaxPixels,
+                    ["maxComponentsSafety"] = resourcePolicy?.MaxComponentsSafety,
+                    ["maxBoundaryPoints"] = resourcePolicy?.MaxBoundaryPoints,
+                    ["memoryBudgetBytes"] = resourcePolicy?.MemoryBudgetBytes,
                 },
             });
             NotifyAssistedRegionStateChanged();
@@ -2046,7 +2516,8 @@ public bool IsLayersTabActive
         }
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException or InvalidDataException or
-            NotSupportedException or ArgumentException or OverflowException)
+            NotSupportedException or ArgumentException or OverflowException or
+            AnalysisTooComplexException)
         {
             LastError = exception.Message;
             StatusMessage = "候选区域分析失败 · 原图未修改";
@@ -2131,7 +2602,7 @@ public bool IsLayersTabActive
                     ScientificMeasurementKind.Length,
                     start,
                     end,
-                    strokeColor: "#FF75D9AA");
+                    strokeColor: candidate.OverlayStroke);
                 candidate.MarkCommitted();
                 committed++;
                 continue;
@@ -2157,7 +2628,7 @@ public bool IsLayersTabActive
                 ScientificMeasurementKind.CircleRoi,
                 new MeasurementPoint(x, y),
                 new MeasurementPoint(x + diameter, y + diameter),
-                strokeColor: "#FF75D9AA");
+                strokeColor: candidate.OverlayStroke);
             candidate.MarkCommitted();
             committed++;
         }
@@ -2509,6 +2980,7 @@ public bool IsLayersTabActive
         }
 
         BatchCropQueueItemViewModel[] items = BatchCropQueue.ToArray();
+        AnalysisResourcePolicy? resourcePolicy = _scientificAnalysisCoordinator.ResourcePolicy;
         List<string> errors = [];
         int completed = 0;
         int totalParticles = 0;
@@ -2539,15 +3011,12 @@ public bool IsLayersTabActive
                     }
 
                     item.MarkAnalyzing();
-                    AssistedRegionAnalysisResult result = await _assistedRegionAnalyzer.AnalyzeAsync(
+                    AssistedRegionAnalysisResult result =
+                        await _scientificAnalysisCoordinator.AnalyzeRegionsAsync(
                         item.Source.Asset,
+                        item.Source.SourceRevision,
                         recipe.CreateOptions(item.Crop),
-                        sourceRevision: item.Source.SourceRevision,
-                        channel: recipe.Channel);
-                    if (!result.IsValid)
-                    {
-                        throw new InvalidDataException("颗粒分析结果无效。");
-                    }
+                        recipe.Channel);
 
                     item.Source.AddAnalysisResult(result, completeEdit: false);
                     item.MarkAnalysisCompleted(result.Candidates.Count);
@@ -2579,7 +3048,11 @@ public bool IsLayersTabActive
                     ["automaticThreshold"] = recipe.UseAutomaticThreshold,
                     ["thresholdNormalized"] = recipe.ThresholdNormalized,
                     ["minimumAreaPixels"] = recipe.MinimumAreaPixels,
-                    ["resultLimit"] = "unlimited",
+                    ["resultLimit"] = "complete-or-AnalysisTooComplex",
+                    ["maxPixels"] = resourcePolicy?.MaxPixels,
+                    ["maxComponentsSafety"] = resourcePolicy?.MaxComponentsSafety,
+                    ["maxBoundaryPoints"] = resourcePolicy?.MaxBoundaryPoints,
+                    ["memoryBudgetBytes"] = resourcePolicy?.MemoryBudgetBytes,
                     ["queueCount"] = items.Length,
                     ["completedCount"] = completed,
                     ["particleCount"] = totalParticles,
@@ -2909,6 +3382,13 @@ public bool IsLayersTabActive
             return;
         }
 
+        if (Figure.HasRoiProjections(panel.Id))
+        {
+            LastError = "所选 Panel 已被 ROI Figure Projection 引用；请先删除对应 Projection 再替换 source。";
+            StatusMessage = "面板替换已阻止";
+            return;
+        }
+
         try
         {
             panel.ReplaceSource(source, crop);
@@ -2925,9 +3405,9 @@ public bool IsLayersTabActive
     }
     private async Task ExportFigureAsync()
     {
-        if (Figure.Panels.Count == 0)
+        if (!HasFigurePanels)
         {
-            LastError = "拼版中还没有图像面板。";
+            LastError = "拼版中还没有图像或 Plot 面板。";
             return;
         }
 
@@ -2948,36 +3428,15 @@ public bool IsLayersTabActive
                 .Select(panel => panel.Source.Asset)
                 .DistinctBy(source => source.Id)
                 .ToArray();
-            foreach (SourceAsset source in figureSources)
-            {
-                SourceVerification verification = await _sourceReader.VerifyAsync(source);
-                if (verification.State != SourceLinkState.Verified)
-                {
-                    LastError = $"{source.DisplayName}：{verification.Message ?? "源文件验证失败。"}";
-                    StatusMessage = "拼版导出已停止 · 源文件验证失败";
-                    return;
-                }
-            }
-
-            ExportPathDecision decision = await _pathSafetyPolicy.ValidateExportTargetAsync(
-                requestedPath,
-                Sources.Select(item => item.Asset).ToArray());
-            if (!decision.IsAllowed || decision.NormalizedTargetPath is null)
-            {
-                LastError = decision.Message;
-                StatusMessage = "拼版导出已阻止 · 路径不安全";
-                return;
-            }
-
-            if (File.Exists(decision.NormalizedTargetPath))
-            {
-                LastError = "拼版只能导出到全新文件，不覆盖任何已有文件。";
-                StatusMessage = "拼版导出已阻止 · 目标文件已存在";
-                return;
-            }
+            await _figureExportCoordinator.VerifySourcesAsync(figureSources);
 
             FigureExportDocument exportDocument = Figure.CreateExportDocument(MultiChannelWorkspace.CreateModels(), Sources);
-            FigurePreflightResult preflight = UpdateFigureQc(exportDocument);
+            ResolvedFigureExportDocument resolvedExport =
+                PublishingPortabilityWorkspace.ResolveFonts(exportDocument);
+            exportDocument = resolvedExport.Document;
+            UnifiedQcReport preflight = UpdateFigureQc(
+                exportDocument,
+                Path.GetExtension(requestedPath));
             if (preflight.HasErrors)
             {
                 LastError = string.Join(Environment.NewLine, preflight.Issues
@@ -2987,34 +3446,25 @@ public bool IsLayersTabActive
                 return;
             }
 
-            ResolvedFigureExportDocument resolvedExport =
-                PublishingPortabilityWorkspace.ResolveFonts(exportDocument);
-            exportDocument = resolvedExport.Document;
-            StatusMessage = $"正在以原始像素渲染 {Figure.Panels.Count} 个面板…";
-            await _figureExporter.ExportAsync(exportDocument, decision.NormalizedTargetPath);
-            string provenancePath = Path.ChangeExtension(decision.NormalizedTargetPath, ".provenance.json");
-            string reportPath = Path.ChangeExtension(decision.NormalizedTargetPath, ".export-report.html");
-            FigureProvenanceDocument provenance = FigureProvenanceWriter.Create(
-                exportDocument,
-                decision.NormalizedTargetPath,
-                typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "1.2.0-alpha",
-                Sources.Select(item => item.Asset).ToArray(),
-                preflight,
-                sourceRevisions: Sources.ToDictionary(item => item.Asset.Id, item => item.SourceRevision),
-                analyses: Sources.SelectMany(item => item.AnalysisResults),
-                fontResolutions: resolvedExport.FontResolutions,
-                linkGroups: Figure.LinkGroups,
-                rois: RoiPropagationWorkspace.CreateModels());
-            try
-            {
-                FigureProvenanceWriter.WriteJson(provenance, provenancePath);
-                FigureProvenanceWriter.WriteHtml(provenance, reportPath);
-            }
-            catch (IOException exception)
-            {
-                LastError = $"主图已导出，但溯源报告写入失败：{exception.Message}";
-            }
-            StatusMessage = $"拼版导出完成 · {Path.GetFileName(decision.NormalizedTargetPath)} · 已生成溯源报告 · 原图未修改";
+            StatusMessage = $"正在渲染 {Figure.Panels.Count + Figure.PlotPanels.Count} 个面板…";
+            FigureExportExecutionResult result = await _figureExportCoordinator.ExportNewAsync(
+                new FigureExportExecutionRequest(
+                    requestedPath,
+                    exportDocument,
+                    Sources.Select(item => item.Asset).ToArray(),
+                    Sources.Select(item => item.Asset).ToArray(),
+                    preflight.ToFigurePreflightResult(),
+                    typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "1.2.0-alpha",
+                    Sources.ToDictionary(item => item.Asset.Id, item => item.SourceRevision),
+                    Sources.SelectMany(item => item.AnalysisResults).ToArray(),
+                    resolvedExport.FontResolutions.ToArray(),
+                    Figure.LinkGroups.ToArray(),
+                    RoiPropagationWorkspace.CreateModels().ToArray()));
+            LastError = result.ProvenanceWarning;
+            StatusMessage = $"拼版导出完成 · {Path.GetFileName(result.TargetPath)} · 已生成溯源报告 · 原图未修改" +
+                (result.OutlineFallbackCount == 0
+                    ? string.Empty
+                    : $" · {result.OutlineFallbackCount} 个字体面已 outline fallback");
         }
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException or NotSupportedException or InvalidOperationException)
@@ -3030,7 +3480,7 @@ public bool IsLayersTabActive
 
     private async Task BuildSubmissionPackageAsync()
     {
-        if (_submissionPackageFolderPicker is null || Figure.Panels.Count == 0)
+        if (_submissionPackageFolderPicker is null || !HasFigurePanels)
         {
             return;
         }
@@ -3046,19 +3496,11 @@ public bool IsLayersTabActive
         StatusMessage = "正在验证投稿包中的源文件与科学对象…";
         try
         {
-            foreach (SourceAssetItemViewModel source in Sources)
-            {
-                SourceVerification verification = await _sourceReader.VerifyAsync(source.Asset);
-                if (verification.State != SourceLinkState.Verified)
-                {
-                    LastError = $"{source.DisplayName}：{verification.Message ?? "源文件验证失败。"}";
-                    StatusMessage = "投稿包已阻止 · 源文件验证失败";
-                    return;
-                }
-            }
-
             FigureExportDocument exportDocument = Figure.CreateExportDocument(MultiChannelWorkspace.CreateModels(), Sources);
-            FigurePreflightResult qc = UpdateFigureQc(exportDocument);
+            ResolvedFigureExportDocument resolvedSubmission =
+                PublishingPortabilityWorkspace.ResolveFonts(exportDocument);
+            exportDocument = resolvedSubmission.Document;
+            UnifiedQcReport qc = UpdateFigureQc(exportDocument);
             if (qc.HasErrors)
             {
                 LastError = string.Join(Environment.NewLine, qc.Issues
@@ -3068,35 +3510,22 @@ public bool IsLayersTabActive
                 return;
             }
 
-            ResolvedFigureExportDocument resolvedSubmission =
-                PublishingPortabilityWorkspace.ResolveFonts(exportDocument);
-            exportDocument = resolvedSubmission.Document;
-            var auditEntry = new ProjectAuditEntrySnapshot
-            {
-                Timestamp = DateTimeOffset.UtcNow,
-                Command = "BuildSubmissionPackage",
-                Parameters = new Dictionary<string, object?>
-                {
-                    ["targetDirectory"] = Path.GetFullPath(targetDirectory),
-                    ["sourceCount"] = Sources.Count,
-                    ["panelCount"] = Figure.Panels.Count,
-                    ["warningCount"] = qc.Issues.Count(issue => issue.Severity == FigurePreflightSeverity.Warning),
-                },
-            };
-            string version = typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "2.4.0-alpha";
-            SubmissionPackageResult result = await _submissionPackageBuilder.BuildAsync(
-                new SubmissionPackageRequest(
+            string version = typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "2.5.0-alpha";
+            SubmissionExecutionResult execution = await _submissionCoordinator.BuildAsync(
+                new SubmissionExecutionRequest(
                     targetDirectory,
                     exportDocument,
                     Sources.ToArray(),
                     qc,
-                    _auditTrail.Concat([auditEntry]).ToArray(),
+                    _auditTrail.ToArray(),
                     version,
-                    FontResolutions: resolvedSubmission.FontResolutions,
-                    LinkGroups: Figure.LinkGroups.ToArray(),
-                    Rois: RoiPropagationWorkspace.CreateModels()));
-            _auditTrail.Add(auditEntry);
-            StatusMessage = $"投稿包完成 · {result.CreatedFiles.Count} 个文件 · {result.WarningCount} 个 warning · 原图未复制或修改";
+                    resolvedSubmission.FontResolutions.ToArray(),
+                    Figure.LinkGroups.ToArray(),
+                    RoiPropagationWorkspace.CreateModels().ToArray()));
+            _auditTrail.Add(execution.AuditEntry);
+            StatusMessage =
+                $"投稿包完成 · {execution.Package.CreatedFiles.Count} 个文件 · " +
+                $"{execution.Package.WarningCount} 个 warning · 原图未复制或修改";
         }
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException or NotSupportedException or InvalidOperationException)
@@ -3194,7 +3623,7 @@ public bool IsLayersTabActive
 
     private async Task ExportFigureVariantsAsync()
     {
-        if (_batchExportFolderPicker is null || Figure.Panels.Count == 0)
+        if (_batchExportFolderPicker is null || !HasFigurePanels)
         {
             return;
         }
@@ -3244,32 +3673,24 @@ public bool IsLayersTabActive
 
         try
         {
-            foreach (SourceAsset source in figureSources)
-            {
-                SourceVerification verification = await _sourceReader.VerifyAsync(source);
-                if (verification.State != SourceLinkState.Verified)
-                {
-                    LastError = $"{source.DisplayName}：{verification.Message ?? "源文件验证失败。"}";
-                    StatusMessage = "投稿版本导出已停止 · 源文件验证失败";
-                    return;
-                }
-            }
+            await _figureExportCoordinator.VerifySourcesAsync(figureSources);
 
             foreach (FigureExportProfile profile in profiles)
             {
                 try
                 {
                     FigureExportDocument variant = profile.Apply(baseDocument);
-                    FigurePreflightResult preflight = AddScientificIntegrityIssues(FigurePreflight.Check(
+                    ResolvedFigureExportDocument resolvedVariant =
+                        PublishingPortabilityWorkspace.ResolveFonts(variant);
+                    variant = resolvedVariant.Document;
+                    UnifiedQcReport preflight = CreateUnifiedQcReport(
                         new FigurePreflightContext(
                             variant,
                             profile.Format,
                             profile,
                             Figure.LabelScheme,
-                            SystemFontCatalog.Instance),
-                        figureSources,
-                        IsDirty,
-                        CreateFigurePreflightConfiguration()));
+                            SystemFontCatalog.Instance,
+                            WpfPdfFontCapabilityProvider.Instance));
                     if (preflight.HasErrors)
                     {
                         throw new InvalidDataException(string.Join(Environment.NewLine, preflight.Issues
@@ -3277,59 +3698,42 @@ public bool IsLayersTabActive
                             .Select(issue => issue.Message)));
                     }
 
-                    ResolvedFigureExportDocument resolvedVariant =
-                        PublishingPortabilityWorkspace.ResolveFonts(variant);
-                    variant = resolvedVariant.Document;
-                    string requestedPath = CreateFigureVariantTargetPath(
+                    string requestedPath = FigureExportCoordinator.CreateVariantTargetPath(
                         folder,
                         Figure.Template.Id,
                         profile,
                         plannedPaths);
-                    ExportPathDecision decision = await _pathSafetyPolicy.ValidateExportTargetAsync(
-                        requestedPath,
-                        Sources.Select(item => item.Asset).ToArray());
-                    if (!decision.IsAllowed || decision.NormalizedTargetPath is null)
-                    {
-                        throw new InvalidOperationException(decision.Message);
-                    }
-
-                    if (File.Exists(decision.NormalizedTargetPath))
-                    {
-                        throw new IOException("目标文件已存在，为保护科研数据未覆盖它。");
-                    }
 
                     StatusMessage = $"正在导出 {profile.Name} · {variant.WidthPixels:N0}×{variant.HeightPixels:N0} px…";
-                    await _figureExporter.ExportAsync(variant, decision.NormalizedTargetPath);
-                    if (profile.WriteProvenance)
-                    {
-                        FigureProvenanceDocument provenance = FigureProvenanceWriter.Create(
+                    FigureExportExecutionResult result = await _figureExportCoordinator.ExportNewAsync(
+                        new FigureExportExecutionRequest(
+                            requestedPath,
                             variant,
-                            decision.NormalizedTargetPath,
-                            typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "1.2.0-alpha",
+                            Sources.Select(item => item.Asset).ToArray(),
                             figureSources,
-                            preflight,
+                            preflight.ToFigurePreflightResult(),
+                            typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString() ?? "1.2.0-alpha",
+                            Sources.ToDictionary(item => item.Asset.Id, item => item.SourceRevision),
+                            Sources
+                                .Where(item => figureSources.Any(source => source.Id == item.Asset.Id))
+                                .SelectMany(item => item.AnalysisResults)
+                                .ToArray(),
+                            resolvedVariant.FontResolutions.ToArray(),
+                            Figure.LinkGroups.ToArray(),
+                            RoiPropagationWorkspace.CreateModels().ToArray(),
                             profile.Id,
                             profile.Name,
-                            sourceRevisions: Sources.ToDictionary(item => item.Asset.Id, item => item.SourceRevision),
-                            analyses: Sources
-                                .Where(item => figureSources.Any(source => source.Id == item.Asset.Id))
-                                .SelectMany(item => item.AnalysisResults),
-                            fontResolutions: resolvedVariant.FontResolutions,
-                            linkGroups: Figure.LinkGroups,
-                            rois: RoiPropagationWorkspace.CreateModels());
-                        try
-                        {
-                            FigureProvenanceWriter.WriteJson(
-                                provenance,
-                                Path.ChangeExtension(decision.NormalizedTargetPath, ".provenance.json"));
-                            FigureProvenanceWriter.WriteHtml(
-                                provenance,
-                                Path.ChangeExtension(decision.NormalizedTargetPath, ".export-report.html"));
-                        }
-                        catch (IOException exception)
-                        {
-                            warnings.Add($"{profile.Name} 溯源报告写入失败：{exception.Message}");
-                        }
+                            profile.WriteProvenance));
+                    foreach (PdfFontExportOutcome outcome in result.PdfFontOutcomes
+                                 .Where(item => item.Outlined && item.FallbackReason is not null))
+                    {
+                        warnings.Add(
+                            $"{profile.Name}：{outcome.EffectiveFont}" +
+                            $"{(outcome.IsBold ? " Bold" : string.Empty)} 已 outline fallback：{outcome.FallbackReason}");
+                    }
+                    if (result.ProvenanceWarning is not null)
+                    {
+                        warnings.Add($"{profile.Name}：{result.ProvenanceWarning}");
                     }
 
                     completed++;
@@ -3355,33 +3759,6 @@ public bool IsLayersTabActive
         }
     }
 
-    private static string CreateFigureVariantTargetPath(
-        string folder,
-        string templateId,
-        FigureExportProfile profile,
-        ISet<string> plannedPaths)
-    {
-        HashSet<char> invalidCharacters = Path.GetInvalidFileNameChars().ToHashSet();
-        string templateStem = string.Concat(templateId.Select(
-                character => invalidCharacters.Contains(character) ? '_' : character))
-            .Trim();
-        if (string.IsNullOrWhiteSpace(templateStem))
-        {
-            templateStem = "figure";
-        }
-
-        string suffix = string.Concat(profile.Id.Select(
-            character => invalidCharacters.Contains(character) ? '_' : character));
-        string baseName = $"figure_{templateStem}_{suffix}";
-        string candidate = Path.GetFullPath(Path.Combine(folder, baseName + profile.Extension));
-        int attempt = 2;
-        while (!plannedPaths.Add(candidate))
-        {
-            candidate = Path.GetFullPath(Path.Combine(folder, $"{baseName}_{attempt++}{profile.Extension}"));
-        }
-
-        return candidate;
-    }
     private async Task SaveProjectAsync()
     {
         if (_projectPath is null)
@@ -3404,7 +3781,12 @@ public bool IsLayersTabActive
         try
         {
             Sources.Clear();
+            DataAssets.Clear();
+            Plots.Clear();
+            ScientificDataWorkspace.SelectedAsset = null;
+            PlotWorkspace.SelectedPlot = null;
             MultiChannelWorkspace.Restore([]);
+            Figure.SynchronizeScientificObjectChannels([]);
             RoiPropagationWorkspace.Restore([]);
             PublishingPortabilityWorkspace.Restore([], []);
             BatchCropQueue.Clear();
@@ -3433,6 +3815,8 @@ public bool IsLayersTabActive
             _isRestoringProject = false;
         }
 
+        _hasUnsavedDataAssetChanges = false;
+        _hasUnsavedPlotChanges = false;
         IsDirty = false;
         _history.Reset(CaptureHistorySnapshot(), markSaved: true);
         RefreshHistoryState();
@@ -3460,18 +3844,7 @@ public bool IsLayersTabActive
 
         try
         {
-            ExportPathDecision decision = await _pathSafetyPolicy.ValidateExportTargetAsync(
-                path,
-                Sources.Select(item => item.Asset).ToArray());
-            if (!decision.IsAllowed || decision.NormalizedTargetPath is null)
-            {
-                LastError = decision.Message;
-                StatusMessage = "工程保存已阻止 · 路径不安全";
-                return;
-            }
-
-            string normalizedPath = Path.ChangeExtension(decision.NormalizedTargetPath, ".scicanvas");
-            string title = Path.GetFileNameWithoutExtension(normalizedPath);
+            string title = Path.GetFileNameWithoutExtension(path);
             SciCanvasProjectDocument document = ProjectDocumentMapper.Create(
                 _projectId,
                 _projectCreatedAt,
@@ -3490,20 +3863,26 @@ public bool IsLayersTabActive
                 Figure.CreateLinkGroupModels(),
                 RoiPropagationWorkspace.CreateModels(),
                 PublishingPortabilityWorkspace.CreatePresetModels(),
-                PublishingPortabilityWorkspace.CreateSubstitutionModels());
+                PublishingPortabilityWorkspace.CreateSubstitutionModels(),
+                DataAssets.ToArray(),
+                Plots.ToArray());
 
             string? previousProjectPath = _projectPath;
-            await _projectStore.SaveAsync(normalizedPath, document);
+            ProjectSaveExecutionResult saved = await _projectOpenSaveCoordinator.SaveAsync(
+                new ProjectSaveExecutionRequest(
+                    path,
+                    Sources.Select(item => item.Asset).ToArray(),
+                    document,
+                    _projectId,
+                    previousProjectPath));
+            string normalizedPath = saved.ProjectPath;
             _auditTrail.Clear();
-            _auditTrail.AddRange(document.AuditTrail);
-            await _projectRecoveryStore.DeleteAsync(_projectId, previousProjectPath);
-            if (!string.Equals(previousProjectPath, normalizedPath, StringComparison.OrdinalIgnoreCase))
-            {
-                await _projectRecoveryStore.DeleteAsync(_projectId, normalizedPath);
-            }
+            _auditTrail.AddRange(saved.Document.AuditTrail);
 
             _projectPath = normalizedPath;
             OnPropertyChanged(nameof(ProjectPath));
+            _hasUnsavedDataAssetChanges = false;
+            _hasUnsavedPlotChanges = false;
             _history.MarkSaved(CaptureHistorySnapshot());
             RefreshHistoryState();
             OnPropertyChanged(nameof(ProjectDisplayName));
@@ -3566,10 +3945,10 @@ public bool IsLayersTabActive
         try
         {
             ProjectRecoveryCandidate? candidate =
-                await _projectRecoveryStore.FindForProjectAsync(path);
+                await _projectOpenSaveCoordinator.FindForProjectAsync(path);
             if (candidate is not null)
             {
-                if (_projectRecoveryPrompt.ShouldRestore(candidate))
+                if (_projectOpenSaveCoordinator.ShouldRestore(candidate))
                 {
                     await RestoreProjectFromPathAsync(
                         candidate.RecoveryPath,
@@ -3579,7 +3958,7 @@ public bool IsLayersTabActive
                     return;
                 }
 
-                await _projectRecoveryStore.DeleteCandidateAsync(candidate);
+                await _projectOpenSaveCoordinator.DeleteCandidateAsync(candidate);
             }
 
             await RestoreProjectFromPathAsync(
@@ -3607,15 +3986,15 @@ public bool IsLayersTabActive
         try
         {
             ProjectRecoveryCandidate? candidate =
-                await _projectRecoveryStore.FindLatestUnsavedAsync();
+                await _projectOpenSaveCoordinator.FindLatestUnsavedAsync();
             if (candidate is null)
             {
                 return;
             }
 
-            if (!_projectRecoveryPrompt.ShouldRestore(candidate))
+            if (!_projectOpenSaveCoordinator.ShouldRestore(candidate))
             {
-                await _projectRecoveryStore.DeleteCandidateAsync(candidate);
+                await _projectOpenSaveCoordinator.DeleteCandidateAsync(candidate);
                 AutosaveStatusText = "已放弃旧恢复副本";
                 return;
             }
@@ -3650,41 +4029,14 @@ public bool IsLayersTabActive
 
         try
         {
-            SciCanvasProjectDocument document = await _projectStore.LoadAsync(loadPath);
+            SciCanvasProjectDocument document = await _projectOpenSaveCoordinator.LoadAsync(loadPath);
             FigureTemplateDefinition projectTemplate = ResolveProjectTemplate(document);
-
-            List<SourceAssetItemViewModel> restoredSources = [];
-            Dictionary<Guid, SourceAssetItemViewModel> sourceMap = [];
-            List<string> sourceErrors = [];
-            int relinkedSourceCount = 0;
-
-            foreach (ProjectSourceSnapshot snapshot in document.Sources)
-            {
-                try
-                {
-                    (SourceAssetItemViewModel item, bool relinked) =
-                        await ResolveProjectSourceAsync(snapshot);
-                    item.RestoreSourceRevision(snapshot.SourceRevision);
-                    restoredSources.Add(item);
-                    sourceMap.Add(snapshot.Id, item);
-                    if (relinked)
-                    {
-                        relinkedSourceCount++;
-                    }
-                }
-                catch (Exception exception) when (exception is not OutOfMemoryException)
-                {
-                    sourceErrors.Add($"{snapshot.DisplayName}：{exception.Message}");
-                }
-            }
-
-            if (sourceErrors.Count > 0)
-            {
-                LastError = "工程未打开，因为以下源文件未通过验证：" +
-                            Environment.NewLine + string.Join(Environment.NewLine, sourceErrors);
-                StatusMessage = "工程打开已停止 · 源文件需要恢复或重新链接";
-                return;
-            }
+            ProjectSourceResolutionResult resolvedSources =
+                await _projectOpenSaveCoordinator.ResolveSourcesAsync(document);
+            IReadOnlyList<SourceAssetItemViewModel> restoredSources = resolvedSources.Sources;
+            IReadOnlyDictionary<Guid, SourceAssetItemViewModel> sourceMap =
+                resolvedSources.SourceMap;
+            int relinkedSourceCount = resolvedSources.RelinkedSourceCount;
 
             ValidateRestorableProject(document, sourceMap, projectTemplate);
             CommitRestoredProject(
@@ -3704,7 +4056,7 @@ public bool IsLayersTabActive
                 ? $"工程已打开并安全重新链接 {relinkedSourceCount} 个源图 · 请保存工程 · 源图未修改"
                 : isRecovery
                     ? $"已恢复自动保存 · {displayName} · 请手动保存 · 源图未修改"
-                    : $"工程已打开 · {displayName} · {Sources.Count} 个源图 · {Figure.Panels.Count} 个面板";
+                    : $"工程已打开 · {displayName} · {Sources.Count} 个源图 · {Figure.Panels.Count + Figure.PlotPanels.Count} 个面板";
         }
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException or InvalidDataException or
@@ -3717,67 +4069,6 @@ public bool IsLayersTabActive
         {
             IsBusy = false;
         }
-    }
-
-    private async Task<(SourceAssetItemViewModel Item, bool Relinked)> ResolveProjectSourceAsync(
-        ProjectSourceSnapshot snapshot)
-    {
-        string originalFailure;
-        try
-        {
-            SourceAsset original = await _sourceReader.ImportAsync(snapshot.OriginalPath);
-            if (string.Equals(
-                    original.Fingerprint.Sha256,
-                    snapshot.Fingerprint.Sha256,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                var preview = await _previewLoader.LoadAsync(snapshot.OriginalPath, 1400);
-                SourceAsset restored = original with
-                {
-                    Id = snapshot.Id,
-                    DisplayName = snapshot.DisplayName,
-                    OriginalPath = Path.GetFullPath(snapshot.OriginalPath),
-                    LinkState = SourceLinkState.Verified,
-                };
-                return (new SourceAssetItemViewModel(restored, preview), false);
-            }
-
-            originalFailure = "原路径文件内容与保存工程时不同";
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            originalFailure = exception.Message;
-        }
-
-        string? replacementPath = _sourceRelinkFilePicker.PickReplacement(
-            snapshot.DisplayName,
-            snapshot.OriginalPath,
-            snapshot.Fingerprint.Sha256);
-        if (replacementPath is null)
-        {
-            throw new InvalidDataException($"{originalFailure}；未选择重新链接文件。");
-        }
-
-        SourceAsset replacement = await _sourceReader.ImportAsync(replacementPath);
-        if (!string.Equals(
-                replacement.Fingerprint.Sha256,
-                snapshot.Fingerprint.Sha256,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidDataException(
-                $"所选替代文件 SHA-256 不匹配；需要 {snapshot.Fingerprint.Sha256[..12]}，" +
-                $"实际为 {replacement.Fingerprint.Sha256[..12]}。");
-        }
-
-        var replacementPreview = await _previewLoader.LoadAsync(replacementPath, 1400);
-        SourceAsset relinked = replacement with
-        {
-            Id = snapshot.Id,
-            DisplayName = snapshot.DisplayName,
-            OriginalPath = Path.GetFullPath(replacementPath),
-            LinkState = SourceLinkState.Relocated,
-        };
-        return (new SourceAssetItemViewModel(relinked, replacementPreview), true);
     }
 
     private void CommitRestoredProject(
@@ -3794,6 +4085,29 @@ public bool IsLayersTabActive
             ReplaceFigure(projectTemplate, markDirty: false);
             FigureQcMinimumDpi = document.Workspace.MinimumEffectiveDpi;
             Sources.Clear();
+            DataAssets.Clear();
+            Plots.Clear();
+            foreach (ProjectTabularDataAssetSnapshot snapshot in document.DataAssets)
+            {
+                DataAssets.Add(TabularDataSnapshotMapper.ToModel(snapshot));
+            }
+            ScientificDataWorkspace.SelectedAsset = DataAssets.FirstOrDefault();
+            IReadOnlyDictionary<Guid, TabularDataAsset> tabularAssets =
+                DataAssets.ToDictionary(asset => asset.Id);
+            foreach (ProjectPlotSnapshot snapshot in document.Plots)
+            {
+                if (!tabularAssets.TryGetValue(
+                        snapshot.Data.DataAssetId,
+                        out TabularDataAsset? asset))
+                {
+                    throw new InvalidDataException(
+                        $"Plot {snapshot.Name} 引用了不存在的 DataAsset。");
+                }
+
+                Plots.Add(PlotSnapshotMapper.ToModel(snapshot, asset));
+            }
+            PlotWorkspace.SelectedPlot = Plots.FirstOrDefault();
+
             BatchCropQueue.Clear();
             SelectedBatchCrop = null;
             OnPropertyChanged(nameof(BatchCropQueueSummary));
@@ -3805,8 +4119,11 @@ public bool IsLayersTabActive
             }
 
             MultiChannelWorkspace.SynchronizeSources();
-            MultiChannelWorkspace.Restore(document.MultiChannelGroups.Select(
-                ProjectDocumentMapper.ToMultiChannelAssetGroup));
+            IReadOnlyDictionary<Guid, ProjectSourceSnapshot> projectSources =
+                document.Sources.ToDictionary(source => source.Id);
+            MultiChannelWorkspace.Restore(document.MultiChannelGroups.Select(group =>
+                ProjectDocumentMapper.ToMultiChannelAssetGroup(group, projectSources)));
+            Figure.SynchronizeScientificObjectChannels(MultiChannelWorkspace.CreateModels());
 
             foreach (SourceAssetItemViewModel source in restoredSources)
             {
@@ -3948,7 +4265,10 @@ public bool IsLayersTabActive
             }
 
             Figure.RestoreLinkGroups(document.LinkGroups.Select(ProjectDocumentMapper.ToLinkGroup));
-            RoiPropagationWorkspace.Restore(document.Rois.Select(ProjectDocumentMapper.ToRoiObject));
+            RoiObject[] restoredRois = document.Rois
+                .Select(ProjectDocumentMapper.ToRoiObject)
+                .ToArray();
+            RoiPropagationWorkspace.Restore(restoredRois);
             PublishingPortabilityWorkspace.Restore(
                 document.JournalPresetSnapshots.Select(ProjectDocumentMapper.ToJournalPreset),
                 document.FontSubstitutions.Select(ProjectDocumentMapper.ToFontSubstitution));
@@ -3975,6 +4295,27 @@ public bool IsLayersTabActive
                     globalStyle.ScaleBarThicknessPt));
             Figure.RestoreScientificColors((editor?.ScientificColors ?? [])
                 .Select(color => new ScientificColorDefinition(color.Id, color.Name, color.Color)));
+            IReadOnlyDictionary<Guid, PlotObject> restoredPlots = Plots.ToDictionary(plot => plot.Id);
+            IReadOnlyDictionary<Guid, TabularDataAsset> restoredDataAssets = DataAssets.ToDictionary(asset => asset.Id);
+            foreach (ProjectFigurePlotPanelSnapshot plotPanel in
+                     (editor?.PlotPanels ?? []).OrderBy(item => item.ZIndex))
+            {
+                PlotObject plot = restoredPlots.GetValueOrDefault(plotPanel.PlotId)
+                    ?? throw new InvalidDataException("Figure Plot panel 引用了不存在的 Plot。");
+                TabularDataAsset dataAsset = restoredDataAssets.GetValueOrDefault(plot.Data.DataAssetId)
+                    ?? throw new InvalidDataException($"Plot {plot.Name} 引用了不存在的 DataAsset。");
+                Figure.RestorePlotPanel(
+                    plot,
+                    dataAsset,
+                    plotPanel.Id,
+                    ProjectDocumentMapper.ToPixelRect(plotPanel.DestinationRect),
+                    plotPanel.Label,
+                    plotPanel.Visible,
+                    plotPanel.Locked,
+                    plotPanel.ZIndex,
+                    ProjectDocumentMapper.ToStyleOverride(plotPanel.StyleOverride),
+                    ProjectDocumentMapper.ToPlotTypographyOverride(plotPanel.TypographyOverride));
+            }
             foreach (ProjectAnnotationSnapshot annotation in
                      (editor?.Annotations ?? []).OrderBy(item => item.ZIndex))
             {
@@ -4024,13 +4365,27 @@ public bool IsLayersTabActive
                     scientificObject.Unit,
                     scientificObject.Colormap,
                     scientificObject.ChannelEntries,
-                    scientificObject.ChannelId);
+                    scientificObject.ChannelId,
+                    ParseColorbarBindingState(scientificObject.ColorbarBindingState),
+                    ParseScientificObjectOrientation(scientificObject.Orientation),
+                    FormatColorbarTicks(scientificObject.Ticks),
+                    scientificObject.ChannelLegendPadding);
             }
             foreach (ProjectMeasurementOverlaySnapshot overlaySnapshot in
                      (editor?.MeasurementOverlays ?? []).OrderBy(item => item.ZIndex))
             {
                 MeasurementOverlayObject overlay = ProjectDocumentMapper.ToMeasurementOverlay(overlaySnapshot);
                 Figure.RestoreMeasurementOverlay(overlay);
+            }
+            foreach (ProjectRoiFigureProjectionSnapshot projectionSnapshot in
+                     (editor?.RoiProjections ?? []).OrderBy(item => item.ZIndex))
+            {
+                RoiFigureProjectionObject projection =
+                    ProjectDocumentMapper.ToRoiFigureProjection(projectionSnapshot);
+                RoiObject roi = restoredRois.SingleOrDefault(item => item.Id == projection.RoiId)
+                    ?? throw new InvalidDataException(
+                        "ROI Figure Projection 引用了不存在的 canonical ROI。");
+                Figure.RestoreRoiProjection(projection, roi);
             }
         foreach (ProjectGuideSnapshot guide in document.Guides)
             {
@@ -4094,6 +4449,8 @@ public bool IsLayersTabActive
             _isRestoringProject = false;
         }
 
+        _hasUnsavedDataAssetChanges = false;
+        _hasUnsavedPlotChanges = false;
         _history.Reset(CaptureHistorySnapshot(), markSaved);
         RefreshHistoryState();
     }
@@ -4139,6 +4496,17 @@ public bool IsLayersTabActive
             }
 
             layerIndex++;
+        }
+
+        HashSet<Guid> plotIds = document.Plots.Select(plot => plot.Id).ToHashSet();
+        foreach (ProjectFigurePlotPanelSnapshot panel in document.TemplateSnapshot?.PlotPanels ?? [])
+        {
+            PixelRect64 destination = ProjectDocumentMapper.ToPixelRect(panel.DestinationRect);
+            if (!plotIds.Contains(panel.PlotId) ||
+                destination.Right > layout.WidthPixels || destination.Bottom > layout.HeightPixels)
+            {
+                throw new InvalidDataException("Figure Plot panel 的 Plot 引用或画布范围无效。");
+            }
         }
 
         foreach (ProjectMeasurementOverlaySnapshot overlaySnapshot in
@@ -4228,7 +4596,11 @@ public bool IsLayersTabActive
                 scientificObject.Unit,
                 scientificObject.Colormap,
                 scientificObject.ChannelEntries,
-                    scientificObject.ChannelId);
+                scientificObject.ChannelId,
+                ParseColorbarBindingState(scientificObject.ColorbarBindingState),
+                ParseScientificObjectOrientation(scientificObject.Orientation),
+                FormatColorbarTicks(scientificObject.Ticks),
+                scientificObject.ChannelLegendPadding);
             try
             {
                 _ = candidate.CreateExportItem();
@@ -4340,6 +4712,7 @@ public bool IsLayersTabActive
         AddCurrentCropToFigureCommand.NotifyCanExecuteChanged();
         ReplaceSelectedPanelSourceCommand.NotifyCanExecuteChanged();
         PinSelectedMeasurementToFigureCommand.NotifyCanExecuteChanged();
+        PlotWorkspace.RefreshFigureReferenceState();
         RefreshAssetUsageCounts();
         MarkFigureQcStale();
         MarkDirty();
@@ -4362,13 +4735,59 @@ public bool IsLayersTabActive
 
     private void OnSourcesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        foreach (SourceAssetItemViewModel detached in _attachedSourceScience
+                     .Where(source => !Sources.Contains(source))
+                     .ToArray())
+        {
+            DetachSourceScience(detached);
+        }
+        foreach (SourceAssetItemViewModel source in Sources)
+        {
+            AttachSourceScience(source);
+        }
+
         RefreshAssetLibrary();
         MultiChannelWorkspace.SynchronizeSources();
     }
 
-    private void OnMultiChannelWorkspaceChanged(object? sender, EventArgs e) => MarkDirty();
+    private void OnDataAssetsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (_isRestoringProject || !_historyReady)
+        {
+            return;
+        }
 
-    private void OnRoiPropagationWorkspaceChanged(object? sender, EventArgs e) => MarkDirty();
+        _hasUnsavedDataAssetChanges = true;
+        RefreshHistoryState();
+    }
+
+    private void OnPlotsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (!_isRestoringProject && Figure.PlotPanels.Count > 0)
+        {
+            Figure.SynchronizePlotReferences(Plots, DataAssets);
+        }
+        if (_isRestoringProject || !_historyReady)
+        {
+            return;
+        }
+
+        _hasUnsavedPlotChanges = true;
+        RefreshHistoryState();
+    }
+
+    private void OnMultiChannelWorkspaceChanged(object? sender, EventArgs e)
+    {
+        Figure.SynchronizeScientificObjectChannels(
+            MultiChannelWorkspace.Groups.Select(group => group.ToModel()).ToArray());
+        MarkDirty();
+    }
+
+    private void OnRoiPropagationWorkspaceChanged(object? sender, EventArgs e)
+    {
+        OnPropertyChanged(nameof(SourceRois));
+        MarkDirty();
+    }
 
     private void OnPublishingPortabilityWorkspaceChanged(object? sender, EventArgs e) => MarkDirty();
 
@@ -4542,7 +4961,7 @@ public bool IsLayersTabActive
         try
         {
             FigureExportDocument document = Figure.CreateExportDocument(MultiChannelWorkspace.CreateModels(), Sources);
-            FigurePreflightResult result = UpdateFigureQc(document);
+            UnifiedQcReport result = UpdateFigureQc(document);
             LastError = result.HasErrors
                 ? string.Join(Environment.NewLine, result.Issues
                     .Where(issue => issue.Severity == FigurePreflightSeverity.Error)
@@ -4550,38 +4969,81 @@ public bool IsLayersTabActive
                 : null;
             StatusMessage = $"Figure QC · {result.Summary}";
         }
-        catch (InvalidOperationException exception)
+        catch (Exception exception) when (
+            exception is IOException or InvalidOperationException or NotSupportedException)
         {
-            var result = new FigurePreflightResult(
+            UnifiedQcReport result = UnifiedQcReport.FromFigurePreflight(new FigurePreflightResult(
             [
                 new FigurePreflightIssue(
                     FigurePreflightSeverity.Error,
                     "QC_ENGINE_ERROR",
                     exception.Message),
-            ]);
-            UpdateFigureQcIssues(result);
+            ]));
+            UpdateFigureQcIssues(result.ToFigurePreflightResult());
             LastError = exception.Message;
             StatusMessage = "Figure QC 未通过 · 编辑状态无效";
         }
     }
 
-    private FigurePreflightResult UpdateFigureQc(FigureExportDocument document)
+    private UnifiedQcReport UpdateFigureQc(
+        FigureExportDocument document,
+        string? targetFormat = null)
     {
-        FigurePreflightResult result = AddScientificIntegrityIssues(FigurePreflight.Check(
-            new FigurePreflightContext(
-                document,
-                LabelScheme: Figure.LabelScheme,
-                FontCatalog: SystemFontCatalog.Instance),
-            Sources.Select(item => item.Asset).ToArray(),
-            IsDirty,
-            CreateFigurePreflightConfiguration()));
-        UpdateFigureQcIssues(result);
+        UnifiedQcReport result = CreateUnifiedQcReport(new FigurePreflightContext(
+            document,
+            TargetFormat: targetFormat,
+            LabelScheme: Figure.LabelScheme,
+            FontCatalog: SystemFontCatalog.Instance,
+            PdfFontCapabilityProvider: WpfPdfFontCapabilityProvider.Instance));
+        UpdateFigureQcIssues(result.ToFigurePreflightResult());
         return result;
     }
 
-    private FigurePreflightResult AddScientificIntegrityIssues(FigurePreflightResult result)
+    private UnifiedQcReport CreateUnifiedQcReport(FigurePreflightContext figureContext)
     {
-        var issues = result.Issues.ToList();
+        SourceAsset[] sources = Sources.Select(item => item.Asset).ToArray();
+        Dictionary<Guid, long> revisions = Sources.ToDictionary(
+            item => item.Asset.Id,
+            item => item.SourceRevision);
+        Dictionary<Guid, SpatialCalibration> calibrations = Sources
+            .Where(item => item.Calibration.IsCalibrated)
+            .ToDictionary(item => item.Asset.Id, item => item.Calibration.Calibration);
+        ScientificProject project = ScientificQcProjectFactory.Create(
+            _projectId,
+            string.IsNullOrWhiteSpace(_projectPath)
+                ? "SciCanvas Project"
+                : Path.GetFileNameWithoutExtension(_projectPath),
+            figureContext.Document,
+            sources,
+            revisions,
+            calibrations,
+            RoiPropagationWorkspace.CreateModels().Cast<ScientificObject>().ToArray(),
+            figureId: _projectId,
+            labelScheme: Figure.LabelScheme,
+            createdAt: _projectCreatedAt);
+        IReadOnlyList<RawCropQcCandidate> rawCrops = WpfRawCropQcCandidateBuilder.Create(
+            figureContext.Document,
+            revisions,
+            _projectId);
+        var scientificContext = new QcContext(
+            project,
+            new QcConfiguration(MinimumEffectiveDpi: FigureQcMinimumDpi),
+            SystemFontCatalog.Instance,
+            MultiChannelWorkspace.CreateModels(),
+            Figure.CreateLinkGroupModels(),
+            rawCrops);
+        return _scientificQcCoordinator.Run(new ScientificQcRequest(
+            figureContext,
+            sources,
+            scientificContext,
+            IsDirty,
+            CreateFigurePreflightConfiguration(),
+            CreateSupplementalScientificIntegrityIssues()));
+    }
+
+    private IReadOnlyList<FigurePreflightIssue> CreateSupplementalScientificIntegrityIssues()
+    {
+        var issues = new List<FigurePreflightIssue>();
         foreach (string missingFont in Sources
                      .SelectMany(source => source.Measurements)
                      .Select(measurement => measurement.LabelFontFamily)
@@ -4654,7 +5116,7 @@ public bool IsLayersTabActive
                 panel.Label));
         }
 
-        return new FigurePreflightResult(issues);
+        return issues;
     }
 
     private FigurePreflightConfiguration CreateFigurePreflightConfiguration() => new()
@@ -4801,12 +5263,30 @@ public bool IsLayersTabActive
         kind?.ToLowerInvariant() switch
         {
             "polygonannotation" or "polygon" => FigureScientificObjectKind.PolygonAnnotation,
-            "roi" => FigureScientificObjectKind.Roi,
             "directionmarker" or "direction" => FigureScientificObjectKind.DirectionMarker,
             "colorbar" or "colourbar" => FigureScientificObjectKind.Colorbar,
             "channellegend" or "legend" => FigureScientificObjectKind.ChannelLegend,
             _ => throw new InvalidDataException($"不支持的科研对象类型：{kind ?? "<空>"}"),
         };
+
+    private static ColorbarBindingState ParseColorbarBindingState(string? state) =>
+        state?.ToLowerInvariant() switch
+        {
+            "linked" => ColorbarBindingState.Linked,
+            "detached" => ColorbarBindingState.Detached,
+            _ => throw new InvalidDataException($"不支持的 Colorbar 绑定状态：{state ?? "<空>"}"),
+        };
+
+    private static FigureObjectOrientation ParseScientificObjectOrientation(string? orientation) =>
+        orientation?.ToLowerInvariant() switch
+        {
+            "vertical" => FigureObjectOrientation.Vertical,
+            "horizontal" => FigureObjectOrientation.Horizontal,
+            _ => throw new InvalidDataException($"不支持的科研对象方向：{orientation ?? "<空>"}"),
+        };
+
+    private static string FormatColorbarTicks(IReadOnlyList<ProjectColorbarTickSnapshot> ticks) =>
+        ColorbarViewModel.FormatTicks(ticks.Select(tick => new ColorbarTick(tick.Value, tick.Label)));
     private static FigureGuideOrientation ParseGuideOrientation(string? orientation) =>
         orientation?.ToLowerInvariant() switch
         {
@@ -4997,7 +5477,11 @@ public bool IsLayersTabActive
                     scientificObject.Unit,
                     scientificObject.Colormap,
                     scientificObject.ChannelEntriesText,
-                    scientificObject.ChannelId))
+                    scientificObject.ChannelId,
+                    scientificObject.ColorbarBindingState,
+                    scientificObject.ColorbarOrientation,
+                    scientificObject.ColorbarTicksText,
+                    scientificObject.ChannelLegendPadding))
                 .ToArray(),
             Figure.Guides
                 .Select(guide => new GuideHistorySnapshot(
@@ -5048,7 +5532,21 @@ public bool IsLayersTabActive
             Figure.CreateLinkGroupModels(),
             RoiPropagationWorkspace.CreateModels(),
             PublishingPortabilityWorkspace.CreatePresetModels(),
-            PublishingPortabilityWorkspace.CreateSubstitutionModels());
+            PublishingPortabilityWorkspace.CreateSubstitutionModels(),
+            Figure.PlotPanels
+                .OrderBy(panel => panel.ZIndex)
+                .Select(panel => new PlotPanelHistorySnapshot(
+                    panel.Id,
+                    panel.PlotId,
+                    panel.DestinationRect,
+                    panel.Label,
+                    panel.IsVisible,
+                    panel.IsLocked,
+                    panel.ZIndex,
+                    panel.StyleOverride,
+                    panel.TypographyOverride))
+                .ToArray(),
+            Figure.SelectedPlotPanel?.Id);
     }
 
     private void RestoreHistorySnapshot(EditorHistorySnapshot snapshot)
@@ -5119,6 +5617,28 @@ public bool IsLayersTabActive
                 restored.RestoreStyleOverride(panelSnapshot.StyleOverride);
             }
 
+            IReadOnlyDictionary<Guid, PlotObject> plotMap = Plots.ToDictionary(plot => plot.Id);
+            IReadOnlyDictionary<Guid, TabularDataAsset> dataAssetMap = DataAssets.ToDictionary(asset => asset.Id);
+            foreach (PlotPanelHistorySnapshot plotPanel in
+                     (snapshot.PlotPanels ?? []).OrderBy(panel => panel.ZIndex))
+            {
+                PlotObject plot = plotMap.GetValueOrDefault(plotPanel.PlotId)
+                    ?? throw new InvalidOperationException("历史记录引用的 Plot 已经不在工程中。");
+                TabularDataAsset dataAsset = dataAssetMap.GetValueOrDefault(plot.Data.DataAssetId)
+                    ?? throw new InvalidOperationException("历史记录中的 Plot 引用了不存在的 DataAsset。");
+                Figure.RestorePlotPanel(
+                    plot,
+                    dataAsset,
+                    plotPanel.Id,
+                    plotPanel.DestinationRect,
+                    plotPanel.Label,
+                    plotPanel.IsVisible,
+                    plotPanel.IsLocked,
+                    plotPanel.ZIndex,
+                    plotPanel.StyleOverride,
+                    plotPanel.TypographyOverride);
+            }
+
             Figure.RestoreLinkGroups(snapshot.LinkGroups ?? []);
             RoiPropagationWorkspace.Restore(snapshot.Rois ?? []);
             PublishingPortabilityWorkspace.Restore(
@@ -5173,7 +5693,11 @@ public bool IsLayersTabActive
                     scientificObject.Unit,
                     scientificObject.Colormap,
                     scientificObject.ChannelEntriesText,
-                    scientificObject.ChannelId);
+                    scientificObject.ChannelId,
+                    scientificObject.ColorbarBindingState,
+                    scientificObject.ColorbarOrientation,
+                    scientificObject.ColorbarTicksText,
+                    scientificObject.ChannelLegendPadding);
             }
             foreach (GuideHistorySnapshot guide in snapshot.Guides)
             {
@@ -5185,6 +5709,7 @@ public bool IsLayersTabActive
             }
 
             MultiChannelWorkspace.Restore(snapshot.MultiChannelGroups);
+            Figure.SynchronizeScientificObjectChannels(MultiChannelWorkspace.CreateModels());
 
             foreach (SourceAssetItemViewModel source in Sources)
             {
@@ -5268,6 +5793,9 @@ public bool IsLayersTabActive
             IsCropOverlayVisible = snapshot.CropOverlayVisible;
             WorkspaceMode = snapshot.WorkspaceMode;
             Figure.RestorePanelSelection(snapshot.SelectedPanelIds, snapshot.SelectedPanelId);
+            Figure.SelectedPlotPanel = snapshot.SelectedPlotPanelId is Guid plotPanelId
+                ? Figure.PlotPanels.FirstOrDefault(panel => panel.Id == plotPanelId)
+                : null;
             Figure.SelectedAnnotation = snapshot.SelectedAnnotationId is Guid annotationId
                 ? Figure.Annotations.FirstOrDefault(annotation => annotation.Id == annotationId)
                 : null;
@@ -5297,6 +5825,8 @@ public bool IsLayersTabActive
         before.CanvasHeight == after.CanvasHeight &&
         before.SourceIds.SequenceEqual(after.SourceIds) &&
         before.Panels.Select(panel => panel.Id).SequenceEqual(after.Panels.Select(panel => panel.Id)) &&
+        (before.PlotPanels ?? []).Select(panel => panel.Id)
+            .SequenceEqual((after.PlotPanels ?? []).Select(panel => panel.Id)) &&
         before.Annotations.Select(annotation => annotation.Id)
             .SequenceEqual(after.Annotations.Select(annotation => annotation.Id)) &&
         before.ScientificObjects.Select(item => item.Id)
@@ -5314,7 +5844,9 @@ public bool IsLayersTabActive
 
     private void RefreshHistoryState()
     {
-        IsDirty = _history.IsDirty;
+        IsDirty = _history.IsDirty ||
+            _hasUnsavedDataAssetChanges ||
+            _hasUnsavedPlotChanges;
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HistoryStatusText));
@@ -5333,7 +5865,7 @@ public bool IsLayersTabActive
             return;
         }
 
-        if (!IsDirty || Sources.Count == 0)
+        if (!IsDirty || (Sources.Count == 0 && DataAssets.Count == 0))
         {
             return;
         }
@@ -5369,9 +5901,14 @@ public bool IsLayersTabActive
                 Figure.CreateLinkGroupModels(),
                 RoiPropagationWorkspace.CreateModels(),
                 PublishingPortabilityWorkspace.CreatePresetModels(),
-                PublishingPortabilityWorkspace.CreateSubstitutionModels());
+                PublishingPortabilityWorkspace.CreateSubstitutionModels(),
+                DataAssets.ToArray(),
+                Plots.ToArray());
 
-            await _projectRecoveryStore.SaveAsync(_projectId, _projectPath, document);
+            await _projectOpenSaveCoordinator.SaveRecoveryAsync(
+                _projectId,
+                _projectPath,
+                document);
             AutosaveStatusText = $"自动保存 {DateTime.Now:HH:mm:ss}";
         }
         catch (Exception exception) when (
@@ -5408,7 +5945,7 @@ public bool IsLayersTabActive
     {
         try
         {
-            await _projectRecoveryStore.DeleteAsync(_projectId, _projectPath);
+            await _projectOpenSaveCoordinator.DeleteRecoveryAsync(_projectId, _projectPath);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -5594,7 +6131,11 @@ public bool IsLayersTabActive
                 scientificObject.Unit,
                 scientificObject.Colormap,
                 scientificObject.ChannelEntriesText,
-                    scientificObject.ChannelId);
+                scientificObject.ChannelId,
+                scientificObject.ColorbarBindingState,
+                scientificObject.ColorbarOrientation,
+                scientificObject.ColorbarTicksText,
+                scientificObject.ChannelLegendPadding);
         }
         migrated.SelectedScientificObject = selectedScientificObjectId is Guid scientificObjectId
             ? migrated.ScientificObjects.FirstOrDefault(item => item.Id == scientificObjectId)

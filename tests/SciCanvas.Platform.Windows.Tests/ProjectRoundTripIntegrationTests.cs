@@ -277,10 +277,6 @@ public sealed class ProjectRoundTripIntegrationTests
         polygon.PointsText = "100,100; 300,100; 300,240; 100,240";
         original.CompleteHistoryGesture();
 
-        original.Figure.AddRoiScientificObjectCommand.Execute(null);
-        FigureScientificObjectViewModel roi = Assert.IsType<FigureScientificObjectViewModel>(
-            original.Figure.SelectedScientificObject);
-        roi.Label = "Nucleus ROI";
         original.Figure.AddDirectionMarkerCommand.Execute(null);
         FigureScientificObjectViewModel direction = Assert.IsType<FigureScientificObjectViewModel>(
             original.Figure.SelectedScientificObject);
@@ -295,11 +291,19 @@ public sealed class ProjectRoundTripIntegrationTests
         colorbar.Colormap = "magma";
         Guid colorbarChannelId = Guid.NewGuid();
         colorbar.ChannelId = colorbarChannelId;
+        colorbar.ColorbarBindingState = ColorbarBindingState.Detached;
+        colorbar.ColorbarOrientation = FigureObjectOrientation.Horizontal;
+        colorbar.ColorbarTicksText = "0|zero;2048|mid;4095|max";
         original.Figure.AddChannelLegendCommand.Execute(null);
         FigureScientificObjectViewModel legend = Assert.IsType<FigureScientificObjectViewModel>(
             original.Figure.SelectedScientificObject);
         legend.Label = "Channels";
         legend.ChannelEntriesText = "DAPI|#FF4FC3F7; GFP|#FF66BB6A";
+        legend.ChannelLegendPadding = 13;
+        legend.FontSizePt = 9;
+        legend.TextColor = "#FF102030";
+        legend.FillColor = "#CC203040";
+        legend.StrokeColor = "#FF506070";
         original.CompleteHistoryGesture();
 
         await original.SaveProjectToPathAsync(projectPath);
@@ -309,14 +313,12 @@ public sealed class ProjectRoundTripIntegrationTests
 
         Assert.Null(restored.LastError);
         Assert.False(restored.IsDirty);
-        Assert.Equal(5, restored.Figure.ScientificObjects.Count);
+        Assert.Equal(4, restored.Figure.ScientificObjects.Count);
         FigureScientificObjectViewModel restoredPolygon = restored.Figure.ScientificObjects.Single(
             item => item.Kind == FigureScientificObjectKind.PolygonAnnotation);
         Assert.Equal(polygonId, restoredPolygon.Id);
         Assert.Equal("Membrane boundary", restoredPolygon.Label);
         Assert.Equal("100,100; 300,100; 300,240; 100,240", restoredPolygon.PointsText);
-        Assert.Equal("Nucleus ROI", restored.Figure.ScientificObjects.Single(
-            item => item.Kind == FigureScientificObjectKind.Roi).Label);
         Assert.Equal("North", restored.Figure.ScientificObjects.Single(
             item => item.Kind == FigureScientificObjectKind.DirectionMarker).Label);
         FigureScientificObjectViewModel restoredColorbar = restored.Figure.ScientificObjects.Single(
@@ -324,10 +326,18 @@ public sealed class ProjectRoundTripIntegrationTests
         Assert.Equal(4095, restoredColorbar.Maximum);
         Assert.Equal("magma", restoredColorbar.Colormap);
         Assert.Equal(colorbarChannelId, restoredColorbar.ChannelId);
+        Assert.Equal(ColorbarBindingState.Detached, restoredColorbar.ColorbarBindingState);
+        Assert.Equal(FigureObjectOrientation.Horizontal, restoredColorbar.ColorbarOrientation);
+        Assert.Equal("0|zero;2048|mid;4095|max", restoredColorbar.ColorbarTicksText);
         FigureScientificObjectViewModel restoredLegend = restored.Figure.ScientificObjects.Single(
             item => item.Kind == FigureScientificObjectKind.ChannelLegend);
         Assert.Equal(2, restoredLegend.ChannelEntries.Count);
         Assert.Equal("DAPI", restoredLegend.ChannelEntries[0].Label);
+        Assert.Equal(13, restoredLegend.ChannelLegendPadding);
+        Assert.Equal(9, restoredLegend.FontSizePt);
+        Assert.Equal("#FF102030", restoredLegend.TextColor);
+        Assert.Equal("#CC203040", restoredLegend.FillColor);
+        Assert.Equal("#FF506070", restoredLegend.StrokeColor);
     }
     [Fact]
     public async Task SaveThenOpen_RestoresCompositePanelAndChannelSourceRevisions()
@@ -356,12 +366,12 @@ public sealed class ProjectRoundTripIntegrationTests
         Guid referenceChannelId = Guid.NewGuid();
         Guid titaniumChannelId = Guid.NewGuid();
         ChannelGroupMember referenceMember = new(
-            referenceChannelId, reference.Asset.Id, 0, "HAADF", "reference", "#FFFFFFFF",
+            referenceChannelId, reference.Asset.Id, ChannelPlaneSelector.InterleavedComponent(0, 0), "HAADF", "reference", "#FFFFFFFF",
             ChannelNameOrigin.User, true,
             new ChannelDisplaySettings(referenceChannelId, true, "#FFFFFFFF", 1, 0, 255, 1, false))
         { SourceRevision = 3 };
         ChannelGroupMember titaniumMember = new(
-            titaniumChannelId, titanium.Asset.Id, 0, "Ti", null, "#FFFF0000",
+            titaniumChannelId, titanium.Asset.Id, ChannelPlaneSelector.InterleavedComponent(0, 2), "Ti", null, "#FFFF0000",
             ChannelNameOrigin.User, true,
             new ChannelDisplaySettings(titaniumChannelId, true, "#FFFF0000", 1, 0, 255, 1, false))
         { SourceRevision = 4 };
@@ -387,7 +397,7 @@ public sealed class ProjectRoundTripIntegrationTests
         MultiChannelAssetGroup restoredGroup = Assert.Single(restored.MultiChannelWorkspace.CreateModels());
         Assert.Equal([3L, 4L], restoredGroup.Members.Select(member => member.SourceRevision!.Value).Order().ToArray());
         string json = await File.ReadAllTextAsync(projectPath);
-        Assert.Contains("\"schemaVersion\": \"2.4\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"schemaVersion\": \"3.0\"", json, StringComparison.Ordinal);
         Assert.Contains("\"compositeGroupId\"", json, StringComparison.Ordinal);
     }
 
@@ -997,6 +1007,8 @@ public sealed class ProjectRoundTripIntegrationTests
         Assert.Equal(titaniumAsset.Id, savedTitanium.AssetId);
         Assert.Equal("Ti", savedTitanium.Name);
         Assert.Equal("filenameSuggestion", savedTitanium.NameOrigin);
+        Assert.Equal("interleavedComponent", savedTitanium.PlaneSelector?.SourceKind);
+        Assert.Equal(2, savedTitanium.PlaneSelector?.ComponentIndex);
         Assert.Equal("#FF00FFFF", savedTitanium.Color);
         Assert.Equal(0.65, savedTitanium.Opacity);
 
@@ -1013,6 +1025,7 @@ public sealed class ProjectRoundTripIntegrationTests
         Assert.Equal(group.Members[1].ChannelId, restoredTitanium.ChannelId);
         Assert.Equal(titaniumAsset.Id, restoredTitanium.AssetId);
         Assert.Equal(ChannelNameOrigin.FilenameSuggestion, restoredTitanium.NameOrigin);
+        Assert.Equal(ChannelPlaneSelector.InterleavedComponent(0, 2), restoredTitanium.PlaneSelector);
         Assert.True(restoredTitanium.IsNameConfirmed);
         Assert.Equal("#FF00FFFF", restoredTitanium.Color);
         Assert.Equal(0.65, restoredTitanium.DisplaySettings.Opacity);
@@ -1090,7 +1103,7 @@ public sealed class ProjectRoundTripIntegrationTests
                 new ChannelGroupMember(
                     referenceChannelId,
                     referenceAssetId,
-                    0,
+                    ChannelPlaneSelector.InterleavedComponent(0, 0),
                     "HAADF",
                     "Reference",
                     "#FFFFFFFF",
@@ -1101,7 +1114,7 @@ public sealed class ProjectRoundTripIntegrationTests
                 new ChannelGroupMember(
                     titaniumChannelId,
                     titaniumAssetId,
-                    0,
+                    ChannelPlaneSelector.InterleavedComponent(0, 2),
                     "Ti",
                     "ElementalMap",
                     "#FFFF3B30",

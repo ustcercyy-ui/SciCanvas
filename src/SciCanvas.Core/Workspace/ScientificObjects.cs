@@ -15,6 +15,8 @@ public enum ScientificObjectKind
     DirectionMarker,
     Annotation,
     MeasurementOverlay,
+    RoiFigureProjection,
+    ChannelLegend,
 }
 
 public abstract record ScientificObject
@@ -101,36 +103,109 @@ public enum RoiGeometryKind
     Polyline,
 }
 
-public sealed record RoiStyle(
-    string StrokeColor,
-    double StrokeWidth,
-    string FillColor,
-    double FillOpacity,
-    string? Label = null,
-    string? LabelFont = null,
-    string? LabelColor = null)
+public sealed record RoiStyle
 {
+    public RoiStyle(ShapeStyle shape, TextStyle labelStyle, string? label = null)
+    {
+        Shape = shape ?? throw new ArgumentNullException(nameof(shape));
+        LabelStyle = labelStyle ?? throw new ArgumentNullException(nameof(labelStyle));
+        Label = label;
+    }
+
+    /// <summary>Compatibility constructor for schema 2.4 and earlier flat ROI styles.</summary>
+    public RoiStyle(
+        string strokeColor,
+        double strokeWidth,
+        string fillColor,
+        double fillOpacity,
+        string? label = null,
+        string? labelFont = null,
+        string? labelColor = null,
+        double labelFontSizePt = 7,
+        bool labelIsBold = false)
+        : this(
+            new ShapeStyle(strokeColor, fillColor, fillOpacity * 100, strokeWidth),
+            new TextStyle(
+                string.IsNullOrWhiteSpace(labelFont) ? "Arial" : labelFont.Trim(),
+                labelFontSizePt,
+                labelIsBold,
+                string.IsNullOrWhiteSpace(labelColor) ? strokeColor : labelColor),
+            label)
+    {
+    }
+
     public static RoiStyle Default { get; } = new(
-        "#FF22C7E8",
-        2,
-        "#FF22C7E8",
-        0.12,
-        null,
-        "Arial",
-        "#FF22C7E8");
+        new ShapeStyle("#FF22C7E8", "#FF22C7E8", 12, 2),
+        new TextStyle("Arial", 7, false, "#FF22C7E8"));
+
+    public ShapeStyle Shape { get; init; }
+
+    public TextStyle LabelStyle { get; init; }
+
+    public string? Label { get; init; }
+
+    public string StrokeColor => Shape.StrokeColor;
+
+    public double StrokeWidth => Shape.StrokeWidthPt;
+
+    public string FillColor => Shape.FillColor;
+
+    public double FillOpacity => Shape.FillOpacityPercent / 100.0;
+
+    public string LabelFont => LabelStyle.FontFamily;
+
+    public string LabelFontFamily => LabelStyle.FontFamily;
+
+    public double LabelFontSizePt => LabelStyle.FontSizePt;
+
+    public bool LabelIsBold => LabelStyle.IsBold;
+
+    public string LabelColor => LabelStyle.Color;
 
     public RoiStyle EnsureValid()
     {
-        if (!ScientificStyleColor.ValidateColor(StrokeColor) ||
-            !ScientificStyleColor.ValidateColor(FillColor) ||
-            !double.IsFinite(StrokeWidth) || StrokeWidth <= 0 ||
-            !double.IsFinite(FillOpacity) || FillOpacity is < 0 or > 1 ||
-            Label?.Length > 256 || LabelFont?.Length > 128 ||
-            (LabelColor is not null && !ScientificStyleColor.ValidateColor(LabelColor)))
+        Shape.EnsureValid();
+        LabelStyle.EnsureValid();
+        if (Label?.Length > 256)
         {
-            throw new InvalidOperationException("ROI style 必须包含有效颜色、线宽、填充透明度与可选标签。");
+            throw new InvalidOperationException("ROI label 不能超过 256 个字符。");
         }
 
+        return this;
+    }
+}
+
+/// <summary>
+/// Figure display reference for a canonical ROI. It intentionally stores no ROI geometry:
+/// source-pixel geometry remains owned solely by <see cref="RoiObject"/>.
+/// </summary>
+public sealed record RoiFigureProjectionObject : ScientificObject
+{
+    public override ScientificObjectKind Kind => ScientificObjectKind.RoiFigureProjection;
+
+    public required Guid RoiId { get; init; }
+
+    public bool IsVisible { get; init; } = true;
+
+    public int ZIndex { get; init; }
+
+    public RoiFigureProjectionObject EnsureValid(RoiObject roi, FigurePanel panel)
+    {
+        ArgumentNullException.ThrowIfNull(roi);
+        ArgumentNullException.ThrowIfNull(panel);
+        roi.EnsureValid();
+        if (Id == Guid.Empty || RoiId == Guid.Empty || RoiId != roi.Id ||
+            PanelId is not Guid panelId || panelId == Guid.Empty || panelId != panel.Id ||
+            AssetId is not Guid assetId || assetId == Guid.Empty || assetId != roi.AssetId ||
+            panel.AssetId != assetId ||
+            SourceRevision is not long revision || revision < 1 || revision != roi.SourceRevision ||
+            panel.FrameIndex != roi.FrameIndex)
+        {
+            throw new InvalidOperationException(
+                "ROI Figure Projection 必须引用同一 ROI、Panel、Asset、source revision 和 frame。");
+        }
+
+        StyleOverride?.EnsureValid();
         return this;
     }
 }
@@ -139,15 +214,19 @@ public sealed record RoiPropagationProvenance(
     Guid ReferenceRoiId,
     Guid TargetRoiId,
     Guid LinkGroupId,
-    Guid MappingId)
+    Guid MappingId,
+    double TargetCoverageFraction = 1)
 {
     public RoiPropagationProvenance EnsureValid()
     {
         if (ReferenceRoiId == Guid.Empty || TargetRoiId == Guid.Empty ||
             LinkGroupId == Guid.Empty || MappingId == Guid.Empty ||
-            ReferenceRoiId == TargetRoiId)
+            ReferenceRoiId == TargetRoiId ||
+            !double.IsFinite(TargetCoverageFraction) ||
+            TargetCoverageFraction is < 0 or > 1)
         {
-            throw new InvalidOperationException("ROI propagation provenance 缺少有效 ROI、LinkGroup 或 Mapping ID。");
+            throw new InvalidOperationException(
+                "ROI propagation provenance 缺少有效 ROI、LinkGroup、Mapping ID 或 target coverage fraction。");
         }
 
         return this;
@@ -194,6 +273,18 @@ public sealed record RoiObject : ScientificObject
             {
                 throw new InvalidOperationException("ROI propagation 的 TargetRoiId 必须等于当前 ROI ID。");
             }
+
+            if (Propagation.TargetCoverageFraction == 0 &&
+                Validity.State != ScientificValidityState.Invalid)
+            {
+                throw new InvalidOperationException("完全位于目标图像外的 propagated ROI 必须标记为 Invalid。");
+            }
+
+            if (Propagation.TargetCoverageFraction is > 0 and < 1 &&
+                Validity.State is not (ScientificValidityState.Warning or ScientificValidityState.ReviewRequired))
+            {
+                throw new InvalidOperationException("部分越界的 propagated ROI 必须标记为 Warning 或 ReviewRequired。");
+            }
         }
 
         return this;
@@ -207,6 +298,31 @@ public sealed record InsetObject : ScientificObject
     public required Guid RoiObjectId { get; init; }
 
     public required Guid InsetPanelId { get; init; }
+}
+
+public enum FigureObjectOrientation
+{
+    Vertical,
+    Horizontal,
+}
+
+public enum ColorbarBindingState
+{
+    Detached,
+    Linked,
+}
+
+public sealed record ColorbarTick(double Value, string Label)
+{
+    public ColorbarTick EnsureValid()
+    {
+        if (!double.IsFinite(Value) || string.IsNullOrWhiteSpace(Label) || Label.Length > 64)
+        {
+            throw new InvalidOperationException("Colorbar tick 必须包含有限数值和不超过 64 字符的标签。");
+        }
+
+        return this;
+    }
 }
 
 public sealed record ColorbarObject : ScientificObject
@@ -223,7 +339,114 @@ public sealed record ColorbarObject : ScientificObject
 
     public Guid? ChannelId { get; init; }
 
-    public IReadOnlyList<double> Ticks { get; init; } = [];
+    public ColorbarBindingState BindingState { get; init; } = ColorbarBindingState.Detached;
+
+    public FigureObjectOrientation Orientation { get; init; } = FigureObjectOrientation.Vertical;
+
+    public IReadOnlyList<ColorbarTick> Ticks { get; init; } = [];
+
+    public ColorbarObject EnsureValid()
+    {
+        if (Id == Guid.Empty || !double.IsFinite(Minimum) || !double.IsFinite(Maximum) ||
+            Maximum <= Minimum || string.IsNullOrWhiteSpace(Unit) || Unit.Length > 64 ||
+            !SciCanvas.Core.Channels.ScientificColormap.IsSupported(Colormap) ||
+            !Enum.IsDefined(BindingState) || !Enum.IsDefined(Orientation) ||
+            ChannelId == Guid.Empty ||
+            (BindingState == ColorbarBindingState.Linked && ChannelId is null) ||
+            Ticks.Count < 2)
+        {
+            throw new InvalidOperationException(
+                "Canonical Colorbar 必须包含有效范围、单位、colormap、绑定状态、方向及至少两个 ticks。");
+        }
+
+        foreach (ColorbarTick tick in Ticks)
+        {
+            tick.EnsureValid();
+        }
+
+        if (Ticks.Any(tick => tick.Value < Minimum || tick.Value > Maximum) ||
+            Ticks.Zip(Ticks.Skip(1), (left, right) => right.Value > left.Value).Any(increasing => !increasing))
+        {
+            throw new InvalidOperationException("Colorbar ticks 必须位于显示范围内并严格递增。");
+        }
+
+        StyleOverride?.EnsureValid();
+        return this;
+    }
+
+    public static IReadOnlyList<ColorbarTick> CreateDefaultTicks(
+        double minimum,
+        double maximum,
+        int count = 5)
+    {
+        if (!double.IsFinite(minimum) || !double.IsFinite(maximum) || maximum <= minimum ||
+            count is < 2 or > 20)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count));
+        }
+
+        return Enumerable.Range(0, count)
+            .Select(index =>
+            {
+                double value = minimum + (maximum - minimum) * index / (count - 1);
+                return new ColorbarTick(value, value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+            })
+            .ToArray();
+    }
+}
+
+public sealed record ChannelLegendItem(
+    Guid? ChannelId,
+    string Label,
+    string Color)
+{
+    public ChannelLegendItem EnsureValid()
+    {
+        if (ChannelId == Guid.Empty || string.IsNullOrWhiteSpace(Label) || Label.Length > 128 ||
+            !ScientificStyleColor.ValidateColor(Color))
+        {
+            throw new InvalidOperationException(
+                "Channel Legend item 必须包含可选有效 channel、标签和颜色。");
+        }
+
+        return this;
+    }
+}
+
+public sealed record ChannelLegendObject : ScientificObject
+{
+    public override ScientificObjectKind Kind => ScientificObjectKind.ChannelLegend;
+
+    public required IReadOnlyList<ChannelLegendItem> Items { get; init; }
+
+    public required TextStyle TextStyle { get; init; }
+
+    public required ShapeStyle ContainerStyle { get; init; }
+
+    public double PaddingPixels { get; init; } = 5;
+
+    public ChannelLegendObject EnsureValid()
+    {
+        if (Id == Guid.Empty || Items.Count == 0 ||
+            Items.Select(item => item.ChannelId)
+                .Where(channelId => channelId.HasValue)
+                .Distinct().Count() != Items.Count(item => item.ChannelId.HasValue) ||
+            !double.IsFinite(PaddingPixels) || PaddingPixels is < 0 or > 100)
+        {
+            throw new InvalidOperationException(
+                "Canonical Channel Legend 必须包含唯一 items 和 0–100 px padding。");
+        }
+
+        foreach (ChannelLegendItem item in Items)
+        {
+            item.EnsureValid();
+        }
+
+        TextStyle.EnsureValid();
+        ContainerStyle.EnsureValid();
+        StyleOverride?.EnsureValid();
+        return this;
+    }
 }
 
 public sealed record PanelLabelObject : ScientificObject

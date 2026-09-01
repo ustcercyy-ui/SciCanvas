@@ -174,13 +174,18 @@ public sealed class ProjectV24MigrationTests
 
         SciCanvasProjectDocument migrated = ProjectMigrationPipeline.MigrateToCurrent(v23);
 
-        Assert.Equal("2.4", migrated.SchemaVersion);
+        Assert.Equal(ProjectMigrationPipeline.CurrentVersion, migrated.SchemaVersion);
         Assert.Equal(JsonSerializer.Serialize(v23.Layers), JsonSerializer.Serialize(migrated.Layers));
         Assert.Equal(JsonSerializer.Serialize(v23.Measurements), JsonSerializer.Serialize(migrated.Measurements));
         Assert.Equal(JsonSerializer.Serialize(v23.ExportProfiles), JsonSerializer.Serialize(migrated.ExportProfiles));
         Assert.Equal(JsonSerializer.Serialize(v23.TemplateSnapshot), JsonSerializer.Serialize(migrated.TemplateSnapshot));
         Assert.Equal("Helvetica Neue", Assert.Single(migrated.FontSubstitutions).Requested);
-        Assert.Equal(7, Assert.Single(Assert.Single(migrated.MultiChannelGroups).Members).SourceRevision);
+        ProjectChannelGroupMemberSnapshot migratedMember =
+            Assert.Single(Assert.Single(migrated.MultiChannelGroups).Members);
+        Assert.Equal(7, migratedMember.SourceRevision);
+        Assert.Equal("externalAsset", migratedMember.PlaneSelector?.SourceKind);
+        Assert.Equal(0, migratedMember.PlaneSelector?.FrameIndex);
+        Assert.Null(migratedMember.PlaneSelector?.ComponentIndex);
         Assert.Equal(groupId, Assert.Single(migrated.Layers).CompositeGroupId);
         Assert.Equal(v23.UpdatedAt, Assert.Single(migrated.AuditTrail).Timestamp);
         Assert.Same(migrated, ProjectMigrationPipeline.MigrateToCurrent(migrated));

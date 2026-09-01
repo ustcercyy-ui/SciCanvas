@@ -5,11 +5,14 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using SciCanvas.App;
+using SciCanvas.Core.Data;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
+using SciCanvas.Core.Plotting;
 using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
+using SciCanvas.Core.Workspace;
 using SciCanvas.Imaging;
 using SciCanvas.Persistence;
 using SciCanvas.Presentation;
@@ -40,24 +43,30 @@ public sealed class MainWindowImportRegressionTests
                 window.Show();
                 window.UpdateLayout();
 
-                var inspector = Assert.IsType<ScrollViewer>(window.FindName("InspectorScrollViewer"));
-                var layers = Assert.IsType<ScrollViewer>(window.FindName("LayersScrollViewer"));
+                var inspector = Assert.IsType<InspectorWorkspace>(window.FindName("InspectorWorkspacePanel"));
+                var layers = Assert.IsType<LayersWorkspace>(window.FindName("LayersWorkspacePanel"));
                 var channels = Assert.IsType<ChannelsInspector>(window.FindName("ChannelsInspectorPanel"));
                 var linkedViews = Assert.IsType<LinkedViewsInspector>(window.FindName("LinkedViewsInspectorPanel"));
-var registration = Assert.IsType<RegistrationWorkspace>(window.FindName("RegistrationWorkspacePanel"));
+                var registration = Assert.IsType<RegistrationWorkspace>(window.FindName("RegistrationWorkspacePanel"));
                 var roiPropagation = Assert.IsType<RoiPropagationWorkspace>(window.FindName("RoiPropagationWorkspacePanel"));
+                var scientificData = Assert.IsType<ScientificDataWorkspace>(window.FindName("ScientificDataWorkspacePanel"));
+                var plotWorkspace = Assert.IsType<PlotWorkspace>(window.FindName("PlotWorkspacePanel"));
                 var rightSidebar = Assert.IsType<Border>(window.FindName("RightSidebarPanel"));
                 var inspectorButton = Assert.IsType<Button>(window.FindName("InspectorTabButton"));
                 var layersButton = Assert.IsType<Button>(window.FindName("LayersTabButton"));
                 var channelsButton = Assert.IsType<Button>(window.FindName("ChannelsTabButton"));
                 var linkedViewsButton = Assert.IsType<Button>(window.FindName("LinkedViewsTabButton"));
-var registrationButton = Assert.IsType<Button>(window.FindName("RegistrationTabButton"));
+                var registrationButton = Assert.IsType<Button>(window.FindName("RegistrationTabButton"));
                 var roiPropagationButton = Assert.IsType<Button>(window.FindName("RoiPropagationTabButton"));
+                var scientificDataButton = Assert.IsType<Button>(window.FindName("ScientificDataTabButton"));
+                var plotButton = Assert.IsType<Button>(window.FindName("PlotTabButton"));
 
                 AssertSidebarPageVisibility(inspector, layers, channels, Visibility.Visible, Visibility.Collapsed, Visibility.Collapsed);
                 Assert.Equal(Visibility.Collapsed, linkedViews.Visibility);
                 Assert.Equal(Visibility.Collapsed, registration.Visibility);
                 Assert.Equal(Visibility.Collapsed, roiPropagation.Visibility);
+                Assert.Equal(Visibility.Collapsed, scientificData.Visibility);
+                Assert.Equal(Visibility.Collapsed, plotWorkspace.Visibility);
                 CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "inspector");
 
                 ExecuteBoundButtonCommand(layersButton);
@@ -66,6 +75,8 @@ var registrationButton = Assert.IsType<Button>(window.FindName("RegistrationTabB
                 Assert.Equal(Visibility.Collapsed, linkedViews.Visibility);
                 Assert.Equal(Visibility.Collapsed, registration.Visibility);
                 Assert.Equal(Visibility.Collapsed, roiPropagation.Visibility);
+                Assert.Equal(Visibility.Collapsed, scientificData.Visibility);
+                Assert.Equal(Visibility.Collapsed, plotWorkspace.Visibility);
                 CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "layers");
 
                 ExecuteBoundButtonCommand(channelsButton);
@@ -74,6 +85,8 @@ var registrationButton = Assert.IsType<Button>(window.FindName("RegistrationTabB
                 Assert.Equal(Visibility.Collapsed, linkedViews.Visibility);
                 Assert.Equal(Visibility.Collapsed, registration.Visibility);
                 Assert.Equal(Visibility.Collapsed, roiPropagation.Visibility);
+                Assert.Equal(Visibility.Collapsed, scientificData.Visibility);
+                Assert.Equal(Visibility.Collapsed, plotWorkspace.Visibility);
                 CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "channels");
 
                 ExecuteBoundButtonCommand(linkedViewsButton);
@@ -82,6 +95,8 @@ var registrationButton = Assert.IsType<Button>(window.FindName("RegistrationTabB
                 Assert.Equal(Visibility.Visible, linkedViews.Visibility);
                 Assert.Equal(Visibility.Collapsed, registration.Visibility);
                 Assert.Equal(Visibility.Collapsed, roiPropagation.Visibility);
+                Assert.Equal(Visibility.Collapsed, scientificData.Visibility);
+                Assert.Equal(Visibility.Collapsed, plotWorkspace.Visibility);
                 CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "linked-views");
 
                 ExecuteBoundButtonCommand(registrationButton);
@@ -90,7 +105,9 @@ var registrationButton = Assert.IsType<Button>(window.FindName("RegistrationTabB
                 Assert.Equal(Visibility.Collapsed, linkedViews.Visibility);
                 Assert.Equal(Visibility.Visible, registration.Visibility);
                 Assert.Equal(Visibility.Collapsed, roiPropagation.Visibility);
-CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "registration");
+                Assert.Equal(Visibility.Collapsed, scientificData.Visibility);
+                Assert.Equal(Visibility.Collapsed, plotWorkspace.Visibility);
+                CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "registration");
 
                 ExecuteBoundButtonCommand(roiPropagationButton);
                 window.UpdateLayout();
@@ -98,7 +115,33 @@ CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "registration"
                 Assert.Equal(Visibility.Collapsed, linkedViews.Visibility);
                 Assert.Equal(Visibility.Collapsed, registration.Visibility);
                 Assert.Equal(Visibility.Visible, roiPropagation.Visibility);
+                Assert.Equal(Visibility.Collapsed, scientificData.Visibility);
+                Assert.Equal(Visibility.Collapsed, plotWorkspace.Visibility);
                 CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "roi-propagation");
+
+                ExecuteBoundButtonCommand(scientificDataButton);
+                window.UpdateLayout();
+                AssertSidebarPageVisibility(inspector, layers, channels, Visibility.Collapsed, Visibility.Collapsed, Visibility.Collapsed);
+                Assert.Equal(Visibility.Collapsed, linkedViews.Visibility);
+                Assert.Equal(Visibility.Collapsed, registration.Visibility);
+                Assert.Equal(Visibility.Collapsed, roiPropagation.Visibility);
+                Assert.Equal(Visibility.Visible, scientificData.Visibility);
+                Assert.NotNull(scientificData.FindName("DataPreviewColumnsList"));
+                Assert.NotNull(scientificData.FindName("DataPreviewRowsList"));
+                CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "scientific-data");
+
+                ExecuteBoundButtonCommand(plotButton);
+                window.UpdateLayout();
+                AssertSidebarPageVisibility(inspector, layers, channels, Visibility.Collapsed, Visibility.Collapsed, Visibility.Collapsed);
+                Assert.Equal(Visibility.Collapsed, linkedViews.Visibility);
+                Assert.Equal(Visibility.Collapsed, registration.Visibility);
+                Assert.Equal(Visibility.Collapsed, roiPropagation.Visibility);
+                Assert.Equal(Visibility.Collapsed, scientificData.Visibility);
+                Assert.Equal(Visibility.Visible, plotWorkspace.Visibility);
+                Assert.NotNull(plotWorkspace.FindName("PlotKindComboBox"));
+                Assert.NotNull(plotWorkspace.FindName("PlotVectorPreview"));
+                Assert.NotNull(plotWorkspace.FindName("PlotTransformsList"));
+                CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "plot-workspace");
 
                 ExecuteBoundButtonCommand(inspectorButton);
                 window.UpdateLayout();
@@ -106,10 +149,12 @@ CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "registration"
                 Assert.Equal(Visibility.Collapsed, linkedViews.Visibility);
                 Assert.Equal(Visibility.Collapsed, registration.Visibility);
                 Assert.Equal(Visibility.Collapsed, roiPropagation.Visibility);
+                Assert.Equal(Visibility.Collapsed, scientificData.Visibility);
+                Assert.Equal(Visibility.Collapsed, plotWorkspace.Visibility);
 
-                inspector.ScrollToVerticalOffset(200);
+                inspector.ScrollViewer.ScrollToVerticalOffset(200);
                 window.UpdateLayout();
-                Assert.True(inspector.VerticalOffset > 0);
+                Assert.True(inspector.ScrollViewer.VerticalOffset > 0);
             }
             finally
             {
@@ -447,7 +492,8 @@ CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "registration"
                     using FileStream output = new(fullPath, FileMode.Create, FileAccess.Write, FileShare.None);
                     encoder.Save(output);
 
-                    var inspector = Assert.IsType<ScrollViewer>(window.FindName("InspectorScrollViewer"));
+                    var inspector = Assert.IsType<InspectorWorkspace>(
+                        window.FindName("InspectorWorkspacePanel")).ScrollViewer;
                     inspector.ScrollToVerticalOffset(1050);
                     window.UpdateLayout();
                     var panelScreenshot = new RenderTargetBitmap(
@@ -594,7 +640,8 @@ CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "registration"
                 };
                 window.Show();
                 window.UpdateLayout();
-                var inspector = Assert.IsType<ScrollViewer>(window.FindName("InspectorScrollViewer"));
+                var inspector = Assert.IsType<InspectorWorkspace>(
+                    window.FindName("InspectorWorkspacePanel")).ScrollViewer;
                 inspector.ScrollToVerticalOffset(360);
                 window.UpdateLayout();
                 var screenshot = new RenderTargetBitmap(
@@ -654,17 +701,20 @@ CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "registration"
                 window.Show();
                 window.UpdateLayout();
 
-                var inspector = Assert.IsType<ScrollViewer>(window.FindName("InspectorScrollViewer"));
+                var inspectorWorkspace = Assert.IsType<InspectorWorkspace>(
+                    window.FindName("InspectorWorkspacePanel"));
+                ScrollViewer inspector = inspectorWorkspace.ScrollViewer;
                 Assert.True(inspector.ActualWidth > 0, scenario);
                 Assert.True(inspector.ViewportHeight > 0, scenario);
                 Assert.True(inspector.ExtentHeight >= inspector.ViewportHeight, scenario);
-                var layers = Assert.IsType<ScrollViewer>(window.FindName("LayersScrollViewer"));
+                var layers = Assert.IsType<LayersWorkspace>(
+                    window.FindName("LayersWorkspacePanel")).ScrollViewer;
                 Assert.Equal(ScrollBarVisibility.Disabled, layers.HorizontalScrollBarVisibility);
                 Assert.NotNull(window.FindName("ImageViewport"));
                 Assert.NotNull(window.FindName("FigureViewport"));
                 Assert.NotNull(window.FindName("CropTopLeftHandle"));
                 Assert.NotNull(window.FindName("CropBottomRightHandle"));
-                Assert.NotNull(window.FindName("MeasurementInspectorPanel"));
+                Assert.NotNull(inspectorWorkspace.FindName("MeasurementInspectorPanel"));
 
                 var bindings = window.InputBindings
                     .OfType<System.Windows.Input.KeyBinding>()
@@ -766,6 +816,205 @@ CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "registration"
         viewModel.ActiveScienceTool = ScientificToolMode.Crop;
 
         Assert.Empty(source.Measurements);
+    }
+
+    [Fact]
+    public void CanonicalRoiGestures_CreateAllGeometryKindsAndCancelOrRejectAtomically()
+    {
+        MainWindowViewModel viewModel = CreateViewModel();
+        SourceAssetItemViewModel source = CreateMeasurementSourceItem();
+        viewModel.Sources.Add(source);
+        viewModel.SelectedSource = source;
+
+        viewModel.ActiveScienceTool = ScientificToolMode.CanonicalRoiRectangle;
+        Assert.True(viewModel.BeginScientificGesture(20, 30));
+        viewModel.UpdateScientificGesture(120, 160);
+        viewModel.CompleteScientificGesture();
+
+        viewModel.ActiveScienceTool = ScientificToolMode.CanonicalRoiEllipse;
+        Assert.True(viewModel.BeginScientificGesture(200, 100));
+        viewModel.UpdateScientificGesture(320, 260);
+        viewModel.CompleteScientificGesture();
+
+        viewModel.ActiveScienceTool = ScientificToolMode.CanonicalRoiPolygon;
+        Assert.False(viewModel.BeginScientificGesture(400, 100));
+        Assert.False(viewModel.BeginScientificGesture(520, 100));
+        Assert.False(viewModel.BeginScientificGesture(460, 230));
+        Assert.True(viewModel.CompletePendingCanonicalRoi());
+
+        viewModel.ActiveScienceTool = ScientificToolMode.CanonicalRoiPolyline;
+        Assert.False(viewModel.BeginScientificGesture(600, 100));
+        Assert.False(viewModel.BeginScientificGesture(720, 180));
+        Assert.True(viewModel.CompletePendingCanonicalRoi());
+
+        Assert.Equal(4, viewModel.SourceRois.Count);
+        Assert.Equal(
+            [
+                RoiGeometryKind.Rectangle,
+                RoiGeometryKind.Ellipse,
+                RoiGeometryKind.Polygon,
+                RoiGeometryKind.Polyline,
+            ],
+            viewModel.SourceRois.Select(item => item.Model.GeometryKind));
+
+        viewModel.ActiveScienceTool = ScientificToolMode.CanonicalRoiPolygon;
+        Assert.False(viewModel.BeginScientificGesture(50, 50));
+        Assert.True(viewModel.HasPendingCanonicalRoi);
+        Assert.True(viewModel.CancelPendingCanonicalRoi());
+        Assert.False(viewModel.HasPendingCanonicalRoi);
+        Assert.Equal(4, viewModel.SourceRois.Count);
+
+        viewModel.ActiveScienceTool = ScientificToolMode.CanonicalRoiRectangle;
+        Assert.True(viewModel.BeginScientificGesture(-10, -10));
+        viewModel.UpdateScientificGesture(50, 50);
+        viewModel.CompleteScientificGesture();
+        Assert.Equal(4, viewModel.SourceRois.Count);
+        Assert.Contains("拒绝", viewModel.StatusMessage, StringComparison.Ordinal);
+
+        ScientificMeasurementViewModel measurement = source.AddMeasurement(
+            ScientificMeasurementKind.Length,
+            new MeasurementPoint(10, 10),
+            new MeasurementPoint(30, 10));
+        source.SelectedMeasurement = measurement;
+        Assert.Null(viewModel.RoiPropagationWorkspace.SelectedRoi);
+    }
+
+    [Fact]
+    public void CanonicalPolygon_EnterCompletesAndEscapeCancelsThroughWindowKeyboardRouting()
+    {
+        WpfTestHost.Invoke(() =>
+        {
+            MainWindow? window = null;
+            try
+            {
+                MainWindowViewModel viewModel = CreateViewModel();
+                SourceAssetItemViewModel source = CreateMeasurementSourceItem();
+                viewModel.Sources.Add(source);
+                viewModel.SelectedSource = source;
+                viewModel.ActiveScienceTool = ScientificToolMode.CanonicalRoiPolygon;
+                window = new MainWindow { DataContext = viewModel };
+                window.Show();
+                window.UpdateLayout();
+
+                viewModel.BeginScientificGesture(100, 100);
+                viewModel.BeginScientificGesture(220, 100);
+                viewModel.BeginScientificGesture(160, 240);
+                var enter = new KeyEventArgs(
+                    Keyboard.PrimaryDevice,
+                    PresentationSource.FromVisual(window),
+                    timestamp: 0,
+                    Key.Enter)
+                {
+                    RoutedEvent = Keyboard.PreviewKeyDownEvent,
+                };
+                window.RaiseEvent(enter);
+
+                Assert.True(enter.Handled);
+                Assert.Single(viewModel.SourceRois);
+                Assert.False(viewModel.HasPendingCanonicalRoi);
+
+                viewModel.BeginScientificGesture(300, 300);
+                Assert.True(viewModel.HasPendingCanonicalRoi);
+                var escape = new KeyEventArgs(
+                    Keyboard.PrimaryDevice,
+                    PresentationSource.FromVisual(window),
+                    timestamp: 0,
+                    Key.Escape)
+                {
+                    RoutedEvent = Keyboard.PreviewKeyDownEvent,
+                };
+                window.RaiseEvent(escape);
+
+                Assert.True(escape.Handled);
+                Assert.False(viewModel.HasPendingCanonicalRoi);
+                Assert.Single(viewModel.SourceRois);
+                Assert.Equal(
+                    ScientificToolMode.CanonicalRoiPolygon,
+                    viewModel.ActiveScienceTool);
+            }
+            finally
+            {
+                if (window is not null)
+                {
+                    window.DataContext = null;
+                    window.Close();
+                }
+            }
+        }, TimeSpan.FromSeconds(15));
+    }
+
+    [Fact]
+    public void PolygonAnnotation_EnterEscapeAndVertexDeleteRouteThroughWindow()
+    {
+        WpfTestHost.Invoke(() =>
+        {
+            MainWindow? window = null;
+            try
+            {
+                MainWindowViewModel viewModel = CreateViewModel();
+                viewModel.WorkspaceMode = WorkspaceMode.Figure;
+                window = new MainWindow { DataContext = viewModel };
+                window.Show();
+                window.UpdateLayout();
+
+                viewModel.Figure.BeginPolygonAnnotationCommand.Execute(null);
+                viewModel.Figure.TryAddPolygonAnnotationDraftVertex(100, 100);
+                viewModel.Figure.TryAddPolygonAnnotationDraftVertex(300, 100);
+                viewModel.Figure.TryAddPolygonAnnotationDraftVertex(220, 280);
+                var enter = new KeyEventArgs(
+                    Keyboard.PrimaryDevice,
+                    PresentationSource.FromVisual(window),
+                    timestamp: 0,
+                    Key.Enter)
+                {
+                    RoutedEvent = Keyboard.PreviewKeyDownEvent,
+                };
+                window.RaiseEvent(enter);
+
+                Assert.True(enter.Handled);
+                FigureScientificObjectViewModel polygon = Assert.Single(viewModel.Figure.ScientificObjects);
+                Assert.False(viewModel.Figure.HasPendingPolygonAnnotation);
+
+                Assert.True(viewModel.Figure.TryInsertSelectedPolygonAnnotationVertex(200, 100));
+                Assert.Equal(4, polygon.CreateExportItem().Points.Count);
+                var delete = new KeyEventArgs(
+                    Keyboard.PrimaryDevice,
+                    PresentationSource.FromVisual(window),
+                    timestamp: 0,
+                    Key.Delete)
+                {
+                    RoutedEvent = Keyboard.PreviewKeyDownEvent,
+                };
+                window.RaiseEvent(delete);
+
+                Assert.True(delete.Handled);
+                Assert.Equal(3, polygon.CreateExportItem().Points.Count);
+
+                viewModel.Figure.BeginPolygonAnnotationCommand.Execute(null);
+                viewModel.Figure.TryAddPolygonAnnotationDraftVertex(400, 400);
+                var escape = new KeyEventArgs(
+                    Keyboard.PrimaryDevice,
+                    PresentationSource.FromVisual(window),
+                    timestamp: 0,
+                    Key.Escape)
+                {
+                    RoutedEvent = Keyboard.PreviewKeyDownEvent,
+                };
+                window.RaiseEvent(escape);
+
+                Assert.True(escape.Handled);
+                Assert.False(viewModel.Figure.HasPendingPolygonAnnotation);
+                Assert.Single(viewModel.Figure.ScientificObjects);
+            }
+            finally
+            {
+                if (window is not null)
+                {
+                    window.DataContext = null;
+                    window.Close();
+                }
+            }
+        }, TimeSpan.FromSeconds(15));
     }
 
     [Fact]
@@ -943,6 +1192,42 @@ CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "registration"
     }
 
     [Fact]
+    public void AssistedRegions_ReportsAnalysisTooComplexWithoutPersistingPartialResults()
+    {
+        MainWindowViewModel viewModel = CreateViewModel(new TooComplexAssistedRegionAnalyzer());
+        SourceAssetItemViewModel source = CreateMeasurementSourceItem();
+        viewModel.Sources.Add(source);
+        viewModel.SelectedSource = source;
+
+        viewModel.AnalyzeAssistedRegionsCommand.Execute(null);
+
+        Assert.True(SpinWait.SpinUntil(() => !viewModel.IsBusy, TimeSpan.FromSeconds(2)));
+        Assert.Empty(source.AnalysisResults);
+        Assert.Empty(viewModel.AssistedRegions);
+        Assert.Contains(AnalysisTooComplexException.ErrorCode, viewModel.LastError, StringComparison.Ordinal);
+        Assert.Contains("MinimumArea", viewModel.LastError, StringComparison.Ordinal);
+        Assert.Contains("失败", viewModel.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParticleBatch_MarksTooComplexItemFailedWithoutPersistingPartialResults()
+    {
+        MainWindowViewModel viewModel = CreateViewModel(new TooComplexAssistedRegionAnalyzer());
+        SourceAssetItemViewModel source = CreateMeasurementSourceItem();
+        viewModel.Sources.Add(source);
+        viewModel.SelectedSource = source;
+        viewModel.AddCurrentCropToBatchQueueCommand.Execute(null);
+
+        viewModel.AnalyzeParticleBatchCommand.Execute(null);
+
+        Assert.True(SpinWait.SpinUntil(() => !viewModel.IsBusy, TimeSpan.FromSeconds(2)));
+        Assert.Empty(source.AnalysisResults);
+        Assert.Contains("失败", Assert.Single(viewModel.BatchCropQueue).StatusText, StringComparison.Ordinal);
+        Assert.Contains(AnalysisTooComplexException.ErrorCode, viewModel.LastError, StringComparison.Ordinal);
+        Assert.Contains("失败项", viewModel.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExplainableLayout_SelectsCapacityTemplateAndPlacesSources()
     {
         MainWindowViewModel viewModel = CreateViewModel();
@@ -957,9 +1242,79 @@ CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "registration"
         Assert.Contains("源图数量 2", viewModel.SmartAssistStatusText, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task DataAssetCollection_MarksDirtyAndSafeSaveIncludesTypedAsset()
+    {
+        using var workspace = new TestWorkspace();
+        var store = new CapturingProjectStore();
+        MainWindowViewModel viewModel = CreateViewModel(projectStore: store);
+        DataColumn x = new(Guid.NewGuid(), "Time", TabularDataType.Numeric, "s", DataColumnRole.X);
+        DataColumn y = new(Guid.NewGuid(), "Value", TabularDataType.Numeric, "a.u.", DataColumnRole.Y);
+        var asset = new TabularDataAsset(
+            Guid.NewGuid(),
+            "Curve",
+            null,
+            null,
+            1,
+            [x, y],
+            [
+                new TabularDataRow([
+                    TabularDataValue.FromNumber("0", 0),
+                    TabularDataValue.FromNumber("2.5", 2.5),
+                ]),
+            ],
+            new TabularImportMetadata
+            {
+                Format = TabularDataFormat.Csv,
+                ImportedAt = DateTimeOffset.UtcNow,
+                EncodingName = "UTF-8",
+                Delimiter = ',',
+                DataRowCount = 1,
+                InferenceRowCount = 1,
+                OriginalHeaders = ["Time (s)", "Value (a.u.)"],
+            }).EnsureValid();
+
+        Assert.False(viewModel.IsDirty);
+
+        viewModel.DataAssets.Add(asset);
+
+        Assert.True(viewModel.IsDirty);
+        await viewModel.SaveProjectToPathAsync(Path.Combine(workspace.Root, "data-project.scicanvas"));
+
+        Assert.False(viewModel.IsDirty);
+        SciCanvasProjectDocument saved = Assert.IsType<SciCanvasProjectDocument>(store.SavedDocument);
+        TabularDataAsset restored = TabularDataSnapshotMapper.ToModel(Assert.Single(saved.DataAssets));
+        Assert.Equal(asset.Id, restored.Id);
+        Assert.Equal(2.5, restored.Rows[0].Values[1].NumericValue);
+        Assert.Equal(DataColumnRole.Y, restored.Columns[1].Role);
+
+        PlotObject plot = Assert.IsType<PlotObject>(viewModel.PlotWorkspace.SavePlot());
+
+        Assert.True(viewModel.IsDirty);
+        Assert.Equal(asset.Id, plot.Data.DataAssetId);
+        Assert.Equal(x.Id, plot.Data.XColumnId);
+        Assert.Equal(y.Id, plot.Data.YColumnId);
+        await viewModel.SaveProjectToPathAsync(Path.Combine(workspace.Root, "plot-project.scicanvas"));
+
+        Assert.False(viewModel.IsDirty);
+        saved = Assert.IsType<SciCanvasProjectDocument>(store.SavedDocument);
+        PlotObject restoredPlot = PlotSnapshotMapper.ToModel(
+            Assert.Single(saved.Plots),
+            restored);
+        Assert.Equal(plot.Id, restoredPlot.Id);
+        Assert.Equal(PlotKind.Line, restoredPlot.PlotType);
+
+        viewModel.ScientificDataWorkspace.SelectedAsset = asset;
+        viewModel.ScientificDataWorkspace.RemoveSelectedAssetCommand.Execute(null);
+
+        Assert.Contains(asset, viewModel.DataAssets);
+        Assert.Contains("先移除引用它的 Plot", viewModel.ScientificDataWorkspace.StatusText);
+    }
+
     private static MainWindowViewModel CreateViewModel(
         IAssistedRegionAnalyzer? assistedRegionAnalyzer = null,
-        IUnsavedChangesPrompt? unsavedChangesPrompt = null) => new(
+        IUnsavedChangesPrompt? unsavedChangesPrompt = null,
+        IProjectStore? projectStore = null) => new(
         new EmptyImageFilePicker(),
         new NoOpSourceAssetReader(),
         new NoOpPreviewLoader(),
@@ -969,13 +1324,13 @@ CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "registration"
         new NoOpFigureExporter(),
         new BuiltInTemplateCatalog().LoadAll(),
         new EmptyProjectFilePicker(),
-        new NoOpProjectStore(),
+        projectStore ?? new NoOpProjectStore(),
         assistedRegionAnalyzer: assistedRegionAnalyzer,
         unsavedChangesPrompt: unsavedChangesPrompt);
 
     private static void AssertSidebarPageVisibility(
-        ScrollViewer inspector,
-        ScrollViewer layers,
+        FrameworkElement inspector,
+        FrameworkElement layers,
         ChannelsInspector channels,
         Visibility expectedInspector,
         Visibility expectedLayers,
@@ -1150,6 +1505,23 @@ CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "registration"
             });
     }
 
+    private sealed class TooComplexAssistedRegionAnalyzer : IAssistedRegionAnalyzer
+    {
+        public Task<AssistedRegionAnalysisResult> AnalyzeAsync(
+            SourceAsset source,
+            AssistedRegionAnalysisOptions options,
+            int frameIndex = 0,
+            CancellationToken cancellationToken = default,
+            long sourceRevision = 1,
+            ImageAnalysisChannel channel = ImageAnalysisChannel.Luminance) =>
+            Task.FromException<AssistedRegionAnalysisResult>(
+                new AnalysisTooComplexException(
+                    AnalysisResourceLimitKind.MaxComponentsSafety,
+                    101,
+                    100,
+                    "符合筛选条件的连通域数量过多"));
+    }
+
     private sealed class EmptyExportFilePicker : IExportFilePicker
     {
         public string? PickNewExportPath(string suggestedFileName) => null;
@@ -1230,5 +1602,23 @@ CaptureSidebarIfRequested(window, rightSidebar, captureDirectory, "registration"
             string path,
             SciCanvasProjectDocument document,
             CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class CapturingProjectStore : IProjectStore
+    {
+        public SciCanvasProjectDocument? SavedDocument { get; private set; }
+
+        public Task<SciCanvasProjectDocument> LoadAsync(
+            string path,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task SaveAsync(
+            string path,
+            SciCanvasProjectDocument document,
+            CancellationToken cancellationToken = default)
+        {
+            SavedDocument = document;
+            return Task.CompletedTask;
+        }
     }
 }

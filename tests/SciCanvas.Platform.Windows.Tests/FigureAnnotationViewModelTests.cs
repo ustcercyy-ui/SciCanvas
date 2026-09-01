@@ -1,3 +1,4 @@
+using System.Windows;
 using System.Windows.Media;
 using SciCanvas.Presentation;
 
@@ -171,5 +172,42 @@ public sealed class FigureAnnotationViewModelTests
         Assert.True(exported.IsBold);
         annotation.FontSizePt = 3;
         Assert.False(annotation.IsValid);
+    }
+
+    [Fact]
+    public void DirectionAngle_RotatesLineToExactHorizontalVerticalOrArbitraryAngle()
+    {
+        var annotation = new FigureAnnotationViewModel(
+            FigureAnnotationKind.Line,
+            500,
+            400,
+            300,
+            0)
+        {
+            X = 100,
+            Y = 100,
+            EndX = 300,
+            EndY = 100,
+        };
+        double originalLength = Math.Sqrt(
+            Math.Pow(annotation.EndX - annotation.X, 2) +
+            Math.Pow(annotation.EndY - annotation.Y, 2));
+
+        annotation.DirectionAngleDegrees = 90;
+
+        Assert.Equal(90, annotation.DirectionAngleDegrees, 8);
+        Assert.Equal(annotation.X, annotation.EndX, 8);
+        Assert.Equal(
+            originalLength,
+            Math.Sqrt(
+                Math.Pow(annotation.EndX - annotation.X, 2) +
+                Math.Pow(annotation.EndY - annotation.Y, 2)),
+            8);
+
+        annotation.DirectionAngleDegrees = -35;
+
+        Assert.Equal(-35, annotation.DirectionAngleDegrees, 8);
+        Assert.True(annotation.IsValid);
+        Assert.Equal(Visibility.Visible, annotation.DirectionEditorVisibility);
     }
 }

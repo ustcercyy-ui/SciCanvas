@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows.Media;
@@ -490,12 +491,171 @@ public sealed class WpfFigureExporterTests
                 new FigureAnnotationExportItem(
                     "text", 10, 10, 0, 0, "fallback", "#FF000000", "#FF000000", 0,
                     "#FF123456", "MissingFont123", 11, 1, false, true, 0),
-            ]);
+            ],
+            pdfFontStrategy: PdfFontStrategy.PreferEmbeddedWithOutlineFallback);
 
-        await new WpfFigureExporter().ExportAsync(document, targetPath);
+        var exporter = new WpfFigureExporter();
+        await exporter.ExportAsync(document, targetPath);
 
         Assert.True(File.Exists(targetPath));
-        Assert.Equal("%PDF-1.7", Encoding.ASCII.GetString(await File.ReadAllBytesAsync(targetPath), 0, 8));
+        string body = Encoding.ASCII.GetString(await File.ReadAllBytesAsync(targetPath));
+        Assert.StartsWith("%PDF-1.7", body, StringComparison.Ordinal);
+        Assert.Contains("% SciCanvas font warning:", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("/FontFile2", body, StringComparison.Ordinal);
+        PdfFontExportOutcome outcome = Assert.Single(exporter.LastPdfFontOutcomes);
+        Assert.Equal("MissingFont123", outcome.EffectiveFont);
+        Assert.False(outcome.Embedded);
+        Assert.True(outcome.Outlined);
+        Assert.NotNull(outcome.FallbackReason);
+        FigureProvenanceDocument provenance = FigureProvenanceWriter.Create(
+            document,
+            targetPath,
+            "test",
+            [],
+            new FigurePreflightResult([]),
+            pdfFontOutcomes: exporter.LastPdfFontOutcomes);
+        FigureProvenancePdfFont provenanceFont = Assert.Single(
+            provenance.PdfFonts!,
+            font => font.EffectiveFont == "MissingFont123");
+        Assert.False(provenanceFont.Embedded);
+        Assert.True(provenanceFont.Outlined);
+        Assert.NotNull(provenanceFont.FallbackReason);
+    }
+
+    [Fact]
+    public async Task ExportAsync_StrictPdfEmbedsTrueTypeSubsetWithCidMapAndToUnicode()
+    {
+        using var workspace = new TestWorkspace();
+        string targetPath = Path.Combine(workspace.Root, "embedded-font.pdf");
+        FigureExportDocument document = new(
+            600,
+            100,
+            300,
+            [],
+            [
+                new FigureAnnotationExportItem(
+                    "text", 12, 16, 0, 0, "Copy Ω 123", "#FF000000", "#FF000000", 0,
+                    "#FF123456", "Arial", 11, 1, false, true, 0),
+            ],
+            pdfFontStrategy: PdfFontStrategy.EmbedSubsetWhenPermitted);
+
+        var exporter = new WpfFigureExporter();
+        await exporter.ExportAsync(document, targetPath);
+
+        string body = Encoding.ASCII.GetString(await File.ReadAllBytesAsync(targetPath));
+        Assert.StartsWith("%PDF-1.7", body, StringComparison.Ordinal);
+        Assert.Contains("/Subtype /CIDFontType2", body, StringComparison.Ordinal);
+        Assert.Contains("/FontFile2", body, StringComparison.Ordinal);
+        Assert.Contains("/CIDToGIDMap", body, StringComparison.Ordinal);
+        Assert.Contains("/Encoding /Identity-H", body, StringComparison.Ordinal);
+        Assert.Contains("/ToUnicode", body, StringComparison.Ordinal);
+        Assert.Contains("beginbfchar", body, StringComparison.Ordinal);
+        Assert.Contains("BT", body, StringComparison.Ordinal);
+        PdfFontExportOutcome outcome = Assert.Single(exporter.LastPdfFontOutcomes);
+        Assert.Equal("Arial", outcome.EffectiveFont);
+        Assert.True(outcome.Embedded);
+        Assert.False(outcome.Outlined);
+        FigureProvenanceDocument provenance = FigureProvenanceWriter.Create(
+            document,
+            targetPath,
+            "test",
+            [],
+            new FigurePreflightResult([]),
+            pdfFontOutcomes: exporter.LastPdfFontOutcomes);
+        FigureProvenancePdfFont provenanceFont = Assert.Single(provenance.PdfFonts!);
+        Assert.True(provenanceFont.Embedded);
+        Assert.False(provenanceFont.Outlined);
+        Assert.Null(provenanceFont.FallbackReason);
+        string? fontInspection = await TryInspectPdfFontsAsync(targetPath);
+        if (fontInspection is not null)
+        {
+            Assert.Contains("CID TrueType", fontInspection, StringComparison.Ordinal);
+            Assert.Contains("Identity-H", fontInspection, StringComparison.Ordinal);
+        }
+
+        string? extracted = await TryExtractPdfTextAsync(targetPath, workspace.Root, "embedded-font");
+        if (extracted is not null)
+        {
+            Assert.Contains("Copy Ω 123", extracted, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task ExportAsync_StrictPdfRejectsUnavailableFontWithoutLeavingFile()
+    {
+        using var workspace = new TestWorkspace();
+        string targetPath = Path.Combine(workspace.Root, "strict-missing-font.pdf");
+        FigureExportDocument document = new(
+            160,
+            80,
+            300,
+            [],
+            [
+                new FigureAnnotationExportItem(
+                    "text", 10, 10, 0, 0, "strict", "#FF000000", "#FF000000", 0,
+                    "#FF123456", "MissingFont123", 11, 1, false, true, 0),
+            ],
+            pdfFontStrategy: PdfFontStrategy.EmbedSubsetWhenPermitted);
+
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new WpfFigureExporter().ExportAsync(document, targetPath));
+
+        Assert.Contains("required but unavailable", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(targetPath));
+    }
+
+    [Fact]
+    public async Task ExportAsync_PreferEmbeddedOutlinesTextWhenTrueTypeFaceLacksDirectGlyph()
+    {
+        using var workspace = new TestWorkspace();
+        string targetPath = Path.Combine(workspace.Root, "missing-glyph-fallback.pdf");
+        FigureExportDocument document = new(
+            200,
+            80,
+            300,
+            [],
+            [
+                new FigureAnnotationExportItem(
+                    "text", 10, 10, 0, 0, "Arial \U0010FFFF", "#FF000000", "#FF000000", 0,
+                    "#FF123456", "Arial", 11, 1, false, true, 0),
+            ],
+            pdfFontStrategy: PdfFontStrategy.PreferEmbeddedWithOutlineFallback);
+        var exporter = new WpfFigureExporter();
+
+        await exporter.ExportAsync(document, targetPath);
+
+        string body = Encoding.ASCII.GetString(await File.ReadAllBytesAsync(targetPath));
+        Assert.Contains("% SciCanvas font warning:", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("/FontFile2", body, StringComparison.Ordinal);
+        PdfFontExportOutcome outcome = Assert.Single(exporter.LastPdfFontOutcomes);
+        Assert.Equal("Arial", outcome.EffectiveFont);
+        Assert.False(outcome.Embedded);
+        Assert.True(outcome.Outlined);
+        Assert.Contains("U+10FFFF", outcome.FallbackReason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExportAsync_StrictPdfRejectsTextWhenTrueTypeFaceLacksDirectGlyph()
+    {
+        using var workspace = new TestWorkspace();
+        string targetPath = Path.Combine(workspace.Root, "strict-missing-glyph.pdf");
+        FigureExportDocument document = new(
+            200,
+            80,
+            300,
+            [],
+            [
+                new FigureAnnotationExportItem(
+                    "text", 10, 10, 0, 0, "Arial \U0010FFFF", "#FF000000", "#FF000000", 0,
+                    "#FF123456", "Arial", 11, 1, false, true, 0),
+            ],
+            pdfFontStrategy: PdfFontStrategy.EmbedSubsetWhenPermitted);
+
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new WpfFigureExporter().ExportAsync(document, targetPath));
+
+        Assert.Contains("U+10FFFF", error.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(targetPath));
     }
 
     [Fact]
@@ -605,6 +765,7 @@ public sealed class WpfFigureExporterTests
                 9,
                 true,
                 true),
+            LabelOverride = "Measure-80",
         };
         var panel = new FigurePanelExportItem(
             source,
@@ -612,18 +773,19 @@ public sealed class WpfFigureExporterTests
             new PixelRect64(0, 0, 200, 200),
             "a",
             true,
+            ScaleBar: new FigureScaleBarExportSpec(1, 20, "px", true),
             PanelId: panelId);
         var document = new FigureExportDocument(
             200,
             200,
             96,
             [panel],
-            measurementOverlays: [new FigureMeasurementOverlayExportItem(scientificObject)]);
+            measurementOverlays: [new FigureMeasurementOverlayExportItem(scientificObject)],
+            pdfFontStrategy: PdfFontStrategy.EmbedSubsetWhenPermitted);
         var exporter = new WpfFigureExporter();
 
         await exporter.ExportAsync(document, pngPath);
         await exporter.ExportAsync(document, svgPath);
-        await exporter.ExportAsync(document, pdfPath);
         await exporter.ExportAsync(
             new FigureExportDocument(
                 200,
@@ -633,6 +795,7 @@ public sealed class WpfFigureExporterTests
                 bitDepth: 16,
                 measurementOverlays: [new FigureMeasurementOverlayExportItem(scientificObject)]),
             tiffPath);
+        await exporter.ExportAsync(document, pdfPath);
 
         BitmapSource png = new FormatConvertedBitmap(
             LoadFirstFrame(pngPath),
@@ -644,9 +807,100 @@ public sealed class WpfFigureExporterTests
         Assert.Contains("data-scientific-object=\"measurement-overlay\"", svg, StringComparison.Ordinal);
         Assert.Contains(measurementId.ToString("D"), svg, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("font-family=\"Times New Roman\"", svg, StringComparison.Ordinal);
-        Assert.Equal("%PDF-1.7", Encoding.ASCII.GetString(await File.ReadAllBytesAsync(pdfPath), 0, 8));
+        string pdfBody = Encoding.ASCII.GetString(await File.ReadAllBytesAsync(pdfPath));
+        Assert.StartsWith("%PDF-1.7", pdfBody, StringComparison.Ordinal);
+        Assert.Contains("/FontFile2", pdfBody, StringComparison.Ordinal);
+        Assert.Contains(exporter.LastPdfFontOutcomes, outcome =>
+            outcome.EffectiveFont == "Times New Roman" &&
+            outcome.IsBold &&
+            outcome.Embedded &&
+            !outcome.Outlined);
         Assert.True(File.Exists(tiffPath));
     }
+    [Fact]
+    public async Task ExportAsync_RendersCanonicalRoiProjectionAcrossPngSvgAndPdf()
+    {
+        using var workspace = new TestWorkspace();
+        string sourcePath = Path.Combine(workspace.Root, "roi-source.png");
+        string pngPath = Path.Combine(workspace.Root, "roi-projection.png");
+        string svgPath = Path.Combine(workspace.Root, "roi-projection.svg");
+        string pdfPath = Path.Combine(workspace.Root, "roi-projection.pdf");
+        CreateSolidPng(sourcePath, 100, 100, Colors.Black);
+        SourceAsset source = CreateAsset(sourcePath, 100, 100);
+        Guid panelId = Guid.NewGuid();
+        Guid roiId = Guid.NewGuid();
+        var panel = new FigurePanelExportItem(
+            source,
+            new PixelRect64(0, 0, 100, 100),
+            new PixelRect64(0, 0, 200, 200),
+            "a",
+            true,
+            PanelId: panelId,
+            SourceRevision: 3);
+        var roi = new RoiObject
+        {
+            Id = roiId,
+            AssetId = source.Id,
+            SourceRevision = 3,
+            GeometryKind = RoiGeometryKind.Polygon,
+            SourceGeometry =
+            [
+                new MeasurementPoint(20, 20),
+                new MeasurementPoint(40, 20),
+                new MeasurementPoint(30, 40),
+            ],
+            Style = RoiStyle.Default with { Label = "cell-7" },
+        }.EnsureValid();
+        var projection = new RoiFigureProjectionObject
+        {
+            Id = Guid.NewGuid(),
+            RoiId = roiId,
+            PanelId = panelId,
+            AssetId = source.Id,
+            SourceRevision = 3,
+            StyleOverride = new StyleOverride(
+                Annotation: new TextStyle("Times New Roman", 9, true, "#FFFFFF00"),
+                Shapes: new ShapeStyle("#FFFF0000", "#FFFF0000", 25, 2)),
+        };
+        var document = new FigureExportDocument(
+            200,
+            200,
+            96,
+            [panel],
+            roiProjections: [new FigureRoiProjectionExportItem(projection, roi)],
+            pdfFontStrategy: PdfFontStrategy.EmbedSubsetWhenPermitted);
+        var exporter = new WpfFigureExporter();
+
+        await exporter.ExportAsync(document, pngPath);
+        await exporter.ExportAsync(document, svgPath);
+        await exporter.ExportAsync(document, pdfPath);
+
+        BitmapSource png = new FormatConvertedBitmap(
+            LoadFirstFrame(pngPath),
+            PixelFormats.Bgra32,
+            destinationPalette: null,
+            alphaThreshold: 0);
+        AssertPixelIsPredominantly(png, 60, 40, Colors.Red);
+        string svg = await File.ReadAllTextAsync(svgPath);
+        Assert.Contains("data-scientific-object=\"roi-projection\"", svg, StringComparison.Ordinal);
+        Assert.Contains($"data-roi-id=\"{roiId:D}\"", svg, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"data-panel-id=\"{panelId:D}\"", svg, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fill=\"#FF0000\" fill-opacity=\"0.25\"", svg, StringComparison.Ordinal);
+        Assert.Contains("font-family=\"Times New Roman\"", svg, StringComparison.Ordinal);
+        byte[] pdfBytes = await File.ReadAllBytesAsync(pdfPath);
+        Assert.Equal("%PDF-1.7", Encoding.ASCII.GetString(pdfBytes, 0, 8));
+        Assert.Contains("/FontFile2", Encoding.ASCII.GetString(pdfBytes), StringComparison.Ordinal);
+        Assert.Contains(exporter.LastPdfFontOutcomes, outcome =>
+            outcome.EffectiveFont == "Times New Roman" &&
+            outcome.IsBold &&
+            outcome.Embedded &&
+            !outcome.Outlined);
+        Assert.Contains(
+            "/Type /ExtGState /ca 0.25 /CA 1",
+            Encoding.ASCII.GetString(pdfBytes),
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task ExportAsync_RendersCanonicalScientificObjectsAcrossRasterAndVectorFormats()
     {
@@ -664,20 +918,28 @@ public sealed class WpfFigureExporterTests
                 "Membrane", "#FF00B0FF", "#FF00B0FF", 16, "#FFFFFFFF", "Arial", 7, 1.25, true, true, 0),
             new(
                 Guid.NewGuid(),
-                FigureScientificObjectKind.Roi,
-                [new FigureScientificPoint(100, 20), new FigureScientificPoint(150, 20), new FigureScientificPoint(150, 70), new FigureScientificPoint(100, 70)],
-                "ROI", "#FF00E5FF", "#FF00E5FF", 12, "#FFFFFFFF", "Arial", 7, 1.25, true, true, 1),
-            new(
-                Guid.NewGuid(),
                 FigureScientificObjectKind.DirectionMarker,
                 [new FigureScientificPoint(20, 120), new FigureScientificPoint(120, 120)],
                 "N", "#FFFFFF00", "#FFFFFF00", 0, "#FFFFFFFF", "Arial", 7, 1.25, true, true, 2),
             new(
                 Guid.NewGuid(),
                 FigureScientificObjectKind.Colorbar,
-                [new FigureScientificPoint(185, 20), new FigureScientificPoint(215, 120)],
+                [new FigureScientificPoint(110, 20), new FigureScientificPoint(215, 50)],
                 "Intensity", "#FFFFFFFF", "#FFFFFFFF", 0, "#FFFFFFFF", "Arial", 7, 1.25, false, true, 3,
-                Minimum: 0, Maximum: 4095, Unit: "a.u.", Colormap: "magma"),
+                Minimum: 0, Maximum: 4095, Unit: "a.u.", Colormap: "magma",
+                Colorbar: new FigureColorbarExportSpec(
+                    0,
+                    4095,
+                    "a.u.",
+                    "magma",
+                    null,
+                    ColorbarBindingState.Detached,
+                    FigureObjectOrientation.Horizontal,
+                    [
+                        new ColorbarTick(0, "LOW_MARK"),
+                        new ColorbarTick(2048, "MID_MARK"),
+                        new ColorbarTick(4095, "HIGH_MARK"),
+                    ])),
             new(
                 Guid.NewGuid(),
                 FigureScientificObjectKind.ChannelLegend,
@@ -687,17 +949,37 @@ public sealed class WpfFigureExporterTests
                 [
                     new FigureChannelLegendEntry("DAPI", "#FF4FC3F7"),
                     new FigureChannelLegendEntry("GFP", "#FF66BB6A"),
-                ]),
+                ],
+                ChannelLegend: new FigureChannelLegendExportSpec(
+                    [
+                        new FigureChannelLegendEntry("DAPI", "#FF4FC3F7"),
+                        new FigureChannelLegendEntry("GFP", "#FF66BB6A"),
+                    ],
+                    "Arial",
+                    7,
+                    false,
+                    "#FF102030",
+                    "#CC123456",
+                    65,
+                    "#FFABCDEF",
+                    1.5,
+                    9)),
         ];
-        var document = new FigureExportDocument(240, 160, 96, [], scientificObjects: objects);
+        var document = new FigureExportDocument(
+            360,
+            160,
+            96,
+            [],
+            scientificObjects: objects,
+            pdfFontStrategy: PdfFontStrategy.EmbedSubsetWhenPermitted);
         var exporter = new WpfFigureExporter();
 
         await exporter.ExportAsync(document, pngPath);
         await exporter.ExportAsync(document, svgPath);
-        await exporter.ExportAsync(document, pdfPath);
         await exporter.ExportAsync(
             new FigureExportDocument(240, 160, 96, [], bitDepth: 16, scientificObjects: objects),
             tiffPath);
+        await exporter.ExportAsync(document, pdfPath);
 
         BitmapSource png = new FormatConvertedBitmap(
             LoadFirstFrame(pngPath),
@@ -710,15 +992,35 @@ public sealed class WpfFigureExporterTests
             $"方向标记像素不呈现黄色主导：B={directionPixel[0]}, G={directionPixel[1]}, R={directionPixel[2]}。");
         string svg = await File.ReadAllTextAsync(svgPath);
         Assert.Contains("data-scientific-object=\"PolygonAnnotation\"", svg, StringComparison.Ordinal);
-        Assert.Contains("data-scientific-object=\"Roi\"", svg, StringComparison.Ordinal);
         Assert.Contains("data-scientific-object=\"DirectionMarker\"", svg, StringComparison.Ordinal);
         Assert.Contains("data-scientific-object=\"Colorbar\"", svg, StringComparison.Ordinal);
         Assert.Contains("data-scientific-object=\"ChannelLegend\"", svg, StringComparison.Ordinal);
         Assert.Contains("scientific-colorbar-", svg, StringComparison.Ordinal);
+        Assert.Contains("x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\"", svg, StringComparison.Ordinal);
+        Assert.Contains(">LOW_MARK</text>", svg, StringComparison.Ordinal);
+        Assert.Contains(">MID_MARK</text>", svg, StringComparison.Ordinal);
+        Assert.Contains(">HIGH_MARK</text>", svg, StringComparison.Ordinal);
         Assert.Contains(">DAPI</text>", svg, StringComparison.Ordinal);
+        Assert.Contains("fill=\"#123456\" fill-opacity=\"0.52\"", svg, StringComparison.Ordinal);
+        Assert.Contains("stroke=\"#ABCDEF\"", svg, StringComparison.Ordinal);
+        Assert.Contains("fill=\"#102030\"", svg, StringComparison.Ordinal);
         byte[] pdf = await File.ReadAllBytesAsync(pdfPath);
         Assert.Equal("%PDF-1.7", Encoding.ASCII.GetString(pdf, 0, 8));
-        Assert.Contains("xref", Encoding.ASCII.GetString(pdf), StringComparison.Ordinal);
+        string pdfBody = Encoding.ASCII.GetString(pdf);
+        Assert.Contains("xref", pdfBody, StringComparison.Ordinal);
+        Assert.Contains("/FontFile2", pdfBody, StringComparison.Ordinal);
+        Assert.Contains(exporter.LastPdfFontOutcomes, outcome =>
+            outcome.EffectiveFont == "Arial" && outcome.Embedded && !outcome.Outlined);
+        string? extracted = await TryExtractPdfTextAsync(pdfPath, workspace.Root, "scientific-objects");
+        if (extracted is not null)
+        {
+            Assert.Contains("Membrane", extracted, StringComparison.Ordinal);
+            Assert.Contains("LOW_MARK", extracted, StringComparison.Ordinal);
+            Assert.Contains("MID_MARK", extracted, StringComparison.Ordinal);
+            Assert.Contains("HIGH_MARK", extracted, StringComparison.Ordinal);
+            Assert.Contains("DAPI", extracted, StringComparison.Ordinal);
+            Assert.Contains("GFP", extracted, StringComparison.Ordinal);
+        }
         BitmapSource tiff = new FormatConvertedBitmap(
             LoadFirstFrame(tiffPath),
             PixelFormats.Bgra32,
@@ -729,6 +1031,125 @@ public sealed class WpfFigureExporterTests
         Assert.True(tiffDirectionPixel[1] > 220 && tiffDirectionPixel[2] > 220 && tiffDirectionPixel[0] < 80,
             $"16-bit TIFF 方向标记没有保留黄色主导：B={tiffDirectionPixel[0]}, G={tiffDirectionPixel[1]}, R={tiffDirectionPixel[2]}。");
     }
+
+    [Fact]
+    public async Task ExportAsync_PreservesScientificFillOpacityAcrossPngSvgAndPdf()
+    {
+        using var workspace = new TestWorkspace();
+        string pngPath = Path.Combine(workspace.Root, "scientific-opacity.png");
+        string svgPath = Path.Combine(workspace.Root, "scientific-opacity.svg");
+        string pdfPath = Path.Combine(workspace.Root, "scientific-opacity.pdf");
+        FigureScientificObjectExportItem[] objects =
+        [
+            new(
+                Guid.NewGuid(),
+                FigureScientificObjectKind.PolygonAnnotation,
+                [new FigureScientificPoint(20, 20), new FigureScientificPoint(80, 20), new FigureScientificPoint(50, 80)],
+                string.Empty, "#FF000000", "#FFFF0000", 12, "#FF000000", "Arial", 7, 1.25, false, true, 0),
+            new(
+                Guid.NewGuid(),
+                FigureScientificObjectKind.ChannelLegend,
+                [new FigureScientificPoint(110, 20), new FigureScientificPoint(200, 80)],
+                "Channels", "#FF000000", "#FF0000FF", 20, "#FF000000", "Arial", 7, 1.25, false, true, 1,
+                ChannelLegendEntries: [new FigureChannelLegendEntry("DAPI", "#FF00FF00")]),
+        ];
+        var document = new FigureExportDocument(
+            220,
+            100,
+            96,
+            [],
+            backgroundColor: "#FFFFFFFF",
+            scientificObjects: objects);
+        var exporter = new WpfFigureExporter();
+
+        await exporter.ExportAsync(document, pngPath);
+        await exporter.ExportAsync(document, svgPath);
+        await exporter.ExportAsync(document, pdfPath);
+
+        BitmapSource png = new FormatConvertedBitmap(
+            LoadFirstFrame(pngPath),
+            PixelFormats.Bgra32,
+            destinationPalette: null,
+            alphaThreshold: 0);
+        byte[] polygonPixel = new byte[4];
+        png.CopyPixels(new System.Windows.Int32Rect(50, 40, 1, 1), polygonPixel, 4, 0);
+        Assert.InRange(polygonPixel[0], 222, 226);
+        Assert.InRange(polygonPixel[1], 222, 226);
+        Assert.InRange(polygonPixel[2], 253, 255);
+
+        byte[] legendPixel = new byte[4];
+        png.CopyPixels(new System.Windows.Int32Rect(190, 70, 1, 1), legendPixel, 4, 0);
+        Assert.InRange(legendPixel[0], 253, 255);
+        Assert.InRange(legendPixel[1], 202, 206);
+        Assert.InRange(legendPixel[2], 202, 206);
+
+        string svg = await File.ReadAllTextAsync(svgPath);
+        Assert.Contains("fill=\"#FF0000\" fill-opacity=\"0.12\"", svg, StringComparison.Ordinal);
+        Assert.Contains("fill=\"#0000FF\" fill-opacity=\"0.2\"", svg, StringComparison.Ordinal);
+
+        string pdf = Encoding.ASCII.GetString(await File.ReadAllBytesAsync(pdfPath));
+        Assert.Contains("/Type /ExtGState /ca 0.12 /CA 1", pdf, StringComparison.Ordinal);
+        Assert.Contains("/Type /ExtGState /ca 0.2 /CA 1", pdf, StringComparison.Ordinal);
+        Assert.Contains("q /GS1 gs", pdf, StringComparison.Ordinal);
+        Assert.Contains("q /GS2 gs", pdf, StringComparison.Ordinal);
+    }
+
+    private static async Task<string?> TryExtractPdfTextAsync(
+        string pdfPath,
+        string outputDirectory,
+        string baseName)
+    {
+        string? pdfToText = FindExecutable("pdftotext.exe");
+        if (pdfToText is null)
+        {
+            return null;
+        }
+
+        string extractedPath = Path.Combine(outputDirectory, baseName + ".txt");
+        using var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = pdfToText,
+            ArgumentList = { "-enc", "UTF-8", pdfPath, extractedPath },
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        });
+        Assert.NotNull(process);
+        await process.WaitForExitAsync();
+        Assert.Equal(0, process.ExitCode);
+        return await File.ReadAllTextAsync(extractedPath);
+    }
+
+    private static async Task<string?> TryInspectPdfFontsAsync(string pdfPath)
+    {
+        string? pdfFonts = FindExecutable("pdffonts.exe");
+        if (pdfFonts is null)
+        {
+            return null;
+        }
+
+        using var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = pdfFonts,
+            ArgumentList = { pdfPath },
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        });
+        Assert.NotNull(process);
+        string output = await process.StandardOutput.ReadToEndAsync();
+        string error = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        Assert.True(process.ExitCode == 0, error);
+        return output;
+    }
+
+    private static string? FindExecutable(string name) =>
+        (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(directory => Path.Combine(directory, name))
+            .FirstOrDefault(File.Exists);
+
     private static SourceAsset CreateAsset(string path, int width, int height) => new(
         Guid.NewGuid(),
         Path.GetFileName(path),

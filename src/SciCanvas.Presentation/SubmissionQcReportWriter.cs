@@ -2,12 +2,13 @@ using System.Net;
 using System.IO;
 using System.Text;
 using SciCanvas.Core.Export;
+using SciCanvas.Core.Workspace;
 
 namespace SciCanvas.Presentation;
 
 public static class SubmissionQcReportWriter
 {
-    public static void WriteNew(string targetPath, FigurePreflightResult result)
+    public static void WriteNew(string targetPath, UnifiedQcReport result)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(targetPath);
         ArgumentNullException.ThrowIfNull(result);
@@ -49,6 +50,9 @@ public static class SubmissionQcReportWriter
             """;
         WriteNewText(targetPath, html);
     }
+
+    public static void WriteNew(string targetPath, FigurePreflightResult result) =>
+        WriteNew(targetPath, UnifiedQcReport.FromFigurePreflight(result));
 
     private static string Encode(string value) => WebUtility.HtmlEncode(value);
 

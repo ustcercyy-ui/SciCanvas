@@ -1,4 +1,5 @@
 using SciCanvas.Core.Science;
+using SciCanvas.Core.Workspace;
 
 namespace SciCanvas.Presentation;
 
@@ -8,6 +9,18 @@ public sealed class AssistedRegionCandidateViewModel : ObservableObject
     private readonly AssistedRegionMode _mode;
     private bool _isAccepted = true;
     private bool _isCommitted;
+    private string _color;
+    private static readonly string[] CandidatePalette =
+    [
+        "#FFFFD166",
+        "#FF06D6A0",
+        "#FF118AB2",
+        "#FFEF476F",
+        "#FF8E7DBE",
+        "#FFFF8C42",
+        "#FF4CC9F0",
+        "#FF90BE6D",
+    ];
 
     public AssistedRegionCandidateViewModel(
         AssistedRegionCandidate candidate,
@@ -17,6 +30,7 @@ public sealed class AssistedRegionCandidateViewModel : ObservableObject
         Candidate = candidate ?? throw new ArgumentNullException(nameof(candidate));
         _calibration = calibration;
         _mode = mode;
+        _color = CandidatePalette[Math.Abs(candidate.Id - 1) % CandidatePalette.Length];
     }
 
     public event EventHandler? Changed;
@@ -67,13 +81,28 @@ public sealed class AssistedRegionCandidateViewModel : ObservableObject
         }
     }
 
-    public string OverlayStroke => IsCommitted
-        ? "#FF75D9AA"
-        : IsAccepted ? "#FFFFD166" : "#FFEF6B73";
+    public string Color
+    {
+        get => _color;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (SetProperty(ref _color, normalized))
+            {
+                OnPropertyChanged(nameof(OverlayStroke));
+                OnPropertyChanged(nameof(OverlayFill));
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
 
-    public string OverlayFill => IsCommitted
-        ? "#3375D9AA"
-        : IsAccepted ? "#22FFD166" : "#22EF6B73";
+    public string OverlayStroke => ScientificStyleColor.ValidateColor(Color)
+        ? Color
+        : "#FFFFD166";
+
+    public string OverlayFill => WithAlpha(
+        OverlayStroke,
+        (byte)(IsCommitted ? 0x38 : IsAccepted ? 0x24 : 0x10));
 
     public string DecisionText => IsCommitted ? "已写入测量" : IsAccepted ? "接受" : "拒绝";
 
@@ -129,4 +158,14 @@ public sealed class AssistedRegionCandidateViewModel : ObservableObject
         $"Fmax {Candidate.FeretMaximumPixels:0.##} px · Iraw {Candidate.RawMeanIntensity:0.###}";
 
     public void MarkCommitted() => IsCommitted = true;
+
+    private static string WithAlpha(string value, byte alpha)
+    {
+        if (!ScientificStyleColor.TryParseColor(value, out ScientificColorValue color))
+        {
+            return $"#{alpha:X2}FFD166";
+        }
+
+        return $"#{alpha:X2}{color.Red:X2}{color.Green:X2}{color.Blue:X2}";
+    }
 }

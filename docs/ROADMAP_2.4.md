@@ -128,7 +128,7 @@ v2.4 建立四条统一能力：
 - `v2.4.0-alpha.2`：256 passed，0 failed，0 skipped；新增右侧标签页互斥显示与滚动回归。
 - PR6 当前 main：266 passed，0 failed，0 skipped；包含 1089 个连通区域全部返回、跨源 Identity/Translation、修订失效、SourceAsset 不变、JSON 往返、Undo/Redo 与四页互斥 UI 回归。
 - PR7–PR8 当前 main：281 passed，0 failed，0 skipped；Core 111 + Windows 170，覆盖 Translation/Rigid/Affine、退化输入、像素/物理 RMS、mapping-revision-stale、Affine Polygon propagation、10×10 polygon mask、逐通道 raw plane、工程往返、Undo/Redo 与六页互斥 UI 回归。
-- PR9–PR12 最终本地 Release：306 passed，0 failed，0 skipped；Core 129 + Windows 177，新增 exact duplicate/QC、preset/font/PDF portability、真实 UInt16 composite、GUI/CLI 统一 provenance、schema 2.4 与完整 2.3 migration fixture 回归。
+- v2.4.1 Scientific Correctness Gate 当前本地 Release：325 passed，0 failed，0 skipped；Core 129 + Windows/WPF 196，在 PR9–PR12 基线上新增高精度 UInt16 adjustment/composite、GUI/CLI/Submission/Batch 统一 QC、Scientific Object PDF opacity 与跨格式语义回归。
 - Release solution build：0 warnings，0 errors。
 
 ## 当前明确限制

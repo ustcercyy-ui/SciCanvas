@@ -55,7 +55,9 @@ public partial class App : Application
             userTemplateCatalog,
             new WindowsBatchExportFolderPicker(),
             submissionPackageFolderPicker: new WindowsSubmissionPackageFolderPicker(),
-            unsavedChangesPrompt: new WindowsUnsavedChangesPrompt());
+            unsavedChangesPrompt: new WindowsUnsavedChangesPrompt(),
+            tabularDataImporter: new TabularDataImporter(),
+            tabularDataFilePicker: new WindowsTabularDataFilePicker());
 
         var window = new MainWindow
         {

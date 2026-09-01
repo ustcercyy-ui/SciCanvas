@@ -115,11 +115,13 @@ public sealed class LinkGroupPersistenceTests
         Guid referenceId = Guid.NewGuid();
         Guid targetId = Guid.NewGuid();
         Guid groupId = Guid.NewGuid();
-        SpatialMapping mapping = SpatialMapping.CreateIdentity(
+        SpatialMapping mapping = SpatialMapping.CreateTranslation(
             referenceId,
             targetId,
             1,
             1,
+            -4,
+            0,
             DateTimeOffset.Parse("2026-08-28T00:00:00Z"));
         var group = new LinkGroup(
             groupId,
@@ -147,7 +149,11 @@ public sealed class LinkGroupPersistenceTests
             SciCanvas.Core.Workspace.RoiPropagationService.PropagatePolygon(
                 reference,
                 group,
-                new Dictionary<Guid, long> { [referenceId] = 1, [targetId] = 1 }));
+                new Dictionary<Guid, SciCanvas.Core.Workspace.RoiSourceGeometryContext>
+                {
+                    [referenceId] = new(1, new SciCanvas.Core.Geometry.PixelSize64(20, 20)),
+                    [targetId] = new(1, new SciCanvas.Core.Geometry.PixelSize64(20, 20)),
+                }));
         SciCanvasProjectDocument document = CreateDocument(
             sourcePath,
             targetPath,
@@ -171,6 +177,14 @@ public sealed class LinkGroupPersistenceTests
         Assert.Equal(reference.Id, restoredTarget.Propagation!.ReferenceRoiId);
         Assert.Equal(groupId, restoredTarget.Propagation.LinkGroupId);
         Assert.Equal(mapping.Id, restoredTarget.Propagation.MappingId);
+        Assert.Equal(
+            target.Propagation!.TargetCoverageFraction,
+            restoredTarget.Propagation.TargetCoverageFraction,
+            12);
+        Assert.InRange(restoredTarget.Propagation.TargetCoverageFraction, double.Epsilon, 1 - double.Epsilon);
+        Assert.Equal(
+            SciCanvas.Core.Workspace.ScientificValidityState.ReviewRequired,
+            restoredTarget.Validity.State);
     }
     [Fact]
     public async Task JsonProjectStore_RejectsMappingThatReferencesFutureRevision()

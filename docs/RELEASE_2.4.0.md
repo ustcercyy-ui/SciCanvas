@@ -61,11 +61,11 @@ SciCanvas `v2.4.0-alpha` 完成了 2.4 路线图的 PR1–PR12。该版本围绕
 
 - `dotnet build .\SciCanvas.sln --configuration Release --no-restore -warnaserror`
   - 0 warnings，0 errors。
-- `dotnet test .\SciCanvas.sln --configuration Release --no-build --no-restore`
+- `dotnet test .\SciCanvas.sln --configuration Release --no-restore -p:TreatWarningsAsErrors=true`
   - Core：129 passed。
-  - Windows：177 passed。
-  - 合计：306 passed，0 failed，0 skipped。
-- 覆盖项目往返、2.3 完整迁移 fixture、UInt16 composite 像素、GUI/CLI 统一导出契约、registration、ROI propagation、无限候选颗粒分析、Integrity QC、字体替换、PDF policy 与 provenance。
+  - Windows/WPF：196 passed。
+  - 合计：325 passed，0 failed，0 skipped。
+- 覆盖项目往返、2.3 完整迁移 fixture、真实高精度 UInt16 adjustment/composite、GUI/CLI/Submission/Batch 统一 QC 与导出契约、registration、ROI propagation、无限候选颗粒分析、Scientific Object PDF opacity、字体替换、PDF policy 与 provenance。
 
 上述结果为本地 Windows Release 验证；远端 GitHub Actions 状态以对应 release/tag 页面为准。
 

@@ -1,4 +1,8 @@
 using SciCanvas.Core.Export;
+using SciCanvas.Core.Geometry;
+using SciCanvas.Core.Images;
+using SciCanvas.Core.Science;
+using SciCanvas.Core.Sources;
 using SciCanvas.Core.Workspace;
 using SciCanvas.Persistence;
 using SciCanvas.Presentation;
@@ -86,6 +90,79 @@ public sealed class PublishingPortabilityIntegrationTests
             Assert.Contains(resolved.FontResolutions, item =>
                 item.RequestedFamily == "MissingFont123" &&
                 item.ResolutionKind == FontResolutionKind.ExplicitSubstitution);
+        });
+    }
+
+    [Fact]
+    public void PublishingWorkspace_MissingFontsUsesCollectorForPanelLocalAndMeasurementOverlay()
+    {
+        WpfTestHost.Invoke(() =>
+        {
+            Guid sourceId = Guid.NewGuid();
+            Guid panelId = Guid.NewGuid();
+            Guid overlayId = Guid.NewGuid();
+            Guid measurementId = Guid.NewGuid();
+            var source = new SourceAsset(
+                sourceId,
+                "source.tif",
+                "C:\\source.tif",
+                new SourceFingerprint(10, DateTimeOffset.UnixEpoch, new string('A', 64), null),
+                new ImageMetadata(new PixelSize64(100, 100), 1, 8, "Gray8"),
+                SourceLinkState.Verified);
+            var panel = new FigurePanelExportItem(
+                source,
+                new PixelRect64(0, 0, 100, 100),
+                new PixelRect64(0, 0, 100, 100),
+                "a",
+                true,
+                new FigureScaleBarExportSpec(1, 20, "px", true),
+                StyleOverride: new StyleOverride(
+                    PanelLabel: new TextStyle("MissingPanelLocal_FontUsageCollector", 8, true, "#FF000000"),
+                    ScaleBarText: new TextStyle("MissingScaleLocal_FontUsageCollector", 7, false, "#FFFFFFFF")),
+                PanelId: panelId);
+            var overlay = new FigureMeasurementOverlayExportItem(new MeasurementOverlayObject
+            {
+                Id = overlayId,
+                AssetId = sourceId,
+                PanelId = panelId,
+                SourceRevision = 1,
+                MeasurementId = measurementId,
+                SourceGeometry = new ScientificMeasurement(
+                    measurementId,
+                    sourceId,
+                    ScientificMeasurementKind.Length,
+                    new MeasurementPoint(10, 10),
+                    new MeasurementPoint(40, 40),
+                    SourceRevision: 1),
+                Style = new FigureMeasurementOverlayStyle(
+                    "#FFFFFFFF", 1, "solid", "#00000000", 0,
+                    "#FFFFFFFF", "#FF000000", 6, true,
+                    "#FFFFFFFF", "MissingOverlay_FontUsageCollector", 7, false, true),
+            });
+            var document = new FigureExportDocument(
+                100,
+                100,
+                96,
+                [panel],
+                measurementOverlays: [overlay]);
+            var figure = new FigureCanvasViewModel(new BuiltInTemplateCatalog().LoadAll()[0]);
+            using var workspace = new PublishingPortabilityWorkspaceViewModel(figure, () => document);
+
+            MissingFontItemViewModel panelMissing = Assert.Single(
+                workspace.MissingFonts,
+                item => item.RequestedFontFamily == "MissingPanelLocal_FontUsageCollector");
+            MissingFontItemViewModel scaleMissing = Assert.Single(
+                workspace.MissingFonts,
+                item => item.RequestedFontFamily == "MissingScaleLocal_FontUsageCollector");
+            MissingFontItemViewModel overlayMissing = Assert.Single(
+                workspace.MissingFonts,
+                item => item.RequestedFontFamily == "MissingOverlay_FontUsageCollector");
+
+            Assert.Contains("PanelLabel", panelMissing.UsedBy, StringComparison.Ordinal);
+            Assert.Contains(panelId.ToString(), panelMissing.UsedBy, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("ScaleBarText", scaleMissing.UsedBy, StringComparison.Ordinal);
+            Assert.Contains("MeasurementOverlayLabel", overlayMissing.UsedBy, StringComparison.Ordinal);
+            Assert.Contains(overlayId.ToString(), overlayMissing.UsedBy, StringComparison.OrdinalIgnoreCase);
         });
     }
 }

@@ -16,23 +16,47 @@
                            Foreground="#A8DDE6" FontSize="8" TextWrapping="Wrap" />
             </Border>
 
-            <TextBlock Margin="0,12,0,0" Text="LinkGroup" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
-            <ComboBox Margin="0,3,0,0" ItemsSource="{Binding LinkGroups}"
-                      SelectedItem="{Binding SelectedLinkGroup}" DisplayMemberPath="Name" />
-            <TextBlock Margin="0,8,0,0" Text="MultiChannel group" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
-            <ComboBox Margin="0,3,0,0" ItemsSource="{Binding ChannelGroups}"
-                      SelectedItem="{Binding SelectedChannelGroup}" DisplayMemberPath="Name" />
-            <TextBlock Margin="0,8,0,0" Text="Label" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
-            <TextBox Margin="0,3,0,0" Text="{Binding Label, UpdateSourceTrigger=PropertyChanged}" />
-            <TextBlock Margin="0,8,0,0" Text="Reference polygon / x,y source px · one point per line"
-                       Foreground="{DynamicResource MutedBrush}" FontSize="8" />
-            <TextBox Margin="0,3,0,0" MinHeight="90" AcceptsReturn="True"
-                     VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="9"
-                     Text="{Binding PolygonText, UpdateSourceTrigger=PropertyChanged}" />
-            <Button Margin="0,8,0,0" Content="创建并传播 Polygon ROI"
-                    Command="{Binding CreateAndPropagateCommand}" />
-            <Button Margin="0,6,0,0" Content="ROI Statistics Across Channels"
-                    Command="{Binding AnalyzeAcrossChannelsCommand}" />
+            <TextBlock Margin="0,12,0,0" Text="源图直接绘制" FontWeight="SemiBold" />
+            <TextBlock Margin="0,3,0,0"
+                       Text="Rectangle / Ellipse：拖动；Polygon / Polyline：逐点单击，Enter 或双击完成，Esc 取消。选择工具下可拖动整体或顶点，双击 Polygon 边插点，选中顶点后 Delete 删除。"
+                       Foreground="{DynamicResource MutedBrush}" FontSize="8" TextWrapping="Wrap" />
+            <WrapPanel Margin="0,7,0,0">
+                <Button Margin="0,0,5,5" Padding="7,4" Content="选择"
+                        Command="{Binding DataContext.SelectCanonicalRoiToolCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                <Button Margin="0,0,5,5" Padding="7,4" Content="矩形"
+                        Command="{Binding DataContext.SelectCanonicalRoiRectangleToolCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                <Button Margin="0,0,5,5" Padding="7,4" Content="椭圆"
+                        Command="{Binding DataContext.SelectCanonicalRoiEllipseToolCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                <Button Margin="0,0,5,5" Padding="7,4" Content="多边形"
+                        Command="{Binding DataContext.SelectCanonicalRoiPolygonToolCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                <Button Margin="0,0,5,5" Padding="7,4" Content="折线"
+                        Command="{Binding DataContext.SelectCanonicalRoiPolylineToolCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+            </WrapPanel>
+
+            <Expander Margin="0,7,0,0" Header="高级：数值坐标、LinkGroup 传播与逐通道统计">
+                <StackPanel Margin="0,6,0,0">
+                    <TextBlock Text="LinkGroup" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                    <ComboBox Margin="0,3,0,0" ItemsSource="{Binding LinkGroups}"
+                              SelectedItem="{Binding SelectedLinkGroup}" DisplayMemberPath="Name" />
+                    <TextBlock Margin="0,8,0,0" Text="MultiChannel group" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                    <ComboBox Margin="0,3,0,0" ItemsSource="{Binding ChannelGroups}"
+                              SelectedItem="{Binding SelectedChannelGroup}" DisplayMemberPath="Name" />
+                    <TextBlock Margin="0,8,0,0" Text="Label" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                    <TextBox Margin="0,3,0,0" Text="{Binding Label, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Margin="0,8,0,0" Text="Reference polygon / x,y source px · one point per line"
+                               Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                    <TextBox Margin="0,3,0,0" MinHeight="90" AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="9"
+                             Text="{Binding PolygonText, UpdateSourceTrigger=PropertyChanged}" />
+                    <Button Margin="0,8,0,0" Content="创建并传播 Polygon ROI"
+                            Command="{Binding CreateAndPropagateCommand}" />
+                    <Button Margin="0,6,0,0" Content="ROI Statistics Across Channels"
+                            Command="{Binding AnalyzeAcrossChannelsCommand}" />
+                </StackPanel>
+            </Expander>
+            <Button Margin="0,6,0,0" Content="投影到所选 Figure Panel"
+                    Command="{Binding ProjectSelectedRoiToFigureCommand}"
+                    ToolTip="创建只引用 canonical ROI、Panel、Asset 和 source revision 的 Figure 投影；不复制 ROI 几何。" />
 
             <TextBlock Margin="0,12,0,0" Text="{Binding SummaryText}"
                        Foreground="#80DDEA" FontSize="9" />

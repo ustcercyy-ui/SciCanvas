@@ -29,6 +29,13 @@ public static class FigureExportFontResolver
             return resolved.EffectiveFamily;
         }
 
+        foreach (string requested in FontUsageCollector.Collect(source)
+                     .Select(usage => usage.RequestedFont)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            _ = Effective(requested);
+        }
+
         FigureGlobalStyle global = source.GlobalStyle with
         {
             FontFamily = Effective(source.GlobalStyle.FontFamily),
@@ -38,6 +45,11 @@ public static class FigureExportFontResolver
         FigurePanelExportItem[] panels = source.Panels.Select(panel => panel with
         {
             StyleOverride = ResolveStyleOverride(panel.StyleOverride, Effective),
+        }).ToArray();
+        FigurePlotPanelExportItem[] plotPanels = source.PlotPanels.Select(panel => panel with
+        {
+            StyleOverride = ResolveStyleOverride(panel.StyleOverride, Effective),
+            TypographyOverride = ResolvePlotTypographyOverride(panel.TypographyOverride, Effective),
         }).ToArray();
         FigureAnnotationExportItem[] annotations = source.Annotations.Select(annotation => annotation with
         {
@@ -51,9 +63,36 @@ public static class FigureExportFontResolver
                     Style = overlay.Style with { LabelFontFamily = Effective(overlay.Style.LabelFontFamily) },
                 },
             }).ToArray();
-        FigureScientificObjectExportItem[] scientificObjects = source.ScientificObjects.Select(item => item with
+        FigureScientificObjectExportItem[] scientificObjects = source.ScientificObjects.Select(item =>
         {
-            FontFamily = Effective(item.FontFamily),
+            string requested = item.Kind == FigureScientificObjectKind.ChannelLegend
+                ? item.EffectiveChannelLegend!.FontFamily
+                : item.FontFamily;
+            string effectiveFont = Effective(requested);
+            return item with
+            {
+                FontFamily = effectiveFont,
+                ChannelLegend = item.ChannelLegend is null
+                    ? null
+                    : item.ChannelLegend with { FontFamily = effectiveFont },
+            };
+        }).ToArray();
+        FigureRoiProjectionExportItem[] roiProjections = source.RoiProjections.Select(item => item with
+        {
+            Projection = item.Projection with
+            {
+                StyleOverride = ResolveStyleOverride(item.Projection.StyleOverride, Effective),
+            },
+            CanonicalRoi = item.CanonicalRoi with
+            {
+                Style = new RoiStyle(
+                    item.CanonicalRoi.Style.Shape,
+                    item.CanonicalRoi.Style.LabelStyle with
+                    {
+                        FontFamily = Effective(item.CanonicalRoi.Style.LabelStyle.FontFamily),
+                    },
+                    item.CanonicalRoi.Style.Label),
+            },
         }).ToArray();
         var document = new FigureExportDocument(
             source.WidthPixels,
@@ -66,7 +105,9 @@ public static class FigureExportFontResolver
             global,
             overlays,
             scientificObjects,
-            source.PdfFontStrategy);
+            roiProjections,
+            source.PdfFontStrategy,
+            plotPanels);
         return new ResolvedFigureExportDocument(
             document,
             resolutions.Values.OrderBy(item => item.RequestedFamily, StringComparer.OrdinalIgnoreCase).ToArray());
@@ -97,4 +138,17 @@ public static class FigureExportFontResolver
 
     private static TextStyle? ResolveText(TextStyle? style, Func<string, string> effective) =>
         style is null ? null : style with { FontFamily = effective(style.FontFamily) };
+
+    private static FigurePlotTypographyOverride? ResolvePlotTypographyOverride(
+        FigurePlotTypographyOverride? style,
+        Func<string, string> effective) =>
+        style is null
+            ? null
+            : style with
+            {
+                Axis = ResolveText(style.Axis, effective),
+                Tick = ResolveText(style.Tick, effective),
+                Legend = ResolveText(style.Legend, effective),
+                Annotation = ResolveText(style.Annotation, effective),
+            };
 }

@@ -20,6 +20,8 @@ public sealed class CliExportIntegrationTests
         var sourceInfo = new FileInfo(sourcePath);
         Guid sourceId = Guid.NewGuid();
         Guid layerId = Guid.NewGuid();
+        Guid roiId = Guid.NewGuid();
+        Guid projectionId = Guid.NewGuid();
         var project = new SciCanvasProjectDocument
         {
             ProjectId = Guid.NewGuid(),
@@ -62,22 +64,63 @@ public sealed class CliExportIntegrationTests
                 SourceRect = new ProjectPixelRectSnapshot { X = 0, Y = 0, Width = 2, Height = 2 },
                 Transform = new ProjectTransformSnapshot { X = 0, Y = 0, ScaleX = 1, ScaleY = 1 },
             }],
-            ExportProfiles = [new ProjectExportProfileSnapshot
-            {
-                Id = Guid.Parse("4757F9DE-FE43-47F6-9675-690BE0A431E0"),
-                Name = "主图",
-                Format = "tiff",
-                Dpi = 300,
-                Scale = 1,
-                WriteProvenance = true,
-                BitDepth = 16,
-                WriteAuditReport = true,
-            }],
+            Rois =
+            [
+                new ProjectRoiSnapshot
+                {
+                    Id = roiId,
+                    AssetId = sourceId,
+                    SourceRevision = 1,
+                    GeometryKind = "polygon",
+                    SourceGeometry =
+                    [
+                        new ProjectMeasurementPointSnapshot { X = 0, Y = 0 },
+                        new ProjectMeasurementPointSnapshot { X = 2, Y = 0 },
+                        new ProjectMeasurementPointSnapshot { X = 0, Y = 2 },
+                    ],
+                },
+            ],
+            ExportProfiles =
+            [
+                new ProjectExportProfileSnapshot
+                {
+                    Id = Guid.Parse("4757F9DE-FE43-47F6-9675-690BE0A431E0"),
+                    Name = "主图",
+                    Format = "tiff",
+                    Dpi = 300,
+                    Scale = 1,
+                    WriteProvenance = true,
+                    BitDepth = 16,
+                    WriteAuditReport = true,
+                },
+                new ProjectExportProfileSnapshot
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "ROI SVG",
+                    Format = "svg",
+                    Dpi = 300,
+                    Scale = 1,
+                    WriteProvenance = true,
+                    BitDepth = 8,
+                    WriteAuditReport = true,
+                },
+            ],
             TemplateSnapshot = new ProjectTemplateSnapshot
             {
                 TemplateId = "cli-test",
                 ExactSpacingPixels = 0,
                 LayerSlots = new Dictionary<Guid, string> { [layerId] = "a" },
+                RoiProjections =
+                [
+                    new ProjectRoiFigureProjectionSnapshot
+                    {
+                        Id = projectionId,
+                        RoiId = roiId,
+                        PanelId = layerId,
+                        AssetId = sourceId,
+                        SourceRevision = 1,
+                    },
+                ],
             },
         };
         await new JsonProjectStore().SaveAsync(projectPath, project);
@@ -104,9 +147,23 @@ public sealed class CliExportIntegrationTests
         await process.WaitForExitAsync();
 
         Assert.Equal(0, process.ExitCode);
-        Assert.Contains("RESULT\t1/1", stdout, StringComparison.Ordinal);
+        Assert.Contains("RESULT\t2/2", stdout, StringComparison.Ordinal);
         Assert.True(File.Exists(Path.Combine(outputDirectory, "cli_main-tiff.tiff")), stderr);
         Assert.True(File.Exists(Path.Combine(outputDirectory, "cli_main-tiff.provenance.json")), stderr);
+        string svgPath = Assert.Single(Directory.GetFiles(outputDirectory, "*.svg"));
+        string svg = await File.ReadAllTextAsync(svgPath);
+        Assert.Contains("data-scientific-object=\"roi-projection\"", svg, StringComparison.Ordinal);
+        Assert.Contains($"data-roi-id=\"{roiId:D}\"", svg, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"data-panel-id=\"{layerId:D}\"", svg, StringComparison.OrdinalIgnoreCase);
+        string[] provenancePaths = Directory.GetFiles(outputDirectory, "*.provenance.json");
+        Assert.Equal(2, provenancePaths.Length);
+        string svgProvenancePath = Path.Combine(
+            outputDirectory,
+            Path.GetFileNameWithoutExtension(svgPath) + ".provenance.json");
+        Assert.True(File.Exists(svgProvenancePath), $"SVG provenance missing: {svgProvenancePath}");
+        string svgProvenance = await File.ReadAllTextAsync(svgProvenancePath);
+        Assert.Contains($"\"projectionId\": \"{projectionId:D}\"", svgProvenance, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"\"roiId\": \"{roiId:D}\"", svgProvenance, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void CreateSolidPng(string path)

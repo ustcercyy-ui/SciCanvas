@@ -7,13 +7,15 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
+using SciCanvas.Core.Plotting;
 using SciCanvas.Core.Science;
+using SciCanvas.Core.Workspace;
 
 namespace SciCanvas.Imaging;
 
 internal static class WpfEditableFigureExporter
 {
-    public static void Export(
+    public static IReadOnlyList<PdfFontExportOutcome> Export(
         FigureExportDocument document,
         string targetPath,
         string extension,
@@ -22,10 +24,10 @@ internal static class WpfEditableFigureExporter
         if (extension == ".svg")
         {
             ExportSvg(document, targetPath, cancellationToken);
-            return;
+            return [];
         }
 
-        ExportPdf(document, targetPath, cancellationToken);
+        return ExportPdf(document, targetPath, cancellationToken);
     }
 
     private static void ExportSvg(
@@ -62,6 +64,14 @@ internal static class WpfEditableFigureExporter
             svg.Append("  </g>\n");
         }
 
+        foreach (FigurePlotPanelExportItem plotPanel in
+                 document.PlotPanels.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            WpfFigureExporter.ValidatePlotPanel(plotPanel, document);
+            AppendSvgPlotPanel(svg, plotPanel, document);
+        }
+
         foreach (FigureAnnotationExportItem annotation in
                  document.Annotations.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
         {
@@ -81,6 +91,17 @@ internal static class WpfEditableFigureExporter
                 document.Dpi);
         }
 
+        foreach (FigureRoiProjectionExportItem roiProjection in
+                 document.RoiProjections.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            AppendSvgRoiProjection(
+                svg,
+                roiProjection,
+                WpfFigureExporter.ResolveRoiProjectionPanel(roiProjection, document),
+                document.Dpi);
+        }
+
         foreach (FigureScientificObjectExportItem scientificObject in
                  document.ScientificObjects.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
         {
@@ -91,6 +112,126 @@ internal static class WpfEditableFigureExporter
         svg.Append("</svg>\n");
         WriteNewFile(targetPath, Encoding.UTF8.GetBytes(svg.ToString()));
     }
+
+    private static void AppendSvgPlotPanel(
+        StringBuilder svg,
+        FigurePlotPanelExportItem panel,
+        FigureExportDocument document)
+    {
+        FigurePlotScene scene = FigurePlotSceneBuilder.Build(panel, document.GlobalStyle, document.Dpi);
+        svg.Append(
+            $"  <g id=\"plot-panel-{panel.PanelId:D}\" data-plot-vector=\"true\" " +
+            $"data-plot-id=\"{panel.Plot.Id:D}\" data-data-asset-id=\"{panel.Plot.Data.DataAssetId:D}\" " +
+            $"data-source-revision=\"{panel.Plot.Data.SourceRevision}\" data-plot-kind=\"{panel.Plot.PlotType}\">\n");
+        foreach (PlotPrimitive primitive in scene.Primitives)
+        {
+            switch (primitive)
+            {
+                case PlotLine line:
+                    Color lineColor = WpfFigureExporter.ParseColor(line.Stroke);
+                    string lineOpacity = lineColor.A < 255
+                        ? $" stroke-opacity=\"{F(lineColor.A / 255.0)}\""
+                        : string.Empty;
+                    svg.Append(
+                        $"    <line x1=\"{F(line.A.X)}\" y1=\"{F(line.A.Y)}\" " +
+                        $"x2=\"{F(line.B.X)}\" y2=\"{F(line.B.Y)}\" " +
+                        $"stroke=\"{ColorHex(lineColor)}\" stroke-width=\"{F(line.Width)}\"{SvgDash(line.Dash)}{lineOpacity}/>\n");
+                    break;
+                case PlotRectangle rectangle:
+                    AppendSvgPlotRectangle(svg, rectangle);
+                    break;
+                case PlotEllipse ellipse:
+                    AppendSvgPlotEllipse(svg, ellipse);
+                    break;
+                case PlotPolygon polygon:
+                    AppendSvgPlotPolygon(svg, polygon);
+                    break;
+                case PlotText text:
+                    Color textColor = WpfFigureExporter.ParseColor(text.Style.Color);
+                    string textOpacity = textColor.A < 255
+                        ? $" fill-opacity=\"{F(textColor.A / 255.0)}\""
+                        : string.Empty;
+                    svg.Append(
+                        $"    <text x=\"{F(text.X)}\" y=\"{F(text.Y)}\" " +
+                        $"font-family=\"{Escape(text.Style.FontFamily)}\" font-size=\"{F(text.FontPixels)}\" " +
+                        $"font-weight=\"{(text.Style.IsBold ? "700" : "400")}\" " +
+                        $"text-anchor=\"{SvgAnchor(text.Anchor)}\" dominant-baseline=\"hanging\" " +
+                        $"fill=\"{ColorHex(textColor)}\"{textOpacity}>{Escape(text.Value)}</text>\n");
+                    break;
+            }
+        }
+        FigureGlobalStyle panelStyle = document.GlobalStyle.ResolvePanelOverride(panel.StyleOverride);
+        AppendSvgPanelLabel(svg, panel.Label, panel.DestinationRect, document.Dpi, panelStyle);
+        svg.Append("  </g>\n");
+    }
+
+    private static void AppendSvgPlotRectangle(StringBuilder svg, PlotRectangle item)
+    {
+        string fill = SvgPaint(item.Fill, "fill");
+        string stroke = item.Stroke is null
+            ? " stroke=\"none\""
+            : SvgPaint(item.Stroke, "stroke") +
+              $" stroke-width=\"{F(item.Width)}\"{SvgDash(item.Dash)}";
+        svg.Append(
+            $"    <rect x=\"{F(item.Bounds.X)}\" y=\"{F(item.Bounds.Y)}\" " +
+            $"width=\"{F(item.Bounds.Width)}\" height=\"{F(item.Bounds.Height)}\"{fill}{stroke}/>\n");
+    }
+
+    private static void AppendSvgPlotEllipse(StringBuilder svg, PlotEllipse item)
+    {
+        string fill = SvgPaint(item.Fill, "fill");
+        string stroke = item.Stroke is null
+            ? " stroke=\"none\""
+            : SvgPaint(item.Stroke, "stroke") + $" stroke-width=\"{F(item.Width)}\"";
+        svg.Append(
+            $"    <ellipse cx=\"{F(item.Bounds.X + item.Bounds.Width / 2)}\" " +
+            $"cy=\"{F(item.Bounds.Y + item.Bounds.Height / 2)}\" " +
+            $"rx=\"{F(item.Bounds.Width / 2)}\" ry=\"{F(item.Bounds.Height / 2)}\"{fill}{stroke}/>\n");
+    }
+
+    private static void AppendSvgPlotPolygon(StringBuilder svg, PlotPolygon item)
+    {
+        string points = string.Join(" ", item.Points.Select(point => $"{F(point.X)},{F(point.Y)}"));
+        string fill = SvgPaint(item.Fill, "fill");
+        string stroke = item.Stroke is null
+            ? " stroke=\"none\""
+            : SvgPaint(item.Stroke, "stroke") + $" stroke-width=\"{F(item.Width)}\"";
+        svg.Append($"    <polygon points=\"{points}\"{fill}{stroke}/>\n");
+    }
+
+    private static string SvgPaint(string? value, string attribute)
+    {
+        if (value is null)
+        {
+            return $" {attribute}=\"none\"";
+        }
+        Color color = WpfFigureExporter.ParseColor(value);
+        string opacity = color.A < 255
+            ? $" {attribute}-opacity=\"{F(color.A / 255.0)}\""
+            : string.Empty;
+        return $" {attribute}=\"{ColorHex(color)}\"{opacity}";
+    }
+
+    private static string SvgDash(PlotLineStyle style)
+    {
+        string value = CreateSvgDashArray(PlotDashName(style));
+        return string.IsNullOrEmpty(value) ? string.Empty : $" stroke-dasharray=\"{value}\"";
+    }
+
+    private static string SvgAnchor(PlotTextAnchor anchor) => anchor switch
+    {
+        PlotTextAnchor.Middle => "middle",
+        PlotTextAnchor.End => "end",
+        _ => "start",
+    };
+
+    private static string PlotDashName(PlotLineStyle style) => style switch
+    {
+        PlotLineStyle.Dash => "dash",
+        PlotLineStyle.Dot => "dot",
+        PlotLineStyle.DashDot => "dash-dot",
+        _ => "solid",
+    };
 
     private static void AppendSvgPanelLabel(
         StringBuilder svg,
@@ -331,6 +472,64 @@ internal static class WpfEditableFigureExporter
         svg.Append($"  <{element} {geometry} fill=\"{ColorHex(fillColor)}\" fill-opacity=\"{F(fillOpacity)}\" stroke=\"{stroke}\" stroke-width=\"{F(strokeWidth)}\"{strokeOpacity}/>\n");
     }
 
+    private static void AppendSvgRoiProjection(
+        StringBuilder svg,
+        FigureRoiProjectionExportItem item,
+        FigurePanelExportItem panel,
+        int dpi)
+    {
+        FigureRoiProjectionGeometry geometry = FigureRoiProjectionMapper.Map(item, panel, dpi);
+        Color stroke = WpfFigureExporter.ParseColor(geometry.Style.Shape.StrokeColor);
+        Color fill = WpfFigureExporter.ParseColor(geometry.Style.Shape.FillColor);
+        double fillOpacity = fill.A / 255.0 * geometry.Style.Shape.FillOpacityPercent / 100.0;
+        double strokeOpacity = stroke.A / 255.0;
+        string strokeAttributes =
+            $"stroke=\"{ColorHex(stroke)}\" stroke-opacity=\"{F(strokeOpacity)}\" stroke-width=\"{F(geometry.StrokeWidthPixels)}\" stroke-linejoin=\"round\"";
+        svg.Append($"  <g id=\"roi-projection-{item.Id:D}\" data-scientific-object=\"roi-projection\" data-roi-id=\"{item.RoiId:D}\" data-panel-id=\"{item.PanelId:D}\">\n");
+        switch (geometry.Kind)
+        {
+            case RoiGeometryKind.Rectangle:
+            {
+                MeasurementPoint first = geometry.Points[0];
+                MeasurementPoint second = geometry.Points[1];
+                double x = Math.Min(first.X, second.X);
+                double y = Math.Min(first.Y, second.Y);
+                svg.Append($"    <rect x=\"{F(x)}\" y=\"{F(y)}\" width=\"{F(Math.Abs(second.X - first.X))}\" height=\"{F(Math.Abs(second.Y - first.Y))}\" fill=\"{ColorHex(fill)}\" fill-opacity=\"{F(fillOpacity)}\" {strokeAttributes}/>\n");
+                break;
+            }
+            case RoiGeometryKind.Ellipse:
+            {
+                MeasurementPoint first = geometry.Points[0];
+                MeasurementPoint second = geometry.Points[1];
+                double width = Math.Abs(second.X - first.X);
+                double height = Math.Abs(second.Y - first.Y);
+                svg.Append($"    <ellipse cx=\"{F(Math.Min(first.X, second.X) + width / 2)}\" cy=\"{F(Math.Min(first.Y, second.Y) + height / 2)}\" rx=\"{F(width / 2)}\" ry=\"{F(height / 2)}\" fill=\"{ColorHex(fill)}\" fill-opacity=\"{F(fillOpacity)}\" {strokeAttributes}/>\n");
+                break;
+            }
+            case RoiGeometryKind.Polygon:
+            case RoiGeometryKind.Polyline:
+            {
+                string points = string.Join(" ", geometry.Points.Select(point => $"{F(point.X)},{F(point.Y)}"));
+                string element = geometry.Kind == RoiGeometryKind.Polygon ? "polygon" : "polyline";
+                string fillAttributes = geometry.Kind == RoiGeometryKind.Polygon
+                    ? $"fill=\"{ColorHex(fill)}\" fill-opacity=\"{F(fillOpacity)}\""
+                    : "fill=\"none\"";
+                svg.Append($"    <{element} points=\"{points}\" {fillAttributes} {strokeAttributes}/>\n");
+                break;
+            }
+            default:
+                throw new InvalidOperationException("不支持的 canonical ROI geometry kind。");
+        }
+
+        if (!string.IsNullOrWhiteSpace(geometry.Style.Label))
+        {
+            Color label = WpfFigureExporter.ParseColor(geometry.Style.LabelStyle.Color);
+            svg.Append($"    <text x=\"{F(geometry.LabelAnchor.X + 4)}\" y=\"{F(geometry.LabelAnchor.Y - geometry.LabelFontSizePixels - 4)}\" font-family=\"{Escape(geometry.Style.LabelStyle.FontFamily)}\" font-size=\"{F(geometry.LabelFontSizePixels)}\" font-weight=\"{(geometry.Style.LabelStyle.IsBold ? "700" : "400")}\" dominant-baseline=\"hanging\" fill=\"{ColorHex(label)}\" fill-opacity=\"{F(label.A / 255.0)}\">{Escape(geometry.Style.Label)}</text>\n");
+        }
+
+        svg.Append("  </g>\n");
+    }
+
     private static void AppendSvgScientificObject(StringBuilder svg, FigureScientificObjectExportItem item, int dpi)
     {
         Color stroke = WpfFigureExporter.ParseColor(item.StrokeColor);
@@ -339,7 +538,7 @@ internal static class WpfEditableFigureExporter
         double line = item.StrokeWidthPt / 72.0 * dpi;
         double font = item.FontSizePt / 72.0 * dpi;
         string common = $"data-scientific-object=\"{item.Kind}\" data-object-id=\"{item.Id}\" stroke=\"{ColorHex(stroke)}\" stroke-width=\"{F(line)}\"";
-        if (item.Kind is FigureScientificObjectKind.PolygonAnnotation or FigureScientificObjectKind.Roi)
+        if (item.Kind == FigureScientificObjectKind.PolygonAnnotation)
         {
             double opacity = fill.A / 255.0 * item.FillOpacityPercent / 100.0;
             string points = string.Join(" ", item.Points.Select(point => $"{F(point.X)},{F(point.Y)}"));
@@ -361,25 +560,57 @@ internal static class WpfEditableFigureExporter
         (double x, double y, double width, double height) = ScientificBounds(item.Points);
         if (item.Kind == FigureScientificObjectKind.Colorbar)
         {
+            FigureColorbarExportSpec colorbar = item.EffectiveColorbar!;
             string gradientId = $"scientific-colorbar-{item.Id:N}";
-            IReadOnlyList<Color> colors = WpfFigureExporter.GetColormapColors(item.Colormap);
-            svg.Append($"  <defs><linearGradient id=\"{gradientId}\" x1=\"0\" y1=\"1\" x2=\"0\" y2=\"0\">");
+            IReadOnlyList<Color> colors = WpfFigureExporter.GetColormapColors(colorbar.Colormap);
+            string gradientVector = colorbar.Orientation == FigureObjectOrientation.Vertical
+                ? "x1=\"0\" y1=\"1\" x2=\"0\" y2=\"0\""
+                : "x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\"";
+            svg.Append($"  <defs><linearGradient id=\"{gradientId}\" {gradientVector}>");
             for (int index = 0; index < colors.Count; index++) svg.Append($"<stop offset=\"{F(index / (double)Math.Max(1, colors.Count - 1))}\" stop-color=\"{ColorHex(colors[index])}\"/>");
             svg.Append($"</linearGradient></defs>\n  <g {common}><rect x=\"{F(x)}\" y=\"{F(y)}\" width=\"{F(width)}\" height=\"{F(height)}\" fill=\"url(#{gradientId})\"/>\n");
-            AppendSvgScientificText(svg, $"{item.Maximum:0.###} {item.Unit}", x + width + 5, y, text, item, font);
-            AppendSvgScientificText(svg, $"{item.Minimum:0.###} {item.Unit}", x + width + 5, y + height - font, text, item, font);
+            foreach (ColorbarTick tick in colorbar.Ticks)
+            {
+                double position = (tick.Value - colorbar.Minimum) / (colorbar.Maximum - colorbar.Minimum);
+                if (colorbar.Orientation == FigureObjectOrientation.Vertical)
+                {
+                    double tickY = y + height - position * height;
+                    svg.Append($"    <line x1=\"{F(x + width)}\" y1=\"{F(tickY)}\" x2=\"{F(x + width + 4)}\" y2=\"{F(tickY)}\"/>\n");
+                    AppendSvgScientificText(svg, tick.Label, x + width + 7, tickY - font / 2, text, item, font);
+                }
+                else
+                {
+                    double tickX = x + position * width;
+                    svg.Append($"    <line x1=\"{F(tickX)}\" y1=\"{F(y + height)}\" x2=\"{F(tickX)}\" y2=\"{F(y + height + 4)}\"/>\n");
+                    AppendSvgScientificText(svg, tick.Label, tickX, y + height + 6, text, item, font);
+                }
+            }
             AppendSvgScientificText(svg, item.Label, x, Math.Max(0, y - font - 4), text, item, font);
             svg.Append("  </g>\n");
             return;
         }
-        svg.Append($"  <g {common}><rect x=\"{F(x)}\" y=\"{F(y)}\" width=\"{F(width)}\" height=\"{F(height)}\" fill=\"#0C1219\" fill-opacity=\"0.75\"/>\n");
-        double row = height / Math.Max(1, item.EffectiveChannelLegendEntries.Count);
-        for (int index = 0; index < item.EffectiveChannelLegendEntries.Count; index++)
+        FigureChannelLegendExportSpec legend = item.EffectiveChannelLegend!;
+        var legendItem = item with
         {
-            FigureChannelLegendEntry entry = item.EffectiveChannelLegendEntries[index];
-            double rowY = y + index * row;
-            svg.Append($"    <rect x=\"{F(x + 5)}\" y=\"{F(rowY + Math.Max(2, (row - font) / 2))}\" width=\"{F(Math.Min(16, width * 0.18))}\" height=\"{F(Math.Max(4, font))}\" fill=\"{ColorHex(WpfFigureExporter.ParseColor(entry.Color))}\" stroke=\"none\"/>\n");
-            AppendSvgScientificText(svg, entry.Label, x + Math.Min(24, width * 0.25), rowY + Math.Max(0, (row - font) / 2), text, item, font);
+            FontFamily = legend.FontFamily,
+            FontSizePt = legend.FontSizePt,
+            IsBold = legend.IsBold,
+        };
+        Color legendFill = WpfFigureExporter.ParseColor(legend.BackgroundColor);
+        Color legendStroke = WpfFigureExporter.ParseColor(legend.BorderColor);
+        Color legendText = WpfFigureExporter.ParseColor(legend.TextColor);
+        double legendLine = legend.BorderWidthPt / 72.0 * dpi;
+        double legendFont = legend.FontSizePt / 72.0 * dpi;
+        double backgroundOpacity = legendFill.A / 255.0 * legend.BackgroundOpacityPercent / 100.0;
+        svg.Append($"  <g data-scientific-object=\"{item.Kind}\" data-object-id=\"{item.Id}\" stroke=\"{ColorHex(legendStroke)}\" stroke-width=\"{F(legendLine)}\"><rect x=\"{F(x)}\" y=\"{F(y)}\" width=\"{F(width)}\" height=\"{F(height)}\" fill=\"{ColorHex(legendFill)}\" fill-opacity=\"{F(backgroundOpacity)}\"/>\n");
+        double row = Math.Max(legendFont + 2, (height - 2 * legend.PaddingPixels) / Math.Max(1, legend.Items.Count));
+        for (int index = 0; index < legend.Items.Count; index++)
+        {
+            FigureChannelLegendEntry entry = legend.Items[index];
+            double rowY = y + legend.PaddingPixels + index * row;
+            double swatchWidth = Math.Min(16, Math.Max(4, width * 0.18));
+            svg.Append($"    <rect x=\"{F(x + legend.PaddingPixels)}\" y=\"{F(rowY + Math.Max(1, (row - legendFont) / 2))}\" width=\"{F(swatchWidth)}\" height=\"{F(Math.Max(4, legendFont))}\" fill=\"{ColorHex(WpfFigureExporter.ParseColor(entry.Color))}\" stroke=\"none\"/>\n");
+            AppendSvgScientificText(svg, entry.Label, x + legend.PaddingPixels + swatchWidth + 4, rowY + Math.Max(0, (row - legendFont) / 2), legendText, legendItem, legendFont);
         }
         svg.Append("  </g>\n");
     }
@@ -416,18 +647,13 @@ internal static class WpfEditableFigureExporter
         svg.Append($"  <rect x=\"{F(x)}\" y=\"{F(y)}\" width=\"{F(width)}\" height=\"{F(height)}\" fill=\"{ColorHex(color)}\"{(stroke is null ? string.Empty : $" stroke=\"{stroke}\"")}{opacity}/>\n");
     }
 
-    private static void ExportPdf(
+    private static IReadOnlyList<PdfFontExportOutcome> ExportPdf(
         FigureExportDocument document,
         string targetPath,
         CancellationToken cancellationToken)
     {
-        if (document.PdfFontStrategy == PdfFontStrategy.EmbedSubsetWhenPermitted)
-        {
-            throw new NotSupportedException(
-                "Strict PDF font embedding is unavailable: the current writer does not implement reliable subsetting and ToUnicode maps.");
-        }
-
         var pdf = new PdfDocumentBuilder();
+        var fonts = new PdfEmbeddedFontRegistry(document.PdfFontStrategy);
         int catalogObject = pdf.AddObject(null);
         int pagesObject = pdf.AddObject(null);
         int pageObject = pdf.AddObject(null);
@@ -445,7 +671,13 @@ internal static class WpfEditableFigureExporter
             .Select(GetPdfAnnotationOpacityKey)
             .Concat(document.MeasurementOverlays
                 .Where(overlay => overlay.IsVisible)
-                .Select(GetPdfMeasurementOverlayFillOpacityKey));
+                .Select(GetPdfMeasurementOverlayFillOpacityKey))
+            .Concat(document.RoiProjections
+                .Where(projection => projection.IsVisible)
+                .Select(GetPdfRoiProjectionOpacityKey))
+            .Concat(document.ScientificObjects
+                .Where(scientificObject => scientificObject.IsVisible)
+                .Select(GetPdfScientificObjectOpacityKey));
         foreach ((int Fill, int Stroke) key in opacityKeys
                      .Where(key => key.Fill != 1_000_000 || key.Stroke != 1_000_000)
                      .Distinct())
@@ -474,8 +706,16 @@ internal static class WpfEditableFigureExporter
                 AppendPdfColor(content, WpfFigureExporter.ParseColor(document.GlobalStyle.ShapeColor), fill: false);
                 content.Append($"0.5 w {F(imageRect.X * scale)} {F(pageHeight - imageRect.Bottom * scale)} {F(imageRect.Width * scale)} {F(imageRect.Height * scale)} re S\n");
             }
-            AppendPdfScaleBar(content, panel, imageRect, document.Dpi, scale, pageHeight, panelStyle);
-            AppendPdfPanelLabel(content, panel.Label, panel.DestinationRect, document.Dpi, scale, pageHeight, panelStyle);
+            AppendPdfScaleBar(content, panel, imageRect, document.Dpi, scale, pageHeight, panelStyle, fonts);
+            AppendPdfPanelLabel(content, panel.Label, panel.DestinationRect, document.Dpi, scale, pageHeight, panelStyle, fonts);
+        }
+
+        foreach (FigurePlotPanelExportItem plotPanel in
+                 document.PlotPanels.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            WpfFigureExporter.ValidatePlotPanel(plotPanel, document);
+            AppendPdfPlotPanel(content, plotPanel, document, scale, pageHeight, fonts);
         }
 
         foreach (FigureAnnotationExportItem annotation in
@@ -489,7 +729,7 @@ internal static class WpfEditableFigureExporter
             {
                 content.Append($"q /{opacityState.Name} gs\n");
             }
-            AppendPdfAnnotation(content, annotation, document.Dpi, scale, pageHeight, document.GlobalStyle);
+            AppendPdfAnnotation(content, annotation, document.Dpi, scale, pageHeight, document.GlobalStyle, fonts);
             if (hasOpacityState)
             {
                 content.Append("Q\n");
@@ -511,15 +751,50 @@ internal static class WpfEditableFigureExporter
                 document.Dpi,
                 scale,
                 pageHeight,
-                fillOpacityStateName);
+                fillOpacityStateName,
+                fonts);
+        }
+        foreach (FigureRoiProjectionExportItem roiProjection in
+                 document.RoiProjections.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            (int Fill, int Stroke) opacityKey = GetPdfRoiProjectionOpacityKey(roiProjection);
+            string? opacityStateName = opacityStates.TryGetValue(opacityKey, out var opacityState)
+                ? opacityState.Name
+                : null;
+            AppendPdfRoiProjection(
+                content,
+                roiProjection,
+                WpfFigureExporter.ResolveRoiProjectionPanel(roiProjection, document),
+                document.Dpi,
+                scale,
+                pageHeight,
+                opacityStateName,
+                fonts);
         }
         foreach (FigureScientificObjectExportItem scientificObject in
                  document.ScientificObjects.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
         {
             cancellationToken.ThrowIfCancellationRequested();
             WpfFigureExporter.ValidateScientificObject(scientificObject, document);
-            AppendPdfScientificObject(content, scientificObject, document.Dpi, scale, pageHeight);
+            (int Fill, int Stroke) opacityKey = GetPdfScientificObjectOpacityKey(scientificObject);
+            string? opacityStateName = opacityStates.TryGetValue(opacityKey, out var opacityState)
+                ? opacityState.Name
+                : null;
+            AppendPdfScientificObject(
+                content,
+                scientificObject,
+                document.Dpi,
+                scale,
+                pageHeight,
+                opacityStateName,
+                fonts);
         }
+        foreach (string warning in fonts.Warnings.Distinct(StringComparer.Ordinal))
+        {
+            content.Append($"% SciCanvas font warning: {warning.Replace('\r', ' ').Replace('\n', ' ')}\n");
+        }
+        IReadOnlyList<(string Name, int ObjectNumber)> fontObjects = fonts.AddPdfObjects(pdf.AddObject);
         int contentObject = pdf.AddObject(BuildPdfStream(Encoding.ASCII.GetBytes(content.ToString())));
         string xObjects = images.Count == 0
             ? string.Empty
@@ -527,7 +802,10 @@ internal static class WpfEditableFigureExporter
         string extGStates = opacityStates.Count == 0
             ? string.Empty
             : $"/ExtGState << {string.Join(" ", opacityStates.Values.Select(state => $"/{state.Name} {state.ObjectNumber} 0 R"))} >> ";
-        string resources = $"<< {xObjects}{extGStates}>>";
+        string fontResources = fontObjects.Count == 0
+            ? string.Empty
+            : $"/Font << {string.Join(" ", fontObjects.Select(font => $"/{font.Name} {font.ObjectNumber} 0 R"))} >> ";
+        string resources = $"<< {xObjects}{extGStates}{fontResources}>>";
         pdf.SetObject(pageObject, Encoding.ASCII.GetBytes(
             $"<< /Type /Page /Parent {pagesObject} 0 R /MediaBox [0 0 {F(pageWidth)} {F(pageHeight)}] /Resources {resources} /Contents {contentObject} 0 R >>"));
         pdf.SetObject(pagesObject, Encoding.ASCII.GetBytes(
@@ -535,6 +813,157 @@ internal static class WpfEditableFigureExporter
         pdf.SetObject(catalogObject, Encoding.ASCII.GetBytes(
             $"<< /Type /Catalog /Pages {pagesObject} 0 R >>"));
         WriteNewFile(targetPath, pdf.ToBytes(catalogObject));
+        return fonts.Outcomes;
+    }
+
+    private static void AppendPdfPlotPanel(
+        StringBuilder content,
+        FigurePlotPanelExportItem panel,
+        FigureExportDocument document,
+        double scale,
+        double pageHeight,
+        PdfEmbeddedFontRegistry fonts)
+    {
+        FigurePlotScene scene = FigurePlotSceneBuilder.Build(panel, document.GlobalStyle, document.Dpi);
+        content.Append(
+            $"% SciCanvas vector plot panel={panel.PanelId:D} plot={panel.Plot.Id:D} " +
+            $"dataAsset={panel.Plot.Data.DataAssetId:D} revision={panel.Plot.Data.SourceRevision} " +
+            $"kind={panel.Plot.PlotType}\n");
+        foreach (PlotPrimitive primitive in scene.Primitives)
+        {
+            switch (primitive)
+            {
+                case PlotLine line:
+                    content.Append("q ");
+                    AppendPdfColor(content, WpfFigureExporter.ParseColor(line.Stroke), fill: false);
+                    content.Append($"{F(Math.Max(0.25, line.Width) * scale)} w ");
+                    AppendPdfDash(content, PlotDashName(line.Dash), scale);
+                    content.Append(
+                        $"{F(line.A.X * scale)} {F(pageHeight - line.A.Y * scale)} m " +
+                        $"{F(line.B.X * scale)} {F(pageHeight - line.B.Y * scale)} l S Q\n");
+                    break;
+                case PlotRectangle rectangle:
+                    AppendPdfPlotRectangle(content, rectangle, scale, pageHeight);
+                    break;
+                case PlotEllipse ellipse:
+                    AppendPdfPlotEllipse(content, ellipse, scale, pageHeight);
+                    break;
+                case PlotPolygon polygon:
+                    AppendPdfPlotPolygon(content, polygon, scale, pageHeight);
+                    break;
+                case PlotText text:
+                    AppendPdfText(
+                        content,
+                        text.Value,
+                        ResolvePdfPlotTextX(text),
+                        text.Y,
+                        text.FontPixels,
+                        text.Style.FontFamily,
+                        text.Style.IsBold,
+                        WpfFigureExporter.ParseColor(text.Style.Color),
+                        scale,
+                        pageHeight,
+                        fonts);
+                    break;
+            }
+        }
+        FigureGlobalStyle panelStyle = document.GlobalStyle.ResolvePanelOverride(panel.StyleOverride);
+        AppendPdfPanelLabel(
+            content,
+            panel.Label,
+            panel.DestinationRect,
+            document.Dpi,
+            scale,
+            pageHeight,
+            panelStyle,
+            fonts);
+    }
+
+    private static void AppendPdfPlotRectangle(
+        StringBuilder content,
+        PlotRectangle item,
+        double scale,
+        double pageHeight)
+    {
+        content.Append("q ");
+        bool fill = item.Fill is not null;
+        bool stroke = item.Stroke is not null;
+        if (fill) AppendPdfColor(content, WpfFigureExporter.ParseColor(item.Fill!), fill: true);
+        if (stroke)
+        {
+            AppendPdfColor(content, WpfFigureExporter.ParseColor(item.Stroke!), fill: false);
+            content.Append($"{F(Math.Max(0.25, item.Width) * scale)} w ");
+            AppendPdfDash(content, PlotDashName(item.Dash), scale);
+        }
+        AppendPdfRect(
+            content,
+            item.Bounds.X * scale,
+            pageHeight - item.Bounds.Bottom * scale,
+            item.Bounds.Width * scale,
+            item.Bounds.Height * scale);
+        content.Append(fill && stroke ? "B Q\n" : fill ? "f Q\n" : "S Q\n");
+    }
+
+    private static void AppendPdfPlotEllipse(
+        StringBuilder content,
+        PlotEllipse item,
+        double scale,
+        double pageHeight)
+    {
+        content.Append("q ");
+        bool fill = item.Fill is not null;
+        bool stroke = item.Stroke is not null;
+        if (fill) AppendPdfColor(content, WpfFigureExporter.ParseColor(item.Fill!), fill: true);
+        if (stroke)
+        {
+            AppendPdfColor(content, WpfFigureExporter.ParseColor(item.Stroke!), fill: false);
+            content.Append($"{F(Math.Max(0.25, item.Width) * scale)} w ");
+        }
+        AppendPdfEllipse(
+            content,
+            item.Bounds.X * scale,
+            pageHeight - item.Bounds.Bottom * scale,
+            item.Bounds.Width * scale,
+            item.Bounds.Height * scale);
+        content.Append(fill && stroke ? "B Q\n" : fill ? "f Q\n" : "S Q\n");
+    }
+
+    private static void AppendPdfPlotPolygon(
+        StringBuilder content,
+        PlotPolygon item,
+        double scale,
+        double pageHeight)
+    {
+        if (item.Points.Count == 0) return;
+        content.Append("q ");
+        bool fill = item.Fill is not null;
+        bool stroke = item.Stroke is not null;
+        if (fill) AppendPdfColor(content, WpfFigureExporter.ParseColor(item.Fill!), fill: true);
+        if (stroke)
+        {
+            AppendPdfColor(content, WpfFigureExporter.ParseColor(item.Stroke!), fill: false);
+            content.Append($"{F(Math.Max(0.25, item.Width) * scale)} w ");
+        }
+        PlotPoint first = item.Points[0];
+        content.Append($"{F(first.X * scale)} {F(pageHeight - first.Y * scale)} m ");
+        foreach (PlotPoint point in item.Points.Skip(1))
+        {
+            content.Append($"{F(point.X * scale)} {F(pageHeight - point.Y * scale)} l ");
+        }
+        content.Append(fill && stroke ? "h B Q\n" : fill ? "h f Q\n" : "h S Q\n");
+    }
+
+    private static double ResolvePdfPlotTextX(PlotText item)
+    {
+        if (item.Anchor == PlotTextAnchor.Start) return item.X;
+        FormattedText formatted = CreateText(
+            item.Value,
+            item.FontPixels,
+            item.Style.IsBold ? FontWeights.Bold : FontWeights.Normal,
+            item.Style.FontFamily);
+        return item.Anchor == PlotTextAnchor.Middle
+            ? item.X - formatted.WidthIncludingTrailingWhitespace / 2
+            : item.X - formatted.WidthIncludingTrailingWhitespace;
     }
 
     private static void AppendPdfMeasurementOverlay(
@@ -544,7 +973,8 @@ internal static class WpfEditableFigureExporter
         int dpi,
         double scale,
         double pageHeight,
-        string? fillOpacityStateName)
+        string? fillOpacityStateName,
+        PdfEmbeddedFontRegistry fonts)
     {
         FigureMeasurementOverlayGeometry geometry = FigureMeasurementOverlayMapper.Map(
             overlay.ScientificObject,
@@ -617,18 +1047,18 @@ internal static class WpfEditableFigureExporter
         if (style.ShowLabel)
         {
             Color label = WpfFigureExporter.ParseColor(style.LabelColor);
-            FormattedText text = CreateText(
-                FigureMeasurementOverlayMapper.CreateLabel(overlay.ScientificObject),
-                style.LabelFontSizePt / 72.0 * dpi,
-                style.LabelIsBold ? FontWeights.Bold : FontWeights.Normal,
-                style.LabelFontFamily);
-            AppendPdfGeometry(
+            AppendPdfText(
                 content,
-                text.BuildGeometry(new Point(geometry.LabelAnchor.X, geometry.LabelAnchor.Y)),
+                FigureMeasurementOverlayMapper.CreateLabel(overlay.ScientificObject),
+                geometry.LabelAnchor.X,
+                geometry.LabelAnchor.Y,
+                style.LabelFontSizePt / 72.0 * dpi,
+                style.LabelFontFamily,
+                style.LabelIsBold,
                 label,
                 scale,
                 pageHeight,
-                fill: true);
+                fonts);
         }
 
         content.Append("Q\n");
@@ -728,7 +1158,8 @@ internal static class WpfEditableFigureExporter
         int dpi,
         double scale,
         double pageHeight,
-        FigureGlobalStyle style)
+        FigureGlobalStyle style,
+        PdfEmbeddedFontRegistry fonts)
     {
         if (string.IsNullOrWhiteSpace(label))
         {
@@ -742,12 +1173,18 @@ internal static class WpfEditableFigureExporter
         AppendPdfColor(content, Colors.White, fill: true);
         AppendPdfRect(content, (destination.X + padding) * scale, pageHeight - (destination.Y + padding + height) * scale, width * scale, height * scale);
         Color textColor = WpfFigureExporter.ParseColor(style.EffectivePanelLabelTextColor);
-        FormattedText text = CreateText(
+        AppendPdfText(
+            content,
             label,
+            destination.X + padding * 2,
+            destination.Y + padding,
             fontSize,
-            style.PanelLabelIsBold ? FontWeights.Bold : FontWeights.Normal,
-            style.EffectivePanelLabelFontFamily);
-        AppendPdfGeometry(content, text.BuildGeometry(new Point((destination.X + padding * 2), destination.Y + padding)), textColor, scale, pageHeight, fill: true);
+            style.EffectivePanelLabelFontFamily,
+            style.PanelLabelIsBold,
+            textColor,
+            scale,
+            pageHeight,
+            fonts);
     }
 
     private static void AppendPdfScaleBar(
@@ -757,7 +1194,8 @@ internal static class WpfEditableFigureExporter
         int dpi,
         double scale,
         double pageHeight,
-        FigureGlobalStyle style)
+        FigureGlobalStyle style,
+        PdfEmbeddedFontRegistry fonts)
     {
         IReadOnlyList<FigureScaleBarExportSpec> scaleBars = panel.EffectiveScaleBars;
         if (scaleBars.Count == 0)
@@ -790,24 +1228,147 @@ internal static class WpfEditableFigureExporter
                     style.ScaleBarLabelIsBold ? FontWeights.Bold : FontWeights.Normal,
                     style.EffectiveScaleBarFontFamily);
                 double textX = geometry.Right - text.Width;
-                AppendPdfGeometry(content, text.BuildGeometry(new Point(textX, geometry.LabelTop)), labelColor, scale, pageHeight, fill: true, stroke: Colors.Black, strokeWidth: Math.Max(2, dpi / 150.0) * scale);
+                AppendPdfText(
+                    content,
+                    geometry.Spec.Label,
+                    textX,
+                    geometry.LabelTop,
+                    fontSize,
+                    style.EffectiveScaleBarFontFamily,
+                    style.ScaleBarLabelIsBold,
+                    labelColor,
+                    scale,
+                    pageHeight,
+                    fonts,
+                    Colors.Black,
+                    Math.Max(2, dpi / 150.0) * scale);
             }
         }
     }
+    private static void AppendPdfRoiProjection(
+        StringBuilder content,
+        FigureRoiProjectionExportItem item,
+        FigurePanelExportItem panel,
+        int dpi,
+        double scale,
+        double pageHeight,
+        string? opacityStateName,
+        PdfEmbeddedFontRegistry fonts)
+    {
+        FigureRoiProjectionGeometry geometry = FigureRoiProjectionMapper.Map(item, panel, dpi);
+        bool hasFill = geometry.Kind != RoiGeometryKind.Polyline &&
+            geometry.Style.Shape.FillOpacityPercent > 0;
+        if (opacityStateName is not null)
+        {
+            content.Append($"q /{opacityStateName} gs\n");
+        }
+
+        AppendPdfColor(content, WpfFigureExporter.ParseColor(geometry.Style.Shape.StrokeColor), fill: false);
+        if (hasFill)
+        {
+            AppendPdfColor(content, WpfFigureExporter.ParseColor(geometry.Style.Shape.FillColor), fill: true);
+        }
+        content.Append($"{F(geometry.StrokeWidthPixels * scale)} w ");
+        switch (geometry.Kind)
+        {
+            case RoiGeometryKind.Rectangle:
+            {
+                MeasurementPoint first = geometry.Points[0];
+                MeasurementPoint second = geometry.Points[1];
+                double x = Math.Min(first.X, second.X);
+                double y = Math.Min(first.Y, second.Y);
+                double width = Math.Abs(second.X - first.X);
+                double height = Math.Abs(second.Y - first.Y);
+                AppendPdfRect(
+                    content,
+                    x * scale,
+                    pageHeight - (y + height) * scale,
+                    width * scale,
+                    height * scale);
+                content.Append(hasFill ? "B\n" : "S\n");
+                break;
+            }
+            case RoiGeometryKind.Ellipse:
+            {
+                MeasurementPoint first = geometry.Points[0];
+                MeasurementPoint second = geometry.Points[1];
+                double x = Math.Min(first.X, second.X);
+                double y = Math.Min(first.Y, second.Y);
+                double width = Math.Abs(second.X - first.X);
+                double height = Math.Abs(second.Y - first.Y);
+                AppendPdfEllipse(
+                    content,
+                    x * scale,
+                    pageHeight - (y + height) * scale,
+                    width * scale,
+                    height * scale);
+                content.Append(hasFill ? "B\n" : "S\n");
+                break;
+            }
+            case RoiGeometryKind.Polygon:
+            case RoiGeometryKind.Polyline:
+            {
+                MeasurementPoint first = geometry.Points[0];
+                content.Append($"{F(first.X * scale)} {F(pageHeight - first.Y * scale)} m ");
+                foreach (MeasurementPoint point in geometry.Points.Skip(1))
+                {
+                    content.Append($"{F(point.X * scale)} {F(pageHeight - point.Y * scale)} l ");
+                }
+                if (geometry.Kind == RoiGeometryKind.Polygon)
+                {
+                    content.Append("h ");
+                }
+                content.Append(hasFill ? "B\n" : "S\n");
+                break;
+            }
+            default:
+                throw new InvalidOperationException("不支持的 canonical ROI geometry kind。");
+        }
+
+        if (opacityStateName is not null)
+        {
+            content.Append("Q\n");
+        }
+
+        if (!string.IsNullOrWhiteSpace(geometry.Style.Label))
+        {
+            Color labelColor = WpfFigureExporter.ParseColor(geometry.Style.LabelStyle.Color);
+            AppendPdfText(
+                content,
+                geometry.Style.Label,
+                geometry.LabelAnchor.X + 4,
+                geometry.LabelAnchor.Y - geometry.LabelFontSizePixels - 4,
+                geometry.LabelFontSizePixels,
+                geometry.Style.LabelStyle.FontFamily,
+                geometry.Style.LabelStyle.IsBold,
+                labelColor,
+                scale,
+                pageHeight,
+                fonts);
+        }
+    }
+
     private static void AppendPdfScientificObject(
         StringBuilder content,
         FigureScientificObjectExportItem item,
         int dpi,
         double scale,
-        double pageHeight)
+        double pageHeight,
+        string? opacityStateName,
+        PdfEmbeddedFontRegistry fonts)
     {
         Color stroke = WpfFigureExporter.ParseColor(item.StrokeColor);
         Color fill = WpfFigureExporter.ParseColor(item.FillColor);
         Color text = WpfFigureExporter.ParseColor(item.TextColor);
         double strokeWidth = item.StrokeWidthPt / 72.0 * dpi * scale;
         double fontSize = item.FontSizePt / 72.0 * dpi;
-        if (item.Kind is FigureScientificObjectKind.PolygonAnnotation or FigureScientificObjectKind.Roi)
+        if (item.Kind == FigureScientificObjectKind.PolygonAnnotation)
         {
+            bool hasOpacityState = !string.IsNullOrWhiteSpace(opacityStateName);
+            if (hasOpacityState)
+            {
+                content.Append($"q /{opacityStateName} gs\n");
+            }
             AppendPdfColor(content, fill, fill: true);
             AppendPdfColor(content, stroke, fill: false);
             content.Append($"{F(strokeWidth)} w ");
@@ -815,7 +1376,11 @@ internal static class WpfEditableFigureExporter
             content.Append($"{F(first.X * scale)} {F(pageHeight - first.Y * scale)} m ");
             foreach (FigureScientificPoint point in item.Points.Skip(1)) content.Append($"{F(point.X * scale)} {F(pageHeight - point.Y * scale)} l ");
             content.Append("h B\n");
-            AppendPdfScientificText(content, item.Label, item.Points[0].X, item.Points[0].Y - fontSize - 4, text, item, fontSize, scale, pageHeight);
+            if (hasOpacityState)
+            {
+                content.Append("Q\n");
+            }
+            AppendPdfScientificText(content, item.Label, item.Points[0].X, item.Points[0].Y - fontSize - 4, text, item, fontSize, scale, pageHeight, fonts);
             return;
         }
         if (item.Kind == FigureScientificObjectKind.DirectionMarker)
@@ -827,52 +1392,108 @@ internal static class WpfEditableFigureExporter
             content.Append($"{F(strokeWidth)} w {F(start.X * scale)} {F(pageHeight - start.Y * scale)} m {F(baseCenter.X * scale)} {F(pageHeight - baseCenter.Y * scale)} l S\n");
             AppendPdfColor(content, stroke, fill: true);
             content.Append($"{F(end.X * scale)} {F(pageHeight - end.Y * scale)} m {F(left.X * scale)} {F(pageHeight - left.Y * scale)} l {F(right.X * scale)} {F(pageHeight - right.Y * scale)} l h f\n");
-            AppendPdfScientificText(content, item.Label, end.X + 5, end.Y - fontSize - 5, text, item, fontSize, scale, pageHeight);
+            AppendPdfScientificText(content, item.Label, end.X + 5, end.Y - fontSize - 5, text, item, fontSize, scale, pageHeight, fonts);
             return;
         }
         (double x, double y, double width, double height) = ScientificBounds(item.Points);
         if (item.Kind == FigureScientificObjectKind.Colorbar)
         {
-            IReadOnlyList<Color> colors = WpfFigureExporter.GetColormapColors(item.Colormap);
-            double slice = height / colors.Count;
+            FigureColorbarExportSpec colorbar = item.EffectiveColorbar!;
+            IReadOnlyList<Color> colors = WpfFigureExporter.GetColormapColors(colorbar.Colormap);
             for (int index = 0; index < colors.Count; index++)
             {
                 AppendPdfColor(content, colors[index], fill: true);
-                AppendPdfRect(content, x * scale, pageHeight - (y + (index + 1) * slice) * scale, width * scale, slice * scale);
+                if (colorbar.Orientation == FigureObjectOrientation.Vertical)
+                {
+                    double sliceHeight = height / colors.Count;
+                    double sliceY = y + height - (index + 1) * sliceHeight;
+                    AppendPdfRect(content, x * scale, pageHeight - (sliceY + sliceHeight) * scale, width * scale, sliceHeight * scale);
+                }
+                else
+                {
+                    double sliceWidth = width / colors.Count;
+                    AppendPdfRect(content, (x + index * sliceWidth) * scale, pageHeight - (y + height) * scale, sliceWidth * scale, height * scale);
+                }
                 content.Append("f\n");
             }
             AppendPdfColor(content, stroke, fill: false);
             content.Append($"{F(strokeWidth)} w ");
             AppendPdfRect(content, x * scale, pageHeight - (y + height) * scale, width * scale, height * scale);
             content.Append("S\n");
-            AppendPdfScientificText(content, $"{item.Maximum:0.###} {item.Unit}", x + width + 5, y, text, item, fontSize, scale, pageHeight);
-            AppendPdfScientificText(content, $"{item.Minimum:0.###} {item.Unit}", x + width + 5, y + height - fontSize, text, item, fontSize, scale, pageHeight);
-            AppendPdfScientificText(content, item.Label, x, Math.Max(0, y - fontSize - 4), text, item, fontSize, scale, pageHeight);
+            foreach (ColorbarTick tick in colorbar.Ticks)
+            {
+                double position = (tick.Value - colorbar.Minimum) / (colorbar.Maximum - colorbar.Minimum);
+                if (colorbar.Orientation == FigureObjectOrientation.Vertical)
+                {
+                    double tickY = y + height - position * height;
+                    content.Append($"{F((x + width) * scale)} {F(pageHeight - tickY * scale)} m {F((x + width + 4) * scale)} {F(pageHeight - tickY * scale)} l S\n");
+                    AppendPdfScientificText(content, tick.Label, x + width + 7, tickY - fontSize / 2, text, item, fontSize, scale, pageHeight, fonts);
+                }
+                else
+                {
+                    double tickX = x + position * width;
+                    content.Append($"{F(tickX * scale)} {F(pageHeight - (y + height) * scale)} m {F(tickX * scale)} {F(pageHeight - (y + height + 4) * scale)} l S\n");
+                    AppendPdfScientificText(content, tick.Label, tickX, y + height + 6, text, item, fontSize, scale, pageHeight, fonts);
+                }
+            }
+            AppendPdfScientificText(content, item.Label, x, Math.Max(0, y - fontSize - 4), text, item, fontSize, scale, pageHeight, fonts);
             return;
         }
-        AppendPdfColor(content, Color.FromRgb(12, 18, 25), fill: true);
-        AppendPdfColor(content, stroke, fill: false);
-        content.Append($"{F(strokeWidth)} w ");
+        FigureChannelLegendExportSpec legend = item.EffectiveChannelLegend!;
+        var legendItem = item with
+        {
+            FontFamily = legend.FontFamily,
+            FontSizePt = legend.FontSizePt,
+            IsBold = legend.IsBold,
+        };
+        Color legendFill = WpfFigureExporter.ParseColor(legend.BackgroundColor);
+        Color legendStroke = WpfFigureExporter.ParseColor(legend.BorderColor);
+        Color legendText = WpfFigureExporter.ParseColor(legend.TextColor);
+        double legendStrokeWidth = legend.BorderWidthPt / 72.0 * dpi * scale;
+        double legendFontSize = legend.FontSizePt / 72.0 * dpi;
+        bool hasLegendOpacityState = !string.IsNullOrWhiteSpace(opacityStateName);
+        if (hasLegendOpacityState)
+        {
+            content.Append($"q /{opacityStateName} gs\n");
+        }
+        AppendPdfColor(content, legendFill, fill: true);
+        AppendPdfColor(content, legendStroke, fill: false);
+        content.Append($"{F(legendStrokeWidth)} w ");
         AppendPdfRect(content, x * scale, pageHeight - (y + height) * scale, width * scale, height * scale);
         content.Append("B\n");
-        double row = height / Math.Max(1, item.EffectiveChannelLegendEntries.Count);
-        for (int index = 0; index < item.EffectiveChannelLegendEntries.Count; index++)
+        if (hasLegendOpacityState)
         {
-            FigureChannelLegendEntry entry = item.EffectiveChannelLegendEntries[index];
-            double rowY = y + index * row;
+            content.Append("Q\n");
+        }
+        double row = Math.Max(legendFontSize + 2, (height - 2 * legend.PaddingPixels) / Math.Max(1, legend.Items.Count));
+        for (int index = 0; index < legend.Items.Count; index++)
+        {
+            FigureChannelLegendEntry entry = legend.Items[index];
+            double rowY = y + legend.PaddingPixels + index * row;
+            double swatchWidth = Math.Min(16, Math.Max(4, width * 0.18));
             AppendPdfColor(content, WpfFigureExporter.ParseColor(entry.Color), fill: true);
-            AppendPdfRect(content, (x + 5) * scale, pageHeight - (rowY + Math.Max(2, (row - fontSize) / 2) + Math.Max(4, fontSize)) * scale, Math.Min(16, width * 0.18) * scale, Math.Max(4, fontSize) * scale);
+            AppendPdfRect(content, (x + legend.PaddingPixels) * scale, pageHeight - (rowY + Math.Max(1, (row - legendFontSize) / 2) + Math.Max(4, legendFontSize)) * scale, swatchWidth * scale, Math.Max(4, legendFontSize) * scale);
             content.Append("f\n");
-            AppendPdfScientificText(content, entry.Label, x + Math.Min(24, width * 0.25), rowY + Math.Max(0, (row - fontSize) / 2), text, item, fontSize, scale, pageHeight);
+            AppendPdfScientificText(content, entry.Label, x + legend.PaddingPixels + swatchWidth + 4, rowY + Math.Max(0, (row - legendFontSize) / 2), legendText, legendItem, legendFontSize, scale, pageHeight, fonts);
         }
     }
 
-    private static void AppendPdfScientificText(StringBuilder content, string value, double x, double y, Color color, FigureScientificObjectExportItem item, double font, double scale, double pageHeight)
+    private static void AppendPdfScientificText(StringBuilder content, string value, double x, double y, Color color, FigureScientificObjectExportItem item, double font, double scale, double pageHeight, PdfEmbeddedFontRegistry fonts)
     {
         if (!string.IsNullOrWhiteSpace(value))
         {
-            FormattedText label = CreateText(value, font, item.IsBold ? FontWeights.Bold : FontWeights.Normal, item.FontFamily);
-            AppendPdfGeometry(content, label.BuildGeometry(new Point(x, y)), color, scale, pageHeight, fill: true);
+            AppendPdfText(
+                content,
+                value,
+                x,
+                y,
+                font,
+                item.FontFamily,
+                item.IsBold,
+                color,
+                scale,
+                pageHeight,
+                fonts);
         }
     }
     private static void AppendPdfAnnotation(
@@ -881,7 +1502,8 @@ internal static class WpfEditableFigureExporter
         int dpi,
         double scale,
         double pageHeight,
-        FigureGlobalStyle style)
+        FigureGlobalStyle style,
+        PdfEmbeddedFontRegistry fonts)
     {
         if (string.Equals(annotation.Kind, "text", StringComparison.OrdinalIgnoreCase))
         {
@@ -889,12 +1511,18 @@ internal static class WpfEditableFigureExporter
             string fontFamily = string.IsNullOrWhiteSpace(annotation.FontFamily)
                 ? style.FontFamily
                 : annotation.FontFamily;
-            FormattedText text = CreateText(
+            AppendPdfText(
+                content,
                 annotation.Text,
+                annotation.X,
+                annotation.Y,
                 annotation.FontSizePt / 72.0 * dpi,
-                annotation.IsBold ? FontWeights.Bold : FontWeights.Normal,
-                fontFamily);
-            AppendPdfGeometry(content, text.BuildGeometry(new Point(annotation.X, annotation.Y)), textColor, scale, pageHeight, fill: true);
+                fontFamily,
+                annotation.IsBold,
+                textColor,
+                scale,
+                pageHeight,
+                fonts);
             return;
         }
 
@@ -950,6 +1578,23 @@ internal static class WpfEditableFigureExporter
         content.Append($"{F(annotation.EndX * scale)} {F(pageHeight - annotation.EndY * scale)} m {F(leftX * scale)} {F(pageHeight - leftY * scale)} l {F(rightX * scale)} {F(pageHeight - rightY * scale)} l h f\n");
     }
 
+    private static (int Fill, int Stroke) GetPdfRoiProjectionOpacityKey(
+        FigureRoiProjectionExportItem item)
+    {
+        static int Alpha(double value) =>
+            (int)Math.Round(Math.Clamp(value, 0, 1) * 1_000_000, MidpointRounding.AwayFromZero);
+
+        ShapeStyle shape = item.Projection.StyleOverride?.Shapes ?? item.CanonicalRoi.Style.Shape;
+        Color stroke = WpfFigureExporter.ParseColor(shape.StrokeColor);
+        int fillAlpha = item.CanonicalRoi.GeometryKind == RoiGeometryKind.Polyline ||
+                        shape.FillOpacityPercent <= 0
+            ? 1_000_000
+            : Alpha(
+                WpfFigureExporter.ParseColor(shape.FillColor).A / 255.0 *
+                shape.FillOpacityPercent / 100.0);
+        return (fillAlpha, Alpha(stroke.A / 255.0));
+    }
+
     private static (int Fill, int Stroke) GetPdfMeasurementOverlayFillOpacityKey(
         FigureMeasurementOverlayExportItem overlay)
     {
@@ -966,6 +1611,26 @@ internal static class WpfEditableFigureExporter
         Color fill = WpfFigureExporter.ParseColor(overlay.Style.FillColor);
         return (Alpha(fill.A / 255.0 * overlay.Style.FillOpacityPercent / 100.0), 1_000_000);
     }
+
+    private static (int Fill, int Stroke) GetPdfScientificObjectOpacityKey(
+        FigureScientificObjectExportItem scientificObject)
+    {
+        static int Alpha(double value) =>
+            (int)Math.Round(Math.Clamp(value, 0, 1) * 1_000_000, MidpointRounding.AwayFromZero);
+
+        if (scientificObject.Kind is not (FigureScientificObjectKind.PolygonAnnotation or
+            FigureScientificObjectKind.ChannelLegend))
+        {
+            return (1_000_000, 1_000_000);
+        }
+
+        Color fill = WpfFigureExporter.ParseColor(scientificObject.FillColor);
+        Color stroke = WpfFigureExporter.ParseColor(scientificObject.StrokeColor);
+        return (
+            Alpha(fill.A / 255.0 * scientificObject.FillOpacityPercent / 100.0),
+            Alpha(stroke.A / 255.0));
+    }
+
     private static (int Fill, int Stroke) GetPdfAnnotationOpacityKey(
         FigureAnnotationExportItem annotation)
     {
@@ -1058,6 +1723,54 @@ internal static class WpfEditableFigureExporter
         content.Append($"{F(cx - Kappa * rx)} {F(cy + ry)} {F(cx - rx)} {F(cy + Kappa * ry)} {F(cx - rx)} {F(cy)} c ");
         content.Append($"{F(cx - rx)} {F(cy - Kappa * ry)} {F(cx - Kappa * rx)} {F(cy - ry)} {F(cx)} {F(cy - ry)} c ");
         content.Append($"{F(cx + Kappa * rx)} {F(cy - ry)} {F(cx + rx)} {F(cy - Kappa * ry)} {F(cx + rx)} {F(cy)} c ");
+    }
+
+    private static void AppendPdfText(
+        StringBuilder content,
+        string value,
+        double x,
+        double y,
+        double fontSize,
+        string fontFamily,
+        bool isBold,
+        Color color,
+        double scale,
+        double pageHeight,
+        PdfEmbeddedFontRegistry fonts,
+        Color? stroke = null,
+        double strokeWidth = 0)
+    {
+        if (fonts.TryAppendText(
+                content,
+                value,
+                x,
+                y,
+                fontSize,
+                fontFamily,
+                isBold,
+                color,
+                scale,
+                pageHeight,
+                stroke,
+                strokeWidth))
+        {
+            return;
+        }
+
+        FormattedText text = CreateText(
+            value,
+            fontSize,
+            isBold ? FontWeights.Bold : FontWeights.Normal,
+            fontFamily);
+        AppendPdfGeometry(
+            content,
+            text.BuildGeometry(new Point(x, y)),
+            color,
+            scale,
+            pageHeight,
+            fill: true,
+            stroke,
+            strokeWidth);
     }
 
     private static FormattedText CreateText(string text, double fontSize, FontWeight weight, string fontFamily) =>

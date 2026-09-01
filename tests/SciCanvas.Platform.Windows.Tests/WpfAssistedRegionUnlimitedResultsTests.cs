@@ -63,7 +63,12 @@ public sealed class WpfAssistedRegionUnlimitedResultsTests
             ThresholdNormalized: 0.5,
             MinimumAreaPixels: 1);
 
-        AssistedRegionAnalysisResult result = await new WpfAssistedRegionAnalyzer().AnalyzeAsync(
+        var policy = new AnalysisResourcePolicy(
+            MaxPixels: width * height,
+            MaxComponentsSafety: 1089,
+            MaxBoundaryPoints: 100,
+            MemoryBudgetBytes: 16 * 1024 * 1024);
+        AssistedRegionAnalysisResult result = await new WpfAssistedRegionAnalyzer(policy).AnalyzeAsync(
             source,
             options);
 

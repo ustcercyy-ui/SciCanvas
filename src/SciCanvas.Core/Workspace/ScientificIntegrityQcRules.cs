@@ -95,6 +95,22 @@ internal sealed class PreciseScientificObjectRule()
                 };
             }
 
+            if (analysis is RoiStatisticsResult
+                {
+                    ClippedToImage: true,
+                    CoverageFraction: > 0 and < 1,
+                } clipped)
+            {
+                yield return Issue(
+                    QcSeverity.Warning,
+                    $"roi-clipped:{analysis.Id:N}",
+                    $"ROI statistics were clipped to the source image (coverage fraction {clipped.CoverageFraction:0.######}).",
+                    location: location) with
+                {
+                    RuleId = "analysis.roi-clipped-to-image",
+                };
+            }
+
             if (mappingId is Guid requiredMapping)
             {
                 if (!mappings.TryGetValue(requiredMapping, out CoreSpatialMapping? mapping))
@@ -295,13 +311,27 @@ internal sealed class LinkedViewIntegrityRule()
                     continue;
                 }
 
-                bool outside = roi.SourceGeometry.Any(point =>
-                    point.X < 0 || point.Y < 0 ||
-                    point.X > asset.Image.PixelSize.Width || point.Y > asset.Image.PixelSize.Height);
-                if (outside)
+                RoiGeometryValidationResult validation =
+                    RoiGeometryValidator.Validate(roi, asset.Image.PixelSize);
+                if (validation.State == RoiGeometryValidationState.PartiallyOutside)
                 {
                     yield return Issue(QcSeverity.Warning, $"roi:{roi.Id:N}",
-                        "Propagated ROI extends outside the target asset.",
+                        $"Propagated ROI extends outside the target asset (coverage fraction {validation.CoverageFraction:0.######}).",
+                        location: new QcIssueLocation(
+                            ProjectId: context.Project.Id,
+                            PanelId: roi.PanelId,
+                            AssetId: assetId,
+                            ScientificObjectId: roi.Id,
+                            LinkGroupId: group.Id,
+                            MappingId: roi.Propagation?.MappingId)) with
+                    {
+                        RuleId = "linked-view.roi-partially-outside-target",
+                    };
+                }
+                else if (validation.State == RoiGeometryValidationState.Outside)
+                {
+                    yield return Issue(QcSeverity.Error, $"roi:{roi.Id:N}",
+                        "Propagated ROI is fully outside the target asset and cannot be analyzed.",
                         location: new QcIssueLocation(
                             ProjectId: context.Project.Id,
                             PanelId: roi.PanelId,
@@ -311,6 +341,38 @@ internal sealed class LinkedViewIntegrityRule()
                             MappingId: roi.Propagation?.MappingId)) with
                     {
                         RuleId = "linked-view.roi-outside-target",
+                    };
+                }
+                else if (!validation.IsGeometryValid)
+                {
+                    yield return Issue(QcSeverity.Error, $"roi:{roi.Id:N}",
+                        $"Propagated ROI geometry is {validation.State}.",
+                        location: new QcIssueLocation(
+                            ProjectId: context.Project.Id,
+                            PanelId: roi.PanelId,
+                            AssetId: assetId,
+                            ScientificObjectId: roi.Id,
+                            LinkGroupId: group.Id,
+                            MappingId: roi.Propagation?.MappingId)) with
+                    {
+                        RuleId = "linked-view.roi-invalid-geometry",
+                    };
+                }
+
+                if (roi.Propagation is { } propagation &&
+                    Math.Abs(propagation.TargetCoverageFraction - validation.CoverageFraction) > 1e-9)
+                {
+                    yield return Issue(QcSeverity.Error, $"roi-coverage:{roi.Id:N}",
+                        "Propagated ROI target coverage provenance does not match its current geometry and target image.",
+                        location: new QcIssueLocation(
+                            ProjectId: context.Project.Id,
+                            PanelId: roi.PanelId,
+                            AssetId: assetId,
+                            ScientificObjectId: roi.Id,
+                            LinkGroupId: group.Id,
+                            MappingId: propagation.MappingId)) with
+                    {
+                        RuleId = "linked-view.roi-coverage-mismatch",
                     };
                 }
             }
@@ -328,7 +390,8 @@ internal sealed class ColorbarIntegrityRule()
             .DistinctBy(member => member.ChannelId)
             .ToDictionary(member => member.ChannelId);
         ColorbarObject[] colorbars = context.Project.ScientificObjects.Values.OfType<ColorbarObject>().ToArray();
-        foreach (ColorbarObject colorbar in colorbars.Where(item => item.ChannelId is not null))
+        foreach (ColorbarObject colorbar in colorbars.Where(item =>
+                     item.BindingState == ColorbarBindingState.Linked))
         {
             Guid channelId = colorbar.ChannelId!.Value;
             var location = new QcIssueLocation(
@@ -348,10 +411,15 @@ internal sealed class ColorbarIntegrityRule()
             }
 
             if (Math.Abs(colorbar.Minimum - channel.DisplaySettings.DisplayMinimum) > 1e-9 ||
-                Math.Abs(colorbar.Maximum - channel.DisplaySettings.DisplayMaximum) > 1e-9)
+                Math.Abs(colorbar.Maximum - channel.DisplaySettings.DisplayMaximum) > 1e-9 ||
+                !string.Equals(
+                    colorbar.Colormap,
+                    channel.DisplaySettings.Colormap,
+                    StringComparison.OrdinalIgnoreCase))
             {
                 yield return Issue(QcSeverity.Error, $"range:{colorbar.Id:N}",
-                    "Colorbar range does not match its channel display range.", location: location) with
+                    "Linked Colorbar range/colormap does not match its channel display settings.",
+                    location: location) with
                 {
                     RuleId = "colorbar.range-mismatch",
                 };

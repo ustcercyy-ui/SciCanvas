@@ -66,6 +66,91 @@ public sealed class JsonProjectStoreTests
             () => new JsonProjectStore().LoadAsync(path));
     }
 
+    [Fact]
+    public async Task SaveAsync_RejectsRoiProjectionWithMismatchedAssetReference()
+    {
+        using var workspace = new TestWorkspace();
+        string sourcePath = workspace.CreateFile("projection-source.tif", [1, 2, 3, 4]);
+        string projectPath = Path.Combine(workspace.Root, "invalid-projection.scicanvas");
+        Guid assetId = Guid.NewGuid();
+        Guid panelId = Guid.NewGuid();
+        Guid roiId = Guid.NewGuid();
+        byte[] bytes = File.ReadAllBytes(sourcePath);
+        var document = new SciCanvasProjectDocument
+        {
+            ProjectId = Guid.NewGuid(),
+            Canvas = new ProjectCanvasSnapshot { Width = 100, Height = 100 },
+            Sources =
+            [
+                new ProjectSourceSnapshot
+                {
+                    Id = assetId,
+                    DisplayName = Path.GetFileName(sourcePath),
+                    OriginalPath = sourcePath,
+                    SourceRevision = 1,
+                    Fingerprint = new ProjectFingerprintSnapshot
+                    {
+                        ByteLength = bytes.Length,
+                        LastWriteTimeUtc = File.GetLastWriteTimeUtc(sourcePath),
+                        Sha256 = Convert.ToHexString(SHA256.HashData(bytes)),
+                    },
+                    Metadata = new ProjectImageMetadataSnapshot
+                    {
+                        Width = 2,
+                        Height = 2,
+                        Channels = 1,
+                        BitsPerChannel = 8,
+                        PixelFormat = "Gray8",
+                    },
+                    LinkState = "verified",
+                },
+            ],
+            Layers =
+            [
+                new ProjectImageLayerSnapshot
+                {
+                    Id = panelId,
+                    Name = "Panel A",
+                    SourceAssetId = assetId,
+                    SourceRect = new ProjectPixelRectSnapshot { Width = 2, Height = 2 },
+                },
+            ],
+            Rois =
+            [
+                new ProjectRoiSnapshot
+                {
+                    Id = roiId,
+                    AssetId = assetId,
+                    SourceRevision = 1,
+                    SourceGeometry =
+                    [
+                        new ProjectMeasurementPointSnapshot { X = 0, Y = 0 },
+                        new ProjectMeasurementPointSnapshot { X = 1, Y = 0 },
+                        new ProjectMeasurementPointSnapshot { X = 0, Y = 1 },
+                    ],
+                },
+            ],
+            TemplateSnapshot = new ProjectTemplateSnapshot
+            {
+                RoiProjections =
+                [
+                    new ProjectRoiFigureProjectionSnapshot
+                    {
+                        Id = Guid.NewGuid(),
+                        RoiId = roiId,
+                        PanelId = panelId,
+                        AssetId = Guid.NewGuid(),
+                        SourceRevision = 1,
+                    },
+                ],
+            },
+        };
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => new JsonProjectStore().SaveAsync(projectPath, document));
+        Assert.False(File.Exists(projectPath));
+    }
+
     private static SciCanvasProjectDocument CreateDocument(string sourcePath, string title)
     {
         byte[] bytes = File.ReadAllBytes(sourcePath);

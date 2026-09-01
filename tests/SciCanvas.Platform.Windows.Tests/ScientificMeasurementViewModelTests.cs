@@ -158,6 +158,36 @@ public sealed class ScientificMeasurementViewModelTests
         Assert.False(measurement.IsStyleValid);
     }
 
+    [Fact]
+    public void LengthDirection_CanBeSetToExactHorizontalVerticalOrArbitraryAngle()
+    {
+        ScientificMeasurementViewModel measurement = new(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "measurement.png",
+            ScientificMeasurementKind.Length,
+            new MeasurementPoint(50, 50),
+            new MeasurementPoint(150, 50),
+            pointC: null,
+            calibration: null,
+            number: 1,
+            sourceWidth: 200,
+            sourceHeight: 160);
+        double originalLength = measurement.Measurement.PixelValue;
+
+        measurement.DirectionAngleDegrees = 90;
+
+        Assert.Equal(90, measurement.DirectionAngleDegrees, 8);
+        Assert.Equal(measurement.X1, measurement.X2, 8);
+        Assert.Equal(originalLength, measurement.Measurement.PixelValue, 8);
+
+        measurement.DirectionAngleDegrees = 32.5;
+
+        Assert.Equal(32.5, measurement.DirectionAngleDegrees, 8);
+        Assert.True(measurement.IsValid);
+        Assert.True(measurement.SetHorizontalDirectionCommand.CanExecute(null));
+    }
+
     private static ScientificMeasurementViewModel Create(
         ScientificMeasurementKind kind,
         MeasurementPoint pointA,

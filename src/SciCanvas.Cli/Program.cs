@@ -51,6 +51,14 @@ internal static class Program
             SourceAsset[] sources = await LoadAndVerifySourcesAsync(project.Sources);
             ProjectFigureExportContext exportContext = ProjectFigureExportBuilder.Create(project, sources);
             FigureExportDocument baseDocument = exportContext.Document;
+            Dictionary<Guid, long> sourceRevisions = project.Sources.ToDictionary(
+                source => source.Id,
+                source => source.SourceRevision);
+            IReadOnlyList<RawCropQcCandidate> rawCrops = WpfRawCropQcCandidateBuilder.Create(
+                baseDocument,
+                sourceRevisions,
+                project.ProjectId);
+            var qcCoordinator = new ScientificQcCoordinator();
             FontSubstitutionRule[] fontSubstitutions = project.FontSubstitutions
                 .Select(rule => new FontSubstitutionRule(rule.Requested, rule.Substitute).EnsureValid())
                 .ToArray();
@@ -72,28 +80,64 @@ internal static class Program
                         project.TemplateSnapshot?.PanelLabelSequence,
                         project.TemplateSnapshot?.ShowPanelLabels ?? true,
                         project.TemplateSnapshot?.AutoPanelLabelsEnabled ?? true);
-                    FigurePreflightResult preflight = FigurePreflight.Check(
-                        new FigurePreflightContext(
+                    var figureContext = new FigurePreflightContext(
                             variant,
                             profile.Format,
                             profile,
                             labelScheme,
-                            SystemFontCatalog.Instance),
+                            SystemFontCatalog.Instance,
+                            WpfPdfFontCapabilityProvider.Instance);
+                    ScientificProject qcProject = ScientificQcProjectFactory.Create(
+                        project.ProjectId,
+                        project.Title ?? "SciCanvas Project",
+                        variant,
                         sources,
-                        hasUnsavedChanges: false);
-                    if (preflight.HasErrors)
+                        sourceRevisions,
+                        scientificObjects: exportContext.Rois.Cast<ScientificObject>().ToArray(),
+                        figureId: project.Workspace.ActiveFigureId,
+                        labelScheme: labelScheme,
+                        createdAt: project.CreatedAt,
+                        updatedAt: project.UpdatedAt);
+                    var scientificContext = new QcContext(
+                        qcProject,
+                        new QcConfiguration(
+                            MinimumEffectiveDpi: project.Workspace.MinimumEffectiveDpi,
+                            AlignmentToleranceMm: project.Workspace.AlignmentToleranceMm,
+                            SpacingToleranceMm: project.Workspace.SpacingToleranceMm),
+                        SystemFontCatalog.Instance,
+                        exportContext.MultiChannelGroups,
+                        exportContext.LinkGroups,
+                        rawCrops);
+                    UnifiedQcReport qc = qcCoordinator.Run(new ScientificQcRequest(
+                        figureContext,
+                        sources,
+                        scientificContext,
+                        HasUnsavedChanges: false,
+                        FigureConfiguration: new FigurePreflightConfiguration
+                        {
+                            MinimumEffectiveDpi = project.Workspace.MinimumEffectiveDpi,
+                        }));
+                    if (qc.HasErrors)
                     {
                         throw new InvalidDataException(string.Join(
                             Environment.NewLine,
-                            preflight.Issues
+                            qc.Issues
                                 .Where(issue => issue.Severity == FigurePreflightSeverity.Error)
                                 .Select(issue => issue.Message)));
                     }
+                    FigurePreflightResult preflight = qc.ToFigurePreflightResult();
 
                     string targetPath = CreateTargetPath(options.OutputDirectory, project.Title, profile);
                     EnsureNewSafeTarget(targetPath, sources);
                     Console.WriteLine($"EXPORT\t{profile.Name}\t{Path.GetFileName(targetPath)}");
                     await exporter.ExportAsync(variant, targetPath);
+                    foreach (PdfFontExportOutcome outcome in exporter.LastPdfFontOutcomes
+                                 .Where(item => item.Outlined && item.FallbackReason is not null))
+                    {
+                        Console.Error.WriteLine(
+                            $"WARNING\tPDF_FONT_OUTLINE_FALLBACK\t{outcome.EffectiveFont}" +
+                            $"{(outcome.IsBold ? " Bold" : string.Empty)}\t{outcome.FallbackReason}");
+                    }
 
                     if (profile.WriteProvenance && !options.DisableProvenance)
                     {
@@ -108,7 +152,8 @@ internal static class Program
                             sourceRevisions: project.Sources.ToDictionary(source => source.Id, source => source.SourceRevision),
                             fontResolutions: resolved.FontResolutions,
                             linkGroups: exportContext.LinkGroups,
-                            rois: exportContext.Rois);
+                            rois: exportContext.Rois,
+                            pdfFontOutcomes: exporter.LastPdfFontOutcomes);
                         FigureProvenanceWriter.WriteJson(provenance, Path.ChangeExtension(targetPath, ".provenance.json"));
                         FigureProvenanceWriter.WriteHtml(provenance, Path.ChangeExtension(targetPath, ".export-report.html"));
                     }

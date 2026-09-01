@@ -99,6 +99,11 @@ public sealed record ImagePlane
 
     public int FrameIndex { get; }
 
+    public ScientificPlaneRef PlaneRef => new(
+        AssetId,
+        SourceRevision,
+        ChannelPlaneSelector.FromDescriptor(FrameIndex, Channel));
+
     public PixelRect64 Region { get; }
 
     public int Width => checked((int)Region.Width);
@@ -131,10 +136,16 @@ public sealed record ImagePlaneRequest(
     PixelRect64 Region,
     long? SourceRevision = null)
 {
+    public ChannelPlaneSelector PlaneSelector =>
+        ChannelPlaneSelector.FromDescriptor(FrameIndex, ChannelSelector);
+
+    public ScientificPlaneRef PlaneRef => new(AssetId, SourceRevision, PlaneSelector);
+
     public ImagePlaneRequest EnsureValid()
     {
         ArgumentNullException.ThrowIfNull(ChannelSelector);
         ChannelSelector.EnsureValid();
+        PlaneRef.EnsureValid();
         if (AssetId == Guid.Empty || FrameIndex < 0 || SourceRevision < 0)
         {
             throw new InvalidOperationException("图像平面请求必须包含有效素材、帧、通道和可选源修订。");

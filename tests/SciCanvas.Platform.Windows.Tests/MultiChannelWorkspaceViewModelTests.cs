@@ -112,7 +112,42 @@ public sealed class MultiChannelWorkspaceViewModelTests
         Assert.True(editedMember.DisplaySettings.Invert);
     }
 
-    private static SourceAssetItemViewModel CreateSource(string displayName, int bitDepth)
+    [Fact]
+    public void MemberEditor_PreservesAndEditsExplicitInterleavedPlaneSelector()
+    {
+        SourceAssetItemViewModel reference = CreateSource("reference.tif", 8);
+        SourceAssetItemViewModel rgb = CreateSource("rgb.tif", 8, channels: 3, frameCount: 2);
+        ChannelGroupMember referenceMember = CreateMember(reference.Asset.Id, "Reference", "#FFFFFFFF");
+        ChannelGroupMember rgbMember = CreateMember(rgb.Asset.Id, "Blue", "#FF0000FF") with
+        {
+            PlaneSelector = ChannelPlaneSelector.InterleavedComponent(0, 2),
+        };
+        var workspace = new MultiChannelWorkspaceViewModel([reference, rgb]);
+        workspace.Restore(
+        [
+            new MultiChannelAssetGroup(
+                Guid.NewGuid(),
+                "RGB selector",
+                reference.Asset.Id,
+                [referenceMember, rgbMember],
+                SameFieldOfViewConfirmed: true),
+        ]);
+        ChannelGroupMemberViewModel editor = Assert.Single(workspace.Groups).Members[1];
+
+        Assert.Equal(ScientificChannelSourceKind.InterleavedComponent, editor.SourceKind);
+        Assert.Equal(2, editor.ComponentIndex);
+        editor.FrameIndex = 1;
+        editor.ComponentIndex = 1;
+
+        ChannelGroupMember restored = Assert.Single(workspace.CreateModels()).Members[1];
+        Assert.Equal(ChannelPlaneSelector.InterleavedComponent(1, 1), restored.PlaneSelector);
+    }
+
+    private static SourceAssetItemViewModel CreateSource(
+        string displayName,
+        int bitDepth,
+        int channels = 1,
+        int frameCount = 1)
     {
         var asset = new SourceAsset(
             Guid.NewGuid(),
@@ -121,9 +156,12 @@ public sealed class MultiChannelWorkspaceViewModelTests
             new SourceFingerprint(1, DateTimeOffset.UnixEpoch, new string('A', 64), null),
             new SciCanvas.Core.Images.ImageMetadata(
                 new PixelSize64(10, 10),
-                1,
+                channels,
                 bitDepth,
-                bitDepth == 16 ? "Gray16" : "Gray8"),
+                channels == 1
+                    ? bitDepth == 16 ? "Gray16" : "Gray8"
+                    : bitDepth == 16 ? "Rgb48" : "Rgb24",
+                frameCount: frameCount),
             SourceLinkState.Verified);
         byte[] pixels = [0];
         BitmapSource preview = BitmapSource.Create(
@@ -145,7 +183,7 @@ public sealed class MultiChannelWorkspaceViewModelTests
         return new ChannelGroupMember(
             channelId,
             assetId,
-            0,
+            ChannelPlaneSelector.ExternalAsset(frameIndex: 0),
             name,
             name == "SEM" ? "Reference" : "ElementalMap",
             color,

@@ -42,7 +42,7 @@ internal static class WpfHighBitDepthFigureExporter
         {
             cancellationToken.ThrowIfCancellationRequested();
             WpfFigureExporter.ValidatePanel(panel, document);
-            CompositePanel(document, panel, canvas);
+            CompositePanel(document, panel, canvas, cancellationToken);
         }
 
         CompositeOverlay(document, canvas, cancellationToken);
@@ -83,53 +83,39 @@ internal static class WpfHighBitDepthFigureExporter
     private static void CompositePanel(
         FigureExportDocument document,
         FigurePanelExportItem panel,
-        ushort[] canvas)
+        ushort[] canvas,
+        CancellationToken cancellationToken)
     {
-        BitmapSource crop = WpfFigureExporter.LoadPanelImage(panel);
-        var converted = new FormatConvertedBitmap(crop, PixelFormats.Rgb48, null, 0);
-        converted.Freeze();
-        int sourceStride = checked(converted.PixelWidth * 6);
-        ushort[] source = new ushort[checked(converted.PixelWidth * converted.PixelHeight * 3)];
-        converted.CopyPixels(source, sourceStride, 0);
+        WpfHighPrecisionPanelImage rendered = WpfHighPrecisionPanelRenderer.Render(panel, cancellationToken);
+        ushort[] source = rendered.Rgb48Samples;
 
         Rect contained = WpfFigureExporter.CalculateContainedRect(
-            converted.PixelWidth,
-            converted.PixelHeight,
+            rendered.Width,
+            rendered.Height,
             panel.DestinationRect);
         int left = Math.Max(0, (int)Math.Ceiling(contained.Left));
         int top = Math.Max(0, (int)Math.Ceiling(contained.Top));
         int right = Math.Min(document.WidthPixels, (int)Math.Floor(contained.Right));
         int bottom = Math.Min(document.HeightPixels, (int)Math.Floor(contained.Bottom));
-        ImageAdjustmentParameters adjustment = (panel.Adjustments ?? new()).Normalize();
-        if (!adjustment.IsValid)
-        {
-            throw new InvalidOperationException(adjustment.ValidationMessage);
-        }
-
-        if (adjustment.Channel == "alpha")
-        {
-            throw new InvalidOperationException("16-bit RGB TIFF cannot represent the selected alpha-channel view.");
-        }
-
         for (int y = top; y < bottom; y++)
         {
-            double sourceY = ((y + 0.5 - contained.Top) / contained.Height) * converted.PixelHeight - 0.5;
-            int y0 = Math.Clamp((int)Math.Floor(sourceY), 0, converted.PixelHeight - 1);
-            int y1 = Math.Min(y0 + 1, converted.PixelHeight - 1);
+            cancellationToken.ThrowIfCancellationRequested();
+            double sourceY = ((y + 0.5 - contained.Top) / contained.Height) * rendered.Height - 0.5;
+            int y0 = Math.Clamp((int)Math.Floor(sourceY), 0, rendered.Height - 1);
+            int y1 = Math.Min(y0 + 1, rendered.Height - 1);
             double fy = Math.Clamp(sourceY - Math.Floor(sourceY), 0, 1);
 
             for (int x = left; x < right; x++)
             {
-                double sourceX = ((x + 0.5 - contained.Left) / contained.Width) * converted.PixelWidth - 0.5;
-                int x0 = Math.Clamp((int)Math.Floor(sourceX), 0, converted.PixelWidth - 1);
-                int x1 = Math.Min(x0 + 1, converted.PixelWidth - 1);
+                double sourceX = ((x + 0.5 - contained.Left) / contained.Width) * rendered.Width - 0.5;
+                int x0 = Math.Clamp((int)Math.Floor(sourceX), 0, rendered.Width - 1);
+                int x1 = Math.Min(x0 + 1, rendered.Width - 1);
                 double fx = Math.Clamp(sourceX - Math.Floor(sourceX), 0, 1);
                 int targetIndex = (y * document.WidthPixels + x) * 3;
 
-                double red = Sample(source, converted.PixelWidth, x0, y0, x1, y1, fx, fy, 0);
-                double green = Sample(source, converted.PixelWidth, x0, y0, x1, y1, fx, fy, 1);
-                double blue = Sample(source, converted.PixelWidth, x0, y0, x1, y1, fx, fy, 2);
-                ApplyAdjustments(ref red, ref green, ref blue, adjustment);
+                double red = Sample(source, rendered.Width, x0, y0, x1, y1, fx, fy, 0);
+                double green = Sample(source, rendered.Width, x0, y0, x1, y1, fx, fy, 1);
+                double blue = Sample(source, rendered.Width, x0, y0, x1, y1, fx, fy, 2);
                 canvas[targetIndex] = ToUShort(red);
                 canvas[targetIndex + 1] = ToUShort(green);
                 canvas[targetIndex + 2] = ToUShort(blue);
@@ -156,55 +142,6 @@ internal static class WpfHighBitDepthFigureExporter
     private static double Lerp(double left, double right, double amount) =>
         left + (right - left) * amount;
 
-    private static void ApplyAdjustments(
-        ref double red,
-        ref double green,
-        ref double blue,
-        ImageAdjustmentParameters adjustment)
-    {
-        if (adjustment.Channel is "red" or "green" or "blue")
-        {
-            (red, green, blue) = adjustment.Channel switch
-            {
-                "red" => (red, 0, 0),
-                "green" => (0, green, 0),
-                "blue" => (0, 0, blue),
-                _ => (red, green, blue),
-            };
-        }
-
-        red = Transform(red, adjustment);
-        green = Transform(green, adjustment);
-        blue = Transform(blue, adjustment);
-        if (adjustment.Grayscale)
-        {
-            double gray = red * 0.2126 + green * 0.7152 + blue * 0.0722;
-            red = green = blue = gray;
-        }
-
-        if (adjustment.Invert)
-        {
-            red = 1 - red;
-            green = 1 - green;
-            blue = 1 - blue;
-        }
-
-        if (adjustment.Channel == "alpha")
-        {
-            red = green = blue = 1;
-        }
-    }
-
-    private static double Transform(double value, ImageAdjustmentParameters adjustment)
-    {
-        double normalized = (value - adjustment.BlackPoint) /
-                            Math.Max(0.0001, adjustment.WhitePoint - adjustment.BlackPoint);
-        normalized = Math.Clamp(normalized, 0, 1);
-        normalized = (normalized - 0.5) * (1 + adjustment.Contrast) + 0.5 + adjustment.Brightness;
-        normalized = Math.Clamp(normalized, 0, 1);
-        return Math.Pow(normalized, 1 / adjustment.Gamma);
-    }
-
     private static void CompositeOverlay(
         FigureExportDocument document,
         ushort[] canvas,
@@ -226,6 +163,16 @@ internal static class WpfHighBitDepthFigureExporter
                 WpfFigureExporter.DrawInsetBorder(drawing, panel, imageRect, document.Dpi, panelStyle);
                 WpfFigureExporter.DrawScaleBar(drawing, panel, imageRect, document.Dpi, panelStyle);
                 WpfFigureExporter.DrawPanelLabel(drawing, panel.Label, panel.DestinationRect, document.Dpi, panelStyle);
+            }
+
+            foreach (FigurePlotPanelExportItem plotPanel in
+                     document.PlotPanels.OrderBy(item => item.ZIndex).Where(item => item.IsVisible))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                WpfFigureExporter.ValidatePlotPanel(plotPanel, document);
+                WpfPlotPanelRenderer.Draw(drawing, plotPanel, document.GlobalStyle, document.Dpi);
+                FigureGlobalStyle panelStyle = document.GlobalStyle.ResolvePanelOverride(plotPanel.StyleOverride);
+                WpfFigureExporter.DrawPanelLabel(drawing, plotPanel.Label, plotPanel.DestinationRect, document.Dpi, panelStyle);
             }
 
             foreach (FigureAnnotationExportItem annotation in

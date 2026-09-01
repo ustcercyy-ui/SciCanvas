@@ -138,6 +138,10 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
         ? Visibility.Collapsed
         : Visibility.Visible;
 
+    public Visibility DirectionEditorVisibility => Kind is FigureAnnotationKind.Arrow or FigureAnnotationKind.Line
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+
     public string EndXLabel => Kind is FigureAnnotationKind.Arrow or FigureAnnotationKind.Line ? "终点 X" : "右下 X";
 
     public string EndYLabel => Kind is FigureAnnotationKind.Arrow or FigureAnnotationKind.Line ? "终点 Y" : "右下 Y";
@@ -346,13 +350,25 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
     public bool IsLocked
     {
         get => _isLocked;
-        set => SetProperty(ref _isLocked, value);
+        set
+        {
+            if (SetProperty(ref _isLocked, value))
+            {
+                OnPropertyChanged(nameof(SelectionHandleVisibility));
+            }
+        }
     }
 
     public bool IsSelected
     {
         get => _isSelected;
-        internal set => SetProperty(ref _isSelected, value);
+        internal set
+        {
+            if (SetProperty(ref _isSelected, value))
+            {
+                OnPropertyChanged(nameof(SelectionHandleVisibility));
+            }
+        }
     }
 
     public int ZIndex
@@ -370,6 +386,34 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
     public double ShapeWidth => Math.Max(0, EndX - X);
 
     public double ShapeHeight => Math.Max(0, EndY - Y);
+
+    public Rect Bounds => Kind == FigureAnnotationKind.Text
+        ? new Rect(X, Y, 0, 0)
+        : new Rect(
+            Math.Min(X, EndX),
+            Math.Min(Y, EndY),
+            Math.Abs(EndX - X),
+            Math.Abs(EndY - Y));
+
+    public double EndOffsetX => EndX - X;
+
+    public double EndOffsetY => EndY - Y;
+
+    public Visibility SelectionHandleVisibility => IsSelected && !IsLocked && Kind != FigureAnnotationKind.Text
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+
+    /// <summary>
+    /// Clockwise direction in screen coordinates. Applies to line and arrow annotations while
+    /// preserving their midpoint and length as far as the canvas bounds allow.
+    /// </summary>
+    public double DirectionAngleDegrees
+    {
+        get => Kind is FigureAnnotationKind.Arrow or FigureAnnotationKind.Line
+            ? NormalizeAngle(Math.Atan2(EndY - Y, EndX - X) * 180.0 / Math.PI)
+            : 0;
+        set => SetDirectionAngle(value);
+    }
 
     public Geometry ArrowGeometry => CreateArrowGeometry();
 
@@ -519,6 +563,81 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
         }
     }
 
+    public void SetStartPoint(double x, double y)
+    {
+        if (IsLocked || Kind == FigureAnnotationKind.Text || !double.IsFinite(x) || !double.IsFinite(y))
+        {
+            return;
+        }
+
+        if (Kind is FigureAnnotationKind.Rectangle or FigureAnnotationKind.Ellipse)
+        {
+            X = Math.Clamp(x, 0, Math.Max(0, EndX - 5));
+            Y = Math.Clamp(y, 0, Math.Max(0, EndY - 5));
+            return;
+        }
+
+        X = Math.Clamp(x, 0, _canvasWidth);
+        Y = Math.Clamp(y, 0, _canvasHeight);
+    }
+
+    public void SetEndPoint(double x, double y)
+    {
+        if (IsLocked || Kind == FigureAnnotationKind.Text || !double.IsFinite(x) || !double.IsFinite(y))
+        {
+            return;
+        }
+
+        if (Kind is FigureAnnotationKind.Rectangle or FigureAnnotationKind.Ellipse)
+        {
+            EndX = Math.Clamp(x, Math.Min(_canvasWidth, X + 5), _canvasWidth);
+            EndY = Math.Clamp(y, Math.Min(_canvasHeight, Y + 5), _canvasHeight);
+            return;
+        }
+
+        EndX = Math.Clamp(x, 0, _canvasWidth);
+        EndY = Math.Clamp(y, 0, _canvasHeight);
+    }
+
+    public void SetDirectionAngle(double angleDegrees)
+    {
+        if (IsLocked || Kind is not (FigureAnnotationKind.Arrow or FigureAnnotationKind.Line) ||
+            !double.IsFinite(angleDegrees))
+        {
+            return;
+        }
+
+        double length = Distance(EndX - X, EndY - Y);
+        if (length < 0.001)
+        {
+            return;
+        }
+
+        double radians = NormalizeAngle(angleDegrees) * Math.PI / 180.0;
+        double cosine = Math.Cos(radians);
+        double sine = Math.Sin(radians);
+        double maximumLength = Math.Min(
+            Math.Abs(cosine) < 1e-9 ? double.PositiveInfinity : _canvasWidth / Math.Abs(cosine),
+            Math.Abs(sine) < 1e-9 ? double.PositiveInfinity : _canvasHeight / Math.Abs(sine));
+        length = Math.Min(length, maximumLength);
+
+        double centerX = (X + EndX) / 2;
+        double centerY = (Y + EndY) / 2;
+        double halfX = cosine * length / 2;
+        double halfY = sine * length / 2;
+        double startX = centerX - halfX;
+        double startY = centerY - halfY;
+        double endX = centerX + halfX;
+        double endY = centerY + halfY;
+        double shiftX = Math.Clamp(0, -Math.Min(startX, endX), _canvasWidth - Math.Max(startX, endX));
+        double shiftY = Math.Clamp(0, -Math.Min(startY, endY), _canvasHeight - Math.Max(startY, endY));
+
+        X = startX + shiftX;
+        Y = startY + shiftY;
+        EndX = endX + shiftX;
+        EndY = endY + shiftY;
+    }
+
     public FigureAnnotationExportItem CreateExportItem()
     {
         if (!IsValid)
@@ -542,7 +661,10 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
             StrokeWidthPt,
             IsBold,
             IsVisible,
-            ZIndex);
+            ZIndex)
+        {
+            Id = Id,
+        };
     }
 
     public FigureAnnotationStyle CaptureStyle() => new(
@@ -647,6 +769,10 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
         OnPropertyChanged(nameof(LineGeometry));
         OnPropertyChanged(nameof(ShapeWidth));
         OnPropertyChanged(nameof(ShapeHeight));
+        OnPropertyChanged(nameof(Bounds));
+        OnPropertyChanged(nameof(EndOffsetX));
+        OnPropertyChanged(nameof(EndOffsetY));
+        OnPropertyChanged(nameof(DirectionAngleDegrees));
         OnPropertyChanged(nameof(Summary));
         NotifyValidationChanged();
     }
@@ -660,6 +786,21 @@ public sealed partial class FigureAnnotationViewModel : ObservableObject
 
     private static double Distance(double deltaX, double deltaY) =>
         Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
+
+    private static double NormalizeAngle(double value)
+    {
+        double normalized = value % 360;
+        if (normalized >= 180)
+        {
+            normalized -= 360;
+        }
+        else if (normalized < -180)
+        {
+            normalized += 360;
+        }
+
+        return normalized;
+    }
 
     private static double NormalizeRange(double value, double minimum, double maximum, double fallback) =>
         double.IsFinite(value) ? Math.Clamp(value, minimum, maximum) : fallback;

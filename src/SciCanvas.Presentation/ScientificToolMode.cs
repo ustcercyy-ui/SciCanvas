@@ -9,4 +9,9 @@ public enum ScientificToolMode
     RectangleRoi,
     CircleRoi,
     Polyline,
+    CanonicalRoiSelect,
+    CanonicalRoiRectangle,
+    CanonicalRoiEllipse,
+    CanonicalRoiPolygon,
+    CanonicalRoiPolyline,
 }

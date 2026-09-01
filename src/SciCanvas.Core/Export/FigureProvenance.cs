@@ -1,7 +1,9 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using SciCanvas.Core.Channels;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
+using SciCanvas.Core.Linking;
 using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
 using SciCanvas.Core.Workspace;
@@ -38,6 +40,24 @@ public sealed record FigureProvenancePanel(
     Guid? CompositeGroupId = null,
     IReadOnlyList<Guid>? ChannelIds = null);
 
+public sealed record FigureProvenancePlotPanel(
+    Guid PanelId,
+    Guid PlotId,
+    string PlotName,
+    string PlotKind,
+    Guid DataAssetId,
+    long SourceRevision,
+    PixelRect64 DestinationRect,
+    string Label,
+    bool Visible,
+    int ZIndex,
+    int SourceRowCount,
+    int IncludedRowCount,
+    int ExcludedRowCount,
+    int UnplottableRowCount,
+    string? FilterExpression,
+    IReadOnlyList<string> AppliedTransforms);
+
 public sealed record FigureProvenanceMeasurementOverlay(
     Guid OverlayId,
     Guid MeasurementId,
@@ -50,6 +70,22 @@ public sealed record FigureProvenanceMeasurementOverlay(
     FigureMeasurementOverlayStyle Style,
     bool Visible,
     int ZIndex);
+
+/// <summary>
+/// Auditable Figure reference to canonical ROI identity. ROI geometry is intentionally
+/// excluded because it remains canonical in the project ROI collection.
+/// </summary>
+public sealed record FigureProvenanceRoiProjection(
+    Guid ProjectionId,
+    Guid RoiId,
+    Guid PanelId,
+    Guid AssetId,
+    long SourceRevision,
+    string GeometryKind,
+    string ValidityState,
+    bool Visible,
+    int ZIndex);
+
 public sealed record FigureProvenanceFontResolution(
     string RequestedFont,
     string EffectiveFont,
@@ -90,7 +126,34 @@ public sealed record FigureProvenanceChannel(
     string Color,
     double Opacity,
     string RenderMode,
-    string BlendMode);
+    string BlendMode,
+    string SourceKind = "ExternalAsset",
+    int? ComponentIndex = null,
+    int? ZIndex = null,
+    int? CIndex = null,
+    int? TIndex = null,
+    Guid? MappingId = null,
+    string? MappingKind = null,
+    SpatialMatrix3x3? MappingMatrix = null,
+    string? Interpolation = null,
+    FigureProvenanceReferenceGrid? ReferenceGrid = null,
+    long? MappingSourceRevision = null,
+    long? MappingTargetRevision = null,
+    string? BorderPolicy = null,
+    string? PlaneSemantic = null);
+
+public sealed record FigureProvenanceReferenceGrid(
+    Guid AssetId,
+    long SourceRevision,
+    int FrameIndex,
+    PixelRect64 Region,
+    int Width,
+    int Height,
+    string SourceKind = "ExternalAsset",
+    int? ComponentIndex = null,
+    int? ZIndex = null,
+    int? CIndex = null,
+    int? TIndex = null);
 
 public sealed record FigureProvenanceRegistration(
     Guid LinkGroupId,
@@ -111,7 +174,8 @@ public sealed record FigureProvenanceRoiPropagation(
     Guid ReferenceRoiId,
     Guid TargetRoiId,
     Guid LinkGroupId,
-    Guid MappingId);
+    Guid MappingId,
+    double TargetCoverageFraction);
 
 public sealed record FigureProvenanceColorbar(
     Guid ObjectId,
@@ -119,7 +183,10 @@ public sealed record FigureProvenanceColorbar(
     double Maximum,
     string Unit,
     string Colormap,
-    Guid? ChannelId);
+    Guid? ChannelId,
+    string BindingState,
+    string Orientation,
+    IReadOnlyList<ColorbarTick> Ticks);
 
 public sealed record FigureProvenanceChannelLegendEntry(
     Guid? ChannelId,
@@ -128,7 +195,16 @@ public sealed record FigureProvenanceChannelLegendEntry(
 
 public sealed record FigureProvenanceChannelLegend(
     Guid ObjectId,
-    IReadOnlyList<FigureProvenanceChannelLegendEntry> Entries);
+    IReadOnlyList<FigureProvenanceChannelLegendEntry> Entries,
+    string FontFamily,
+    double FontSizePt,
+    bool IsBold,
+    string TextColor,
+    string BackgroundColor,
+    double BackgroundOpacityPercent,
+    string BorderColor,
+    double BorderWidthPt,
+    double PaddingPixels);
 
 public sealed record FigureProvenancePdfFont(
     string RequestedFont,
@@ -170,6 +246,7 @@ public sealed record FigureProvenanceDocument(
     string? ExportProfileName = null,
     IReadOnlyList<FigureProvenanceAnalysis>? Analyses = null,
     IReadOnlyList<FigureProvenanceMeasurementOverlay>? MeasurementOverlays = null,
+    IReadOnlyList<FigureProvenanceRoiProjection>? RoiProjections = null,
     IReadOnlyList<FigureProvenanceScientificObject>? ScientificObjects = null,
     IReadOnlyList<FigureProvenanceChannel>? Channels = null,
     IReadOnlyList<FigureProvenanceRegistration>? Registrations = null,
@@ -177,7 +254,8 @@ public sealed record FigureProvenanceDocument(
     IReadOnlyList<FigureProvenanceColorbar>? Colorbars = null,
     IReadOnlyList<FigureProvenanceChannelLegend>? ChannelLegends = null,
     IReadOnlyList<FigureProvenanceFontResolution>? FontResolutions = null,
-    IReadOnlyList<FigureProvenancePdfFont>? PdfFonts = null);
+    IReadOnlyList<FigureProvenancePdfFont>? PdfFonts = null,
+    IReadOnlyList<FigureProvenancePlotPanel>? PlotPanels = null);
 
 public static class FigureProvenanceWriter
 {
@@ -219,7 +297,8 @@ public static class FigureProvenanceWriter
         IEnumerable<ScientificImageAnalysisResult>? analyses = null,
         IEnumerable<ResolvedFont>? fontResolutions = null,
         IEnumerable<SciCanvas.Core.Linking.LinkGroup>? linkGroups = null,
-        IEnumerable<RoiObject>? rois = null)
+        IEnumerable<RoiObject>? rois = null,
+        IEnumerable<PdfFontExportOutcome>? pdfFontOutcomes = null)
     {
         ResolvedFont[] resolvedFonts = (fontResolutions ?? CreateExactFontResolutions(document))
             .DistinctBy(item => item.RequestedFamily, StringComparer.OrdinalIgnoreCase)
@@ -228,6 +307,7 @@ public static class FigureProvenanceWriter
         FigureProvenanceFontResolution[] fontRecords = resolvedFonts
             .Select(CreateFontResolutionProvenance)
             .ToArray();
+        PdfFontExportOutcome[] actualPdfFontOutcomes = (pdfFontOutcomes ?? []).ToArray();
         return new FigureProvenanceDocument(
             "SciCanvas",
             softwareVersion,
@@ -283,6 +363,16 @@ public static class FigureProvenanceWriter
                 overlay.Style,
                 overlay.IsVisible,
                 overlay.ZIndex)).ToArray(),
+            document.RoiProjections.Select(item => new FigureProvenanceRoiProjection(
+                item.Id,
+                item.RoiId,
+                item.PanelId,
+                item.AssetId,
+                item.SourceRevision,
+                item.CanonicalRoi.GeometryKind.ToString(),
+                item.CanonicalRoi.Validity.State.ToString(),
+                item.IsVisible,
+                item.ZIndex)).ToArray(),
             document.ScientificObjects.Select(item => CreateScientificObjectProvenance(item, resolvedFonts)).ToArray(),
             document.Panels.SelectMany(panel => panel.EffectiveChannelLayers)
                 .Select(layer => new FigureProvenanceChannel(
@@ -299,8 +389,47 @@ public static class FigureProvenanceWriter
                     layer.DisplaySettings.Color,
                     layer.DisplaySettings.Opacity,
                     layer.RenderMode,
-                    layer.BlendMode))
-                .DistinctBy(item => (item.GroupId, item.ChannelId, item.SourceAssetId, item.Frame))
+                    layer.BlendMode,
+                    layer.PlaneRef.SourceKind.ToString(),
+                    layer.PlaneRef.ComponentIndex,
+                    layer.PlaneRef.ZIndex,
+                    layer.PlaneRef.CIndex,
+                    layer.PlaneRef.TIndex,
+                    layer.RegistrationResampling?.Mapping.Id,
+                    layer.RegistrationResampling?.Mapping.Kind.ToString(),
+                    layer.RegistrationResampling?.Mapping.Matrix,
+                    layer.RegistrationResampling?.Interpolation.ToString(),
+                    layer.RegistrationResampling is { } resampling
+                        ? new FigureProvenanceReferenceGrid(
+                            resampling.ReferenceGrid.PlaneRef.AssetId,
+                            resampling.ReferenceGrid.PlaneRef.SourceRevision!.Value,
+                            resampling.ReferenceGrid.PlaneRef.FrameIndex,
+                            resampling.ReferenceGrid.Region,
+                            resampling.ReferenceGrid.Width,
+                            resampling.ReferenceGrid.Height,
+                            resampling.ReferenceGrid.PlaneRef.SourceKind.ToString(),
+                            resampling.ReferenceGrid.PlaneRef.ComponentIndex,
+                            resampling.ReferenceGrid.PlaneRef.ZIndex,
+                            resampling.ReferenceGrid.PlaneRef.CIndex,
+                            resampling.ReferenceGrid.PlaneRef.TIndex)
+                        : null,
+                    layer.RegistrationResampling?.Mapping.SourceRevision,
+                    layer.RegistrationResampling?.Mapping.TargetRevision,
+                    layer.RegistrationResampling?.BorderPolicy.ToString(),
+                    layer.RegistrationResampling?.Semantic.ToString()))
+                .DistinctBy(item => (
+                    item.GroupId,
+                    item.ChannelId,
+                    item.SourceAssetId,
+                    item.Frame,
+                    item.SourceKind,
+                    item.ComponentIndex,
+                    item.ZIndex,
+                    item.CIndex,
+                    item.TIndex,
+                    item.MappingId,
+                    item.Interpolation,
+                    item.ReferenceGrid?.Region))
                 .ToArray(),
             (linkGroups ?? []).SelectMany(group => group.Mappings.Select(mapping =>
                 new FigureProvenanceRegistration(
@@ -322,17 +451,66 @@ public static class FigureProvenanceWriter
                     roi.Propagation!.ReferenceRoiId,
                     roi.Propagation.TargetRoiId,
                     roi.Propagation.LinkGroupId,
-                    roi.Propagation.MappingId)).ToArray(),
+                    roi.Propagation.MappingId,
+                    roi.Propagation.TargetCoverageFraction)).ToArray(),
             document.ScientificObjects.Where(item => item.Kind == FigureScientificObjectKind.Colorbar)
-                .Select(item => new FigureProvenanceColorbar(
-                    item.Id, item.Minimum, item.Maximum, item.Unit, item.Colormap, item.ChannelId)).ToArray(),
+                .Select(item =>
+                {
+                    FigureColorbarExportSpec colorbar = item.EffectiveColorbar!;
+                    return new FigureProvenanceColorbar(
+                        item.Id,
+                        colorbar.Minimum,
+                        colorbar.Maximum,
+                        colorbar.Unit,
+                        colorbar.Colormap,
+                        colorbar.ChannelId,
+                        colorbar.BindingState.ToString(),
+                        colorbar.Orientation.ToString(),
+                        colorbar.Ticks);
+                }).ToArray(),
             document.ScientificObjects.Where(item => item.Kind == FigureScientificObjectKind.ChannelLegend)
-                .Select(item => new FigureProvenanceChannelLegend(
-                    item.Id,
-                    item.EffectiveChannelLegendEntries.Select(entry =>
-                        new FigureProvenanceChannelLegendEntry(null, entry.Label, entry.Color)).ToArray())).ToArray(),
+                .Select(item =>
+                {
+                    FigureChannelLegendExportSpec legend = item.EffectiveChannelLegend!;
+                    return new FigureProvenanceChannelLegend(
+                        item.Id,
+                        legend.Items.Select(entry =>
+                            new FigureProvenanceChannelLegendEntry(
+                                entry.ChannelId,
+                                entry.Label,
+                                entry.Color)).ToArray(),
+                        legend.FontFamily,
+                        legend.FontSizePt,
+                        legend.IsBold,
+                        legend.TextColor,
+                        legend.BackgroundColor,
+                        legend.BackgroundOpacityPercent,
+                        legend.BorderColor,
+                        legend.BorderWidthPt,
+                        legend.PaddingPixels);
+                }).ToArray(),
             fontRecords,
-            resolvedFonts.Select(font => CreatePdfFontProvenance(font, document.PdfFontStrategy)).ToArray());
+            resolvedFonts.Select(font => CreatePdfFontProvenance(
+                font,
+                document.PdfFontStrategy,
+                actualPdfFontOutcomes)).ToArray(),
+            document.PlotPanels.Select(panel => new FigureProvenancePlotPanel(
+                panel.PanelId,
+                panel.Plot.Id,
+                panel.Plot.Name,
+                panel.Plot.PlotType.ToString(),
+                panel.Plot.Data.DataAssetId,
+                panel.Plot.Data.SourceRevision,
+                panel.DestinationRect,
+                panel.Label,
+                panel.IsVisible,
+                panel.ZIndex,
+                panel.Projection.SourceRowCount,
+                panel.Projection.IncludedRowCount,
+                panel.Projection.ExcludedRowCount,
+                panel.Projection.UnplottableRowCount,
+                panel.Plot.Filter?.Expression,
+                panel.Projection.AppliedTransforms)).ToArray());
     }
 
     private static FigureProvenanceScientificObject CreateScientificObjectProvenance(
@@ -372,36 +550,51 @@ public static class FigureProvenanceWriter
 
     private static FigureProvenancePdfFont CreatePdfFontProvenance(
         ResolvedFont font,
-        PdfFontStrategy strategy)
+        PdfFontStrategy strategy,
+        IReadOnlyList<PdfFontExportOutcome> outcomes)
     {
-        bool outlined = strategy != PdfFontStrategy.EmbedSubsetWhenPermitted;
-        string? fallback = strategy == PdfFontStrategy.PreferEmbeddedWithOutlineFallback
-            ? "the current PDF writer has no reliable subset/ToUnicode implementation"
-            : strategy == PdfFontStrategy.EmbedSubsetWhenPermitted
-                ? "strict embedding must pass preflight before export"
-                : null;
+        PdfFontExportOutcome[] matching = outcomes
+            .Where(outcome => string.Equals(
+                outcome.EffectiveFont,
+                font.EffectiveFamily,
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        bool embedded = matching.Any(outcome => outcome.Embedded);
+        bool outlined = matching.Any(outcome => outcome.Outlined);
+        string? fallback = string.Join(
+            "; ",
+            matching
+                .Select(outcome => outcome.FallbackReason)
+                .Where(reason => !string.IsNullOrWhiteSpace(reason))
+                .Select(reason => reason!)
+                .Distinct(StringComparer.Ordinal));
+        if (matching.Length == 0)
+        {
+            outlined = strategy != PdfFontStrategy.EmbedSubsetWhenPermitted;
+            fallback = strategy == PdfFontStrategy.PreferEmbeddedWithOutlineFallback
+                ? "writer outcome was not supplied; outline fallback is conservatively reported"
+                : strategy == PdfFontStrategy.EmbedSubsetWhenPermitted
+                    ? "writer outcome was not supplied"
+                    : null;
+        }
+        else if (fallback.Length == 0)
+        {
+            fallback = null;
+        }
         return new FigureProvenancePdfFont(
             font.RequestedFamily,
             font.EffectiveFamily,
             font.SubstitutionRule?.SubstituteFontFamily,
             strategy.ToString(),
-            Embedded: false,
+            Embedded: embedded,
             Outlined: outlined,
             FallbackReason: fallback);
     }
 
     private static IEnumerable<ResolvedFont> CreateExactFontResolutions(FigureExportDocument document)
     {
-        IEnumerable<string> fonts =
-        [
-            document.GlobalStyle.FontFamily,
-            document.GlobalStyle.EffectivePanelLabelFontFamily,
-            document.GlobalStyle.EffectiveScaleBarFontFamily,
-            .. document.Annotations.Select(item => item.FontFamily),
-            .. document.MeasurementOverlays.Select(item => item.Style.LabelFontFamily),
-            .. document.ScientificObjects.Select(item => item.FontFamily),
-        ];
-        return fonts.Where(font => !string.IsNullOrWhiteSpace(font))
+        return FontUsageCollector.Collect(document)
+            .Select(usage => usage.RequestedFont)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Select(font => new ResolvedFont(font, font, FontResolutionKind.Exact));
     }
@@ -421,6 +614,8 @@ public static class FigureProvenanceWriter
                 ["region"] = roi.Region,
                 ["sourceBitDepth"] = roi.SourceBitDepth,
                 ["histogramBinCount"] = roi.Histogram.Bins.Count,
+                ["clippedToImage"] = roi.ClippedToImage,
+                ["coverageFraction"] = roi.CoverageFraction,
             },
             IntensityProfileResult profile => new Dictionary<string, object?>
             {
@@ -436,7 +631,11 @@ public static class FigureProvenanceWriter
                 ["requestedThreshold"] = particles.Options.ThresholdNormalized,
                 ["appliedThreshold"] = particles.AppliedThresholdNormalized,
                 ["minimumAreaPixels"] = particles.Options.MinimumAreaPixels,
-                ["resultLimit"] = null,
+                ["resultLimit"] = "complete-or-AnalysisTooComplex",
+                ["maxPixels"] = particles.ResourcePolicy.MaxPixels,
+                ["maxComponentsSafety"] = particles.ResourcePolicy.MaxComponentsSafety,
+                ["maxBoundaryPoints"] = particles.ResourcePolicy.MaxBoundaryPoints,
+                ["memoryBudgetBytes"] = particles.ResourcePolicy.MemoryBudgetBytes,
                 ["particleCount"] = particles.Candidates.Count,
                 ["sourceBitDepth"] = particles.SourceBitDepth,
             },

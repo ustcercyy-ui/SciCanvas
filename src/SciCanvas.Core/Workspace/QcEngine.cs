@@ -1,4 +1,5 @@
 using SciCanvas.Core.Channels;
+using SciCanvas.Core.Export;
 using SpatialLinkGroup = SciCanvas.Core.Linking.LinkGroup;
 using SciCanvas.Core.Sources;
 
@@ -387,66 +388,16 @@ internal sealed class FontAvailabilityRule()
             yield break;
         }
 
-        var references = new List<(string Font, Guid? FigureId, Guid? PanelId, Guid? ObjectId)>
-        {
-            (context.Project.Style.PanelLabel.FontFamily, null, null, null),
-            (context.Project.Style.Annotation.FontFamily, null, null, null),
-            (context.Project.Style.ScaleBarText.FontFamily, null, null, null),
-            (context.Project.Style.EffectiveMeasurement.Label.FontFamily, null, null, null),
-        };
-        foreach (ScientificFigure figure in context.Project.Figures.Values)
-        {
-            AddOverride(references, figure.StyleOverride, figure.Id, null, null);
-            foreach (FigurePanel panel in figure.Panels)
-            {
-                AddOverride(references, panel.StyleOverride, figure.Id, panel.Id, null);
-            }
-        }
-
-        foreach (ScientificObject scientificObject in context.Project.ScientificObjects.Values)
-        {
-            AddOverride(references, scientificObject.StyleOverride, null, scientificObject.PanelId, scientificObject.Id);
-        }
-
-        foreach (var reference in references
-                     .Where(item => !context.FontCatalog.IsInstalled(item.Font))
-                     .DistinctBy(item => (item.Font.ToUpperInvariant(), item.FigureId, item.PanelId, item.ObjectId)))
+        foreach (FontUsage usage in FontUsageCollector.Collect(context.Project)
+                     .Where(usage => !context.FontCatalog.IsInstalled(usage.RequestedFont)))
         {
             yield return Issue(
                 QcSeverity.Warning,
-                $"{reference.Font}:{reference.FigureId:N}:{reference.PanelId:N}:{reference.ObjectId:N}",
-                $"Font “{reference.Font}” is not installed on this system. Export will use a fallback font.",
-                reference.FigureId,
-                reference.PanelId,
-                objectId: reference.ObjectId);
-        }
-    }
-
-    private static void AddOverride(
-        ICollection<(string Font, Guid? FigureId, Guid? PanelId, Guid? ObjectId)> target,
-        StyleOverride? style,
-        Guid? figureId,
-        Guid? panelId,
-        Guid? objectId)
-    {
-        if (style?.PanelLabel is { } panelLabel)
-        {
-            target.Add((panelLabel.FontFamily, figureId, panelId, objectId));
-        }
-
-        if (style?.Annotation is { } annotation)
-        {
-            target.Add((annotation.FontFamily, figureId, panelId, objectId));
-        }
-
-        if (style?.ScaleBarText is { } scaleBarText)
-        {
-            target.Add((scaleBarText.FontFamily, figureId, panelId, objectId));
-        }
-
-        if (style?.Measurement is { } measurement)
-        {
-            target.Add((measurement.Label.FontFamily, figureId, panelId, objectId));
+                $"{usage.RequestedFont}:{usage.UsageKind}:{usage.FigureId:N}:{usage.PanelId:N}:{usage.ObjectId:N}",
+                $"{usage.UsageKind} font “{usage.RequestedFont}” is not installed on this system. Export will use a fallback font.",
+                usage.FigureId,
+                usage.PanelId,
+                objectId: usage.ObjectId);
         }
     }
 }

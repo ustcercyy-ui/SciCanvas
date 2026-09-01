@@ -84,6 +84,38 @@ public sealed class IntegrityQcTests
     }
 
     [Fact]
+    public void QcEngine_ReportsExplicitWarningForImageClippedRoiStatistics()
+    {
+        ScientificAsset asset = Asset();
+        var result = new RoiStatisticsResult
+        {
+            Id = Guid.NewGuid(),
+            SourceAssetId = asset.Id,
+            SourceRevision = 1,
+            AnalyzerId = "test.roi.v2",
+            Region = new PixelRect64(0, 0, 10, 10),
+            ClippedToImage = true,
+            CoverageFraction = 0.5,
+            Validity = AnalysisResultValidity.ReviewRequired("ROI clipped."),
+        };
+        var analysis = new AnalysisResultObject
+        {
+            Id = Guid.NewGuid(),
+            AssetId = asset.Id,
+            Result = result,
+        };
+        ScientificProject project = Project([asset], [analysis]);
+
+        QcResult warning = Assert.Single(
+            new QcEngine().Evaluate(new QcContext(project, new QcConfiguration())),
+            item => item.RuleId == "analysis.roi-clipped-to-image");
+
+        Assert.Equal(QcSeverity.Warning, warning.Severity);
+        Assert.Contains("0.5", warning.Message, StringComparison.Ordinal);
+        Assert.Equal(result.Id, warning.Location.AnalysisResultId);
+    }
+
+    [Fact]
     public void QcEngine_ReportsChannelAndMappingIntegrityRules()
     {
         ScientificAsset reference = Asset();
@@ -201,7 +233,7 @@ public sealed class IntegrityQcTests
         bool invalidRange = false) => new(
             channelId,
             assetId,
-            0,
+            ChannelPlaneSelector.ExternalAsset(frameIndex: 0),
             name,
             null,
             "#FFFFFFFF",

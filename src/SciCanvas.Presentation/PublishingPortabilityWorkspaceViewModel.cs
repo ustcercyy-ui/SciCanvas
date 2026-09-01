@@ -9,6 +9,7 @@ namespace SciCanvas.Presentation;
 public sealed class PublishingPortabilityWorkspaceViewModel : ObservableObject, IDisposable
 {
     private FigureCanvasViewModel _figure;
+    private readonly Func<FigureExportDocument>? _createExportDocument;
     private JournalExportPreset? _selectedPreset;
     private FontSubstitutionItemViewModel? _selectedSubstitution;
     private string _presetJson = string.Empty;
@@ -16,10 +17,14 @@ public sealed class PublishingPortabilityWorkspaceViewModel : ObservableObject, 
     private string _substituteFont = "Arial";
     private string _statusText = "Preset JSON 与字体替换只作用于当前工程；requested font 永不被改写。";
     private JournalPresetCollisionPolicy _collisionPolicy = JournalPresetCollisionPolicy.RequireDecision;
+    private bool _isRefreshingMissingFonts;
 
-    public PublishingPortabilityWorkspaceViewModel(FigureCanvasViewModel figure)
+    public PublishingPortabilityWorkspaceViewModel(
+        FigureCanvasViewModel figure,
+        Func<FigureExportDocument>? createExportDocument = null)
     {
         _figure = figure ?? throw new ArgumentNullException(nameof(figure));
+        _createExportDocument = createExportDocument;
         _figure.DocumentChanged += OnFigureChanged;
         foreach (JournalExportPreset preset in JournalExportPreset.BuiltIns)
         {
@@ -281,53 +286,55 @@ public sealed class PublishingPortabilityWorkspaceViewModel : ObservableObject, 
 
     private void RefreshMissingFonts()
     {
-        Dictionary<string, List<string>> uses = new(StringComparer.OrdinalIgnoreCase);
-        AddUse(_figure.GlobalFontFamily, "Figure annotations", uses);
-        AddUse(_figure.PanelLabelFontFamily, "Panel labels", uses);
-        AddUse(_figure.ScaleBarFontFamily, "Scale bars", uses);
-        foreach (FigureAnnotationViewModel annotation in _figure.Annotations)
-        {
-            AddUse(annotation.FontFamily, $"Annotation {annotation.Id}", uses);
-        }
-
-        foreach (FigureScientificObjectViewModel scientificObject in _figure.ScientificObjects)
-        {
-            AddUse(scientificObject.FontFamily, $"{scientificObject.KindDisplayName} {scientificObject.Id}", uses);
-        }
-
-        MissingFonts.Clear();
-        foreach ((string requested, List<string> usedBy) in uses
-                     .Where(item => !SystemFontCatalog.Instance.IsInstalled(item.Key))
-                     .OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase))
-        {
-            string? substitute = Substitutions.FirstOrDefault(item =>
-                string.Equals(item.RequestedFontFamily, requested, StringComparison.OrdinalIgnoreCase))
-                ?.SubstituteFontFamily;
-            MissingFonts.Add(new MissingFontItemViewModel(
-                requested,
-                substitute,
-                string.Join(", ", usedBy.Distinct(StringComparer.Ordinal))));
-        }
-
-        OnPropertyChanged(nameof(InstalledFonts));
-    }
-
-    private static void AddUse(string? font, string role, IDictionary<string, List<string>> uses)
-    {
-        if (string.IsNullOrWhiteSpace(font))
+        if (_isRefreshingMissingFonts)
         {
             return;
         }
 
-        string requested = font.Trim();
-        if (!uses.TryGetValue(requested, out List<string>? roles))
+        _isRefreshingMissingFonts = true;
+        try
         {
-            roles = [];
-            uses[requested] = roles;
-        }
+            IReadOnlyList<FontUsage> fontUsages;
+            try
+            {
+                FigureExportDocument document = _createExportDocument?.Invoke() ??
+                                                _figure.CreateExportDocument();
+                fontUsages = FontUsageCollector.Collect(document);
+            }
+            catch (Exception exception) when (
+                exception is InvalidOperationException or ArgumentException or FormatException)
+            {
+                StatusText = $"字体使用图尚未形成有效 export snapshot：{exception.Message}";
+                return;
+            }
 
-        roles.Add(role);
+            MissingFonts.Clear();
+            foreach (IGrouping<string, FontUsage> group in fontUsages
+                         .Where(usage => !SystemFontCatalog.Instance.IsInstalled(usage.RequestedFont))
+                         .GroupBy(usage => usage.RequestedFont, StringComparer.OrdinalIgnoreCase)
+                         .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                string? substitute = Substitutions.FirstOrDefault(item =>
+                    string.Equals(item.RequestedFontFamily, group.Key, StringComparison.OrdinalIgnoreCase))
+                    ?.SubstituteFontFamily;
+                MissingFonts.Add(new MissingFontItemViewModel(
+                    group.Key,
+                    substitute,
+                    string.Join(", ", group.Select(FormatUsage).Distinct(StringComparer.Ordinal))));
+            }
+
+            OnPropertyChanged(nameof(InstalledFonts));
+        }
+        finally
+        {
+            _isRefreshingMissingFonts = false;
+        }
     }
+
+    private static string FormatUsage(FontUsage usage) =>
+        $"{usage.UsageKind}" +
+        (usage.PanelId is Guid panelId ? $" panel:{panelId}" : string.Empty) +
+        (usage.ObjectId is Guid objectId ? $" object:{objectId}" : string.Empty);
 
     private void OnFigureChanged(object? sender, EventArgs e) => RefreshMissingFonts();
 }

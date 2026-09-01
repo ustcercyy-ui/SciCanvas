@@ -1,4 +1,5 @@
 using SciCanvas.Core.Workspace;
+using SciCanvas.Core.Channels;
 
 namespace SciCanvas.Core.Export;
 
@@ -6,7 +7,6 @@ namespace SciCanvas.Core.Export;
 public enum FigureScientificObjectKind
 {
     PolygonAnnotation,
-    Roi,
     DirectionMarker,
     Colorbar,
     ChannelLegend,
@@ -24,15 +24,80 @@ public sealed record FigureScientificPoint(double X, double Y)
     }
 }
 
-public sealed record FigureChannelLegendEntry(string Label, string Color)
+public sealed record FigureChannelLegendEntry(
+    string Label,
+    string Color,
+    Guid? ChannelId = null)
 {
     public void EnsureValid()
     {
         if (string.IsNullOrWhiteSpace(Label) || Label.Length > 128 ||
-            !ScientificStyleColor.ValidateColor(Color))
+            !ScientificStyleColor.ValidateColor(Color) || ChannelId == Guid.Empty)
         {
             throw new InvalidOperationException("通道图例必须包含不超过 128 个字符的标签和有效颜色。");
         }
+    }
+}
+
+public sealed record FigureColorbarExportSpec(
+    double Minimum,
+    double Maximum,
+    string Unit,
+    string Colormap,
+    Guid? ChannelId,
+    ColorbarBindingState BindingState,
+    FigureObjectOrientation Orientation,
+    IReadOnlyList<ColorbarTick> Ticks)
+{
+    public FigureColorbarExportSpec EnsureValid()
+    {
+        _ = new ColorbarObject
+        {
+            Id = Guid.NewGuid(),
+            Minimum = Minimum,
+            Maximum = Maximum,
+            Unit = Unit,
+            Colormap = Colormap,
+            ChannelId = ChannelId,
+            BindingState = BindingState,
+            Orientation = Orientation,
+            Ticks = Ticks,
+        }.EnsureValid();
+        return this;
+    }
+}
+
+public sealed record FigureChannelLegendExportSpec(
+    IReadOnlyList<FigureChannelLegendEntry> Items,
+    string FontFamily,
+    double FontSizePt,
+    bool IsBold,
+    string TextColor,
+    string BackgroundColor,
+    double BackgroundOpacityPercent,
+    string BorderColor,
+    double BorderWidthPt,
+    double PaddingPixels)
+{
+    public FigureChannelLegendExportSpec EnsureValid()
+    {
+        var model = new ChannelLegendObject
+        {
+            Id = Guid.NewGuid(),
+            Items = Items.Select(item => new ChannelLegendItem(
+                item.ChannelId,
+                item.Label,
+                item.Color)).ToArray(),
+            TextStyle = new TextStyle(FontFamily, FontSizePt, IsBold, TextColor),
+            ContainerStyle = new ShapeStyle(
+                BorderColor,
+                BackgroundColor,
+                BackgroundOpacityPercent,
+                BorderWidthPt),
+            PaddingPixels = PaddingPixels,
+        }.EnsureValid();
+        _ = model;
+        return this;
     }
 }
 
@@ -62,10 +127,40 @@ public sealed record FigureScientificObjectExportItem(
     IReadOnlyList<FigureChannelLegendEntry>? ChannelLegendEntries = null,
     Guid? SourceAssetId = null,
     long? SourceRevision = null,
-    Guid? ChannelId = null)
+    Guid? ChannelId = null,
+    FigureColorbarExportSpec? Colorbar = null,
+    FigureChannelLegendExportSpec? ChannelLegend = null)
 {
     public IReadOnlyList<FigureChannelLegendEntry> EffectiveChannelLegendEntries =>
-        ChannelLegendEntries ?? [];
+        EffectiveChannelLegend?.Items ?? ChannelLegendEntries ?? [];
+
+    public FigureColorbarExportSpec? EffectiveColorbar =>
+        Kind != FigureScientificObjectKind.Colorbar
+            ? null
+            : Colorbar ?? new FigureColorbarExportSpec(
+                Minimum,
+                Maximum,
+                Unit,
+                Colormap,
+                ChannelId,
+                ChannelId is null ? ColorbarBindingState.Detached : ColorbarBindingState.Linked,
+                FigureObjectOrientation.Vertical,
+                ColorbarObject.CreateDefaultTicks(Minimum, Maximum));
+
+    public FigureChannelLegendExportSpec? EffectiveChannelLegend =>
+        Kind != FigureScientificObjectKind.ChannelLegend
+            ? null
+            : ChannelLegend ?? new FigureChannelLegendExportSpec(
+                ChannelLegendEntries ?? [],
+                FontFamily,
+                FontSizePt,
+                IsBold,
+                TextColor,
+                FillColor,
+                FillOpacityPercent,
+                StrokeColor,
+                StrokeWidthPt,
+                5);
 
     public void EnsureValid(int canvasWidth, int canvasHeight)
     {
@@ -95,10 +190,9 @@ public sealed record FigureScientificObjectExportItem(
         switch (Kind)
         {
             case FigureScientificObjectKind.PolygonAnnotation:
-            case FigureScientificObjectKind.Roi:
                 if (Points.Count < 3 || Math.Abs(SignedArea(Points)) < 12.5)
                 {
-                    throw new InvalidOperationException("多边形标注或 ROI 至少需要三个不共线顶点。");
+                    throw new InvalidOperationException("多边形标注至少需要三个不共线顶点。");
                 }
                 break;
             case FigureScientificObjectKind.DirectionMarker:
@@ -109,22 +203,11 @@ public sealed record FigureScientificObjectExportItem(
                 break;
             case FigureScientificObjectKind.Colorbar:
                 ValidateBounds("色条");
-                if (!double.IsFinite(Minimum) || !double.IsFinite(Maximum) || Maximum <= Minimum ||
-                    string.IsNullOrWhiteSpace(Unit) || !IsSupportedColormap(Colormap))
-                {
-                    throw new InvalidOperationException("色条需要递增的有限范围、单位和受支持的 colormap。");
-                }
+                EffectiveColorbar!.EnsureValid();
                 break;
             case FigureScientificObjectKind.ChannelLegend:
                 ValidateBounds("通道图例");
-                if (EffectiveChannelLegendEntries.Count == 0)
-                {
-                    throw new InvalidOperationException("通道图例至少需要一个通道条目。");
-                }
-                foreach (FigureChannelLegendEntry entry in EffectiveChannelLegendEntries)
-                {
-                    entry.EnsureValid();
-                }
+                EffectiveChannelLegend!.EnsureValid();
                 break;
             default:
                 throw new InvalidOperationException("未知科研对象类型。");
@@ -132,9 +215,7 @@ public sealed record FigureScientificObjectExportItem(
     }
 
     public static bool IsSupportedColormap(string value) =>
-        value is not null && (value.Equals("viridis", StringComparison.OrdinalIgnoreCase) ||
-                              value.Equals("magma", StringComparison.OrdinalIgnoreCase) ||
-                              value.Equals("grayscale", StringComparison.OrdinalIgnoreCase));
+        ScientificColormap.IsSupported(value);
 
     private void ValidateBounds(string displayName)
     {

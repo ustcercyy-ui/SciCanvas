@@ -44,7 +44,20 @@ internal sealed record EditorHistorySnapshot(
     IReadOnlyList<LinkingLinkGroup>? LinkGroups = null,
     IReadOnlyList<RoiObject>? Rois = null,
     IReadOnlyList<JournalExportPreset>? JournalPresets = null,
-    IReadOnlyList<FontSubstitutionRule>? FontSubstitutions = null);
+    IReadOnlyList<FontSubstitutionRule>? FontSubstitutions = null,
+    IReadOnlyList<PlotPanelHistorySnapshot>? PlotPanels = null,
+    Guid? SelectedPlotPanelId = null);
+
+internal sealed record PlotPanelHistorySnapshot(
+    Guid Id,
+    Guid PlotId,
+    PixelRect64 DestinationRect,
+    string Label,
+    bool IsVisible,
+    bool IsLocked,
+    int ZIndex,
+    StyleOverride? StyleOverride,
+    FigurePlotTypographyOverride? TypographyOverride);
 
 internal sealed record PanelHistorySnapshot(
     Guid Id,
@@ -122,7 +135,11 @@ internal sealed record ScientificObjectHistorySnapshot(
     string Unit,
     string Colormap,
     string ChannelEntriesText,
-    Guid? ChannelId);
+    Guid? ChannelId,
+    ColorbarBindingState ColorbarBindingState,
+    FigureObjectOrientation ColorbarOrientation,
+    string ColorbarTicksText,
+    double ChannelLegendPadding);
 internal sealed record GuideHistorySnapshot(
     Guid Id,
     FigureGuideOrientation Orientation,

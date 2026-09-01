@@ -14,6 +14,67 @@ public enum AssistedRegionMode
     BrightLamellae,
 }
 
+public enum AnalysisResourceLimitKind
+{
+    MaxPixels,
+    MaxComponentsSafety,
+    MaxBoundaryPoints,
+    MemoryBudget,
+}
+
+/// <summary>
+/// Hard safety limits for particle analysis. Reaching a limit aborts the analysis;
+/// it never turns a complete scientific result into a silently truncated one.
+/// </summary>
+public sealed record AnalysisResourcePolicy(
+    long MaxPixels = 50_000_000,
+    int MaxComponentsSafety = 250_000,
+    int MaxBoundaryPoints = 1_000_000,
+    long MemoryBudgetBytes = 1_073_741_824)
+{
+    public static AnalysisResourcePolicy Default { get; } = new();
+
+    public bool IsValid =>
+        MaxPixels > 0 &&
+        MaxComponentsSafety > 0 &&
+        MaxBoundaryPoints >= 4 &&
+        MemoryBudgetBytes > 0;
+}
+
+public sealed class AnalysisTooComplexException : InvalidOperationException
+{
+    public const string ErrorCode = "AnalysisTooComplex";
+
+    public AnalysisTooComplexException(
+        AnalysisResourceLimitKind limitKind,
+        long observed,
+        long limit,
+        string detail)
+        : base(
+            $"{ErrorCode}：{detail}（需要 {observed:N0}，安全上限 {limit:N0}）。" +
+            "分析已中止且未返回残缺科研结果。请提高 MinimumArea、调整 threshold 或缩小 ROI。")
+    {
+        if (observed < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(observed));
+        }
+        if (limit < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limit));
+        }
+
+        LimitKind = limitKind;
+        Observed = observed;
+        Limit = limit;
+    }
+
+    public AnalysisResourceLimitKind LimitKind { get; }
+
+    public long Observed { get; }
+
+    public long Limit { get; }
+}
+
 public sealed record AssistedRegionAnalysisOptions(
     AssistedRegionMode Mode,
     PixelRect64 RegionOfInterest,
@@ -106,6 +167,8 @@ public sealed record AssistedRegionAnalysisResult(
 
     public int SourceBitDepth { get; init; } = 8;
 
+    public AnalysisResourcePolicy ResourcePolicy { get; init; } = AnalysisResourcePolicy.Default;
+
     public double AreaFraction => TotalPixelCount <= 0
         ? 0
         : ForegroundPixelCount / (double)TotalPixelCount;
@@ -113,6 +176,7 @@ public sealed record AssistedRegionAnalysisResult(
     public bool IsValid =>
         HasValidProvenance &&
         SourceBitDepth is 8 or 16 &&
+        ResourcePolicy.IsValid &&
         Options.IsValid &&
         double.IsFinite(AppliedThresholdNormalized) &&
         AppliedThresholdNormalized is >= 0 and <= 1 &&
@@ -167,4 +231,9 @@ public interface IAssistedRegionAnalyzer
         CancellationToken cancellationToken = default,
         long sourceRevision = 1,
         ImageAnalysisChannel channel = ImageAnalysisChannel.Luminance);
+}
+
+public interface IAnalysisResourcePolicyProvider
+{
+    AnalysisResourcePolicy ResourcePolicy { get; }
 }
