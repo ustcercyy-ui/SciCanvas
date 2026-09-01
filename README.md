@@ -165,7 +165,7 @@ CLI 退出码：`0` 成功、`2` 参数错误、`3` 工程或源图验证失败�
 - Line、Scatter、Line + Symbol、Error Bar、Histogram、Box Plot、Heatmap 共用同一中立 Plot geometry scene。PNG、8-bit TIFF 与 16-bit TIFF 走高质量栅格路径；SVG 输出原生 line/rect/ellipse/polygon/text；PDF 输出直接 path/text operators，不嵌入 Plot raster image。
 - Plot 的 axis/tick/legend/annotation 遵循 `Project → Figure → Panel → Plot Object` 排版继承；Panel Label 也使用 Figure canonical style。PDF Plot 文字复用 Figure 的 embedded TrueType / outline fallback 策略，字体替换和实际结果继续进入 provenance。
 - 工程 writer 升级到 schema `3.0`，保存 Plot Panel 的稳定 ID、Plot ID、目标矩形、标签、可见/锁定、ZIndex、Panel style 与 Plot typography overrides。2.9→3.0 默认空 Plot Panel；加载会拒绝缺失 Plot/DataAsset、revision 不匹配、重复 ID、越界几何和非法样式。GUI、CLI、Preflight、投稿 provenance 均读取相同原生 Panel contract。
-- Phase 12 门禁为 `464/464` tests（Core 188 + Windows/WPF 276），solution build 为 0 warnings、0 errors。
+- Phase 12 release commit `f84db228735f41f6ed82627d58afe135e12e5440` 的 GitHub Actions 实际结果为 `463/464` tests（Core `188/188`；Windows/WPF `275/276`），Heatmap WPF preview 因 `5 s` 超时失败；solution build 为 0 warnings、0 errors。在新的 release commit 真实 green 前不声明 `464/464` GitHub CI passed。
 
 ## v2.4 Scientific Objects, Multichannel & Reproducible Publishing
 

@@ -584,4 +584,4 @@ Presentation 的 `FigurePlotPanelViewModel` 独立于图像 Panel 多选/裁剪/
 
 Schema `3.0` 在 `ProjectTemplateSnapshot.PlotPanels` 中只保存 Plot 引用与 Figure 表现状态；DataAsset 和 Plot 仍在各自顶层 canonical collections。`JsonProjectStore`、GUI restore 与 CLI builder 都会重建 Plot/DataAsset model、核对 revision 并拒绝孤儿引用、重复 Panel ID、越界矩形和非法样式。2.9→3.0 迁移确定性新增空集合。Figure provenance 记录 Plot/DataAsset/revision、PlotKind、目标矩形、included/excluded/unplottable 行数、filter expression 与 ordered transforms。
 
-Phase 12 门禁为 Core 188/188、Windows/WPF 276/276，总计 464/464；solution build 0 warnings、0 errors。
+Phase 12 release commit `f84db228735f41f6ed82627d58afe135e12e5440` 的 GitHub Actions 实际结果为 Core 188/188、Windows/WPF 275/276，总计 463/464；Heatmap WPF preview 因 5 秒超时失败，solution build 为 0 warnings、0 errors。在后续 release commit 真实 green 前，不能把该次运行记录为 464/464 passed。

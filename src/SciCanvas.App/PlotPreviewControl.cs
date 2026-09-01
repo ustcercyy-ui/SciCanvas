@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Windows;
@@ -34,6 +35,8 @@ public sealed class PlotPreviewControl : FrameworkElement
         set => SetValue(DataAssetProperty, value);
     }
 
+    internal PlotPreviewRenderTimings? LastRenderTimings { get; private set; }
+
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
@@ -53,7 +56,7 @@ public sealed class PlotPreviewControl : FrameworkElement
         try
         {
             plot.EnsureValid(asset);
-            RenderPlot(drawingContext, plot, asset);
+            LastRenderTimings = RenderPlot(drawingContext, plot, asset);
         }
         catch (Exception exception) when (exception is
             InvalidDataException or InvalidOperationException or ArgumentException)
@@ -62,15 +65,19 @@ public sealed class PlotPreviewControl : FrameworkElement
         }
     }
 
-    private void RenderPlot(
+    private PlotPreviewRenderTimings RenderPlot(
         DrawingContext drawingContext,
         PlotObject plot,
         TabularDataAsset asset)
     {
+        long renderStarted = Stopwatch.GetTimestamp();
+        var timings = new PlotPreviewTimingAccumulator();
         var chart = new Rect(58, 28, Math.Max(40, ActualWidth - 82), Math.Max(40, ActualHeight - 80));
-        PlotRenderSeries renderSeries = BuildRenderSeries(plot, asset);
+        PlotRenderSeries renderSeries = BuildRenderSeries(plot, asset, timings);
+        long boundsStarted = Stopwatch.GetTimestamp();
         PlotBounds bounds = ResolveBounds(plot, renderSeries);
-        DrawAxes(drawingContext, chart, plot, bounds);
+        timings.Bounds += Stopwatch.GetElapsedTime(boundsStarted);
+        DrawAxes(drawingContext, chart, plot, bounds, timings);
 
         switch (plot.PlotType)
         {
@@ -94,7 +101,7 @@ public sealed class PlotPreviewControl : FrameworkElement
                 DrawBoxPlot(drawingContext, chart, plot, bounds, renderSeries.BoxGroups);
                 break;
             case PlotKind.Heatmap:
-                DrawHeatmap(drawingContext, chart, plot, bounds, renderSeries.Samples);
+                DrawHeatmap(drawingContext, chart, plot, bounds, renderSeries.Samples, timings);
                 break;
         }
 
@@ -114,13 +121,32 @@ public sealed class PlotPreviewControl : FrameworkElement
             plot.Typography.Annotation,
             new Point(chart.Right, ActualHeight - 18),
             TextAlignment.Right);
+
+        TimeSpan total = Stopwatch.GetElapsedTime(renderStarted);
+        TimeSpan measuredGeometry = timings.Projection +
+            timings.Bounds +
+            timings.AxisGeneration +
+            timings.HeatmapGeometry;
+        TimeSpan wpfDrawing = total > measuredGeometry
+            ? total - measuredGeometry
+            : TimeSpan.Zero;
+        return new PlotPreviewRenderTimings(
+            timings.Projection,
+            timings.Bounds,
+            timings.AxisGeneration,
+            timings.HeatmapGeometry,
+            wpfDrawing,
+            total);
     }
 
     private static PlotRenderSeries BuildRenderSeries(
         PlotObject plot,
-        TabularDataAsset asset)
+        TabularDataAsset asset,
+        PlotPreviewTimingAccumulator timings)
     {
+        long projectionStarted = Stopwatch.GetTimestamp();
         PlotDataProjection projection = PlotDataProjector.Project(plot, asset);
+        timings.Projection += Stopwatch.GetElapsedTime(projectionStarted);
 
         if (plot.PlotType == PlotKind.Histogram)
         {
@@ -225,14 +251,15 @@ public sealed class PlotPreviewControl : FrameworkElement
         DrawingContext drawingContext,
         Rect chart,
         PlotObject plot,
-        PlotBounds bounds)
+        PlotBounds bounds,
+        PlotPreviewTimingAccumulator timings)
     {
         var axisPen = new Pen(ToBrush("#FF20262E"), 1);
         axisPen.Freeze();
         drawingContext.DrawLine(axisPen, chart.BottomLeft, chart.BottomRight);
         drawingContext.DrawLine(axisPen, chart.BottomLeft, chart.TopLeft);
-        DrawTicks(drawingContext, chart, plot.XAxis, bounds.XMin, bounds.XMax, isX: true, plot.Typography.Tick);
-        DrawTicks(drawingContext, chart, plot.YAxis, bounds.YMin, bounds.YMax, isX: false, plot.Typography.Tick);
+        DrawTicks(drawingContext, chart, plot.XAxis, bounds.XMin, bounds.XMax, isX: true, plot.Typography.Tick, timings);
+        DrawTicks(drawingContext, chart, plot.YAxis, bounds.YMin, bounds.YMax, isX: false, plot.Typography.Tick, timings);
 
         string xTitle = FormatAxisTitle(plot.XAxis);
         DrawText(
@@ -263,79 +290,48 @@ public sealed class PlotPreviewControl : FrameworkElement
         double minimum,
         double maximum,
         bool isX,
-        TextStyle tickStyle)
+        TextStyle tickStyle,
+        PlotPreviewTimingAccumulator timings)
     {
-        IReadOnlyList<double> majorTicks = CreateMajorTicks(axis, minimum, maximum);
+        long axisGenerationStarted = Stopwatch.GetTimestamp();
+        IReadOnlyList<PlotAxisTick> ticks = CreateAxisTicks(axis, minimum, maximum);
+        timings.AxisGeneration += Stopwatch.GetElapsedTime(axisGenerationStarted);
         var tickPen = new Pen(ToBrush("#FF303945"), 0.8);
         tickPen.Freeze();
-        for (int index = 0; index < majorTicks.Count; index++)
+        foreach (PlotAxisTick tick in ticks)
         {
-            double value = majorTicks[index];
-            double fraction = AxisFraction(value, minimum, maximum, axis.Scale);
             if (isX)
             {
-                double x = chart.Left + fraction * chart.Width;
+                double x = chart.Left + tick.Fraction * chart.Width;
                 drawingContext.DrawLine(
                     tickPen,
                     new Point(x, chart.Bottom),
-                    new Point(x, chart.Bottom + 5));
-                DrawText(
-                    drawingContext,
-                    FormatTick(value),
-                    tickStyle,
-                    new Point(x, chart.Bottom + 7),
-                    TextAlignment.Center);
+                    new Point(x, chart.Bottom + (tick.IsMajor ? 5 : 2.5)));
+                if (tick.IsMajor)
+                {
+                    DrawText(
+                        drawingContext,
+                        FormatTick(tick.Value),
+                        tickStyle,
+                        new Point(x, chart.Bottom + 7),
+                        TextAlignment.Center);
+                }
             }
             else
             {
-                double y = chart.Bottom - fraction * chart.Height;
+                double y = chart.Bottom - tick.Fraction * chart.Height;
                 drawingContext.DrawLine(
                     tickPen,
-                    new Point(chart.Left - 5, y),
+                    new Point(chart.Left - (tick.IsMajor ? 5 : 2.5), y),
                     new Point(chart.Left, y));
-                DrawText(
-                    drawingContext,
-                    FormatTick(value),
-                    tickStyle,
-                    new Point(chart.Left - 8, y - 6),
-                    TextAlignment.Right);
-            }
-
-            if (index >= majorTicks.Count - 1 || axis.MinorTickCount == 0)
-            {
-                continue;
-            }
-
-            double next = majorTicks[index + 1];
-            for (int minor = 1; minor <= axis.MinorTickCount; minor++)
-            {
-                double minorValue = axis.Scale == PlotAxisScale.Log10
-                    ? Math.Pow(
-                        10,
-                        Math.Log10(value) +
-                        (Math.Log10(next) - Math.Log10(value)) *
-                        minor / (axis.MinorTickCount + 1))
-                    : value + (next - value) * minor / (axis.MinorTickCount + 1);
-                double minorFraction = AxisFraction(
-                    minorValue,
-                    minimum,
-                    maximum,
-                    axis.Scale);
-                if (isX)
+                if (tick.IsMajor)
                 {
-                    double x = chart.Left + minorFraction * chart.Width;
-                    drawingContext.DrawLine(
-                        tickPen,
-                        new Point(x, chart.Bottom),
-                        new Point(x, chart.Bottom + 2.5));
-                }
-                else
-                {
-                    double y = chart.Bottom - minorFraction * chart.Height;
-                    drawingContext.DrawLine(
-                        tickPen,
-                        new Point(chart.Left - 2.5, y),
-                        new Point(chart.Left, y));
+                    DrawText(
+                        drawingContext,
+                        FormatTick(tick.Value),
+                        tickStyle,
+                        new Point(chart.Left - 8, y - 6),
+                        TextAlignment.Right);
                 }
             }
         }
@@ -470,6 +466,24 @@ public sealed class PlotPreviewControl : FrameworkElement
         Rect chart,
         PlotObject plot,
         PlotBounds bounds,
+        IReadOnlyList<PlotSample> samples,
+        PlotPreviewTimingAccumulator timings)
+    {
+        long geometryStarted = Stopwatch.GetTimestamp();
+        IReadOnlyList<PlotHeatmapCell> cells = CreateHeatmapCells(chart, plot, bounds, samples);
+        timings.HeatmapGeometry += Stopwatch.GetElapsedTime(geometryStarted);
+        foreach (PlotHeatmapCell cell in cells)
+        {
+            var brush = new SolidColorBrush(cell.Color);
+            brush.Freeze();
+            drawingContext.DrawRectangle(brush, null, cell.Bounds);
+        }
+    }
+
+    private static IReadOnlyList<PlotHeatmapCell> CreateHeatmapCells(
+        Rect chart,
+        PlotObject plot,
+        PlotBounds bounds,
         IReadOnlyList<PlotSample> samples)
     {
         double[] values = samples
@@ -485,6 +499,7 @@ public sealed class PlotPreviewControl : FrameworkElement
         double max = values.Max();
         double cellWidth = Math.Clamp(chart.Width / Math.Max(8, Math.Sqrt(values.Length) * 2), 3, 18);
         double cellHeight = Math.Clamp(chart.Height / Math.Max(8, Math.Sqrt(values.Length) * 2), 3, 18);
+        var cells = new List<PlotHeatmapCell>(values.Length);
         foreach (PlotSample sample in samples.Where(sample => sample.Value.HasValue))
         {
             Point point = MapPoint(chart, plot, bounds, sample.X, sample.Y);
@@ -493,17 +508,16 @@ public sealed class PlotPreviewControl : FrameworkElement
                 (byte)(30 + 220 * fraction),
                 (byte)(65 + 110 * (1 - Math.Abs(fraction - 0.5) * 2)),
                 (byte)(220 - 190 * fraction));
-            var brush = new SolidColorBrush(color);
-            brush.Freeze();
-            drawingContext.DrawRectangle(
-                brush,
-                null,
+            cells.Add(new PlotHeatmapCell(
                 new Rect(
                     point.X - cellWidth / 2,
                     point.Y - cellHeight / 2,
                     cellWidth,
-                    cellHeight));
+                    cellHeight),
+                color));
         }
+
+        return cells;
     }
 
     private static Point MapPoint(
@@ -534,6 +548,46 @@ public sealed class PlotPreviewControl : FrameworkElement
         }
 
         return (value - minimum) / (maximum - minimum);
+    }
+
+    private static IReadOnlyList<PlotAxisTick> CreateAxisTicks(
+        PlotAxisDefinition axis,
+        double minimum,
+        double maximum)
+    {
+        IReadOnlyList<double> majorTicks = CreateMajorTicks(axis, minimum, maximum);
+        var ticks = new List<PlotAxisTick>(
+            majorTicks.Count * Math.Max(1, axis.MinorTickCount + 1));
+        for (int index = 0; index < majorTicks.Count; index++)
+        {
+            double value = majorTicks[index];
+            ticks.Add(new PlotAxisTick(
+                value,
+                AxisFraction(value, minimum, maximum, axis.Scale),
+                IsMajor: true));
+            if (index >= majorTicks.Count - 1 || axis.MinorTickCount == 0)
+            {
+                continue;
+            }
+
+            double next = majorTicks[index + 1];
+            for (int minor = 1; minor <= axis.MinorTickCount; minor++)
+            {
+                double minorValue = axis.Scale == PlotAxisScale.Log10
+                    ? Math.Pow(
+                        10,
+                        Math.Log10(value) +
+                        (Math.Log10(next) - Math.Log10(value)) *
+                        minor / (axis.MinorTickCount + 1))
+                    : value + (next - value) * minor / (axis.MinorTickCount + 1);
+                ticks.Add(new PlotAxisTick(
+                    minorValue,
+                    AxisFraction(minorValue, minimum, maximum, axis.Scale),
+                    IsMajor: false));
+            }
+        }
+
+        return ticks;
     }
 
     private static IReadOnlyList<double> CreateMajorTicks(
@@ -816,9 +870,35 @@ public sealed class PlotPreviewControl : FrameworkElement
 
     private sealed record PlotBoxGroup(int Index, string Label, IReadOnlyList<double> Values);
 
+    private sealed record PlotHeatmapCell(Rect Bounds, Color Color);
+
+    private readonly record struct PlotAxisTick(
+        double Value,
+        double Fraction,
+        bool IsMajor);
+
+    private sealed class PlotPreviewTimingAccumulator
+    {
+        public TimeSpan Projection { get; set; }
+
+        public TimeSpan Bounds { get; set; }
+
+        public TimeSpan AxisGeneration { get; set; }
+
+        public TimeSpan HeatmapGeometry { get; set; }
+    }
+
     private readonly record struct PlotBounds(
         double XMin,
         double XMax,
         double YMin,
         double YMax);
 }
+
+internal readonly record struct PlotPreviewRenderTimings(
+    TimeSpan Projection,
+    TimeSpan Bounds,
+    TimeSpan AxisGeneration,
+    TimeSpan HeatmapGeometry,
+    TimeSpan WpfDrawing,
+    TimeSpan Total);

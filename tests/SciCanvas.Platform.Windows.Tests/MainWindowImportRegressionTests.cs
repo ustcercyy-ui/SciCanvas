@@ -21,6 +21,7 @@ using CoreImageMetadata = SciCanvas.Core.Images.ImageMetadata;
 
 namespace SciCanvas.Platform.Windows.Tests;
 
+[Collection(WpfTestCollection.Name)]
 public sealed class MainWindowImportRegressionTests
 {
     [Fact]

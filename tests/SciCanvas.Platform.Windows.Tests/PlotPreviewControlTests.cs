@@ -1,14 +1,27 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using SciCanvas.App;
 using SciCanvas.Core.Data;
+using SciCanvas.Core.Export;
+using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Plotting;
+using SciCanvas.Imaging;
+using Xunit.Abstractions;
 
 namespace SciCanvas.Platform.Windows.Tests;
 
+[Collection(WpfTestCollection.Name)]
 public sealed class PlotPreviewControlTests
 {
+    private readonly ITestOutputHelper _output;
+
+    public PlotPreviewControlTests(ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
     [Theory]
     [InlineData(PlotKind.Line)]
     [InlineData(PlotKind.Scatter)]
@@ -19,7 +32,10 @@ public sealed class PlotPreviewControlTests
     [InlineData(PlotKind.Heatmap)]
     public void VectorPreview_RendersSeriesPixelsForEveryTwoDimensionalKind(PlotKind kind)
     {
-        WpfTestHost.Invoke(() =>
+        PlotPreviewRenderTimings? previewTimings = null;
+        TimeSpan bitmapRenderElapsed = TimeSpan.Zero;
+        TimeSpan copyPixelsElapsed = TimeSpan.Zero;
+        WpfTestInvocationTiming hostTiming = WpfTestHost.Invoke(() =>
         {
             TabularDataAsset asset = CreateAsset();
             PlotObject plot = CreatePlot(asset, kind);
@@ -39,10 +55,15 @@ public sealed class PlotPreviewControlTests
                 96,
                 PixelFormats.Pbgra32);
 
+            long renderStarted = Stopwatch.GetTimestamp();
             bitmap.Render(control);
+            bitmapRenderElapsed = Stopwatch.GetElapsedTime(renderStarted);
+            previewTimings = control.LastRenderTimings;
 
             var pixels = new byte[420 * 300 * 4];
+            long copyPixelsStarted = Stopwatch.GetTimestamp();
             bitmap.CopyPixels(pixels, 420 * 4, 0);
+            copyPixelsElapsed = Stopwatch.GetElapsedTime(copyPixelsStarted);
             int chromaticPixels = 0;
             for (int index = 0; index < pixels.Length; index += 4)
             {
@@ -60,6 +81,48 @@ public sealed class PlotPreviewControlTests
                 chromaticPixels > 10,
                 $"{kind} preview did not render a chromatic series.");
         }, TimeSpan.FromSeconds(5));
+
+        Assert.True(previewTimings.HasValue, "Plot preview did not publish render timings.");
+        PlotPreviewRenderTimings renderTimings = previewTimings.Value;
+        _output.WriteLine(
+            $"{kind}: projection={renderTimings.Projection.TotalMilliseconds:0.000} ms; " +
+            $"bounds={renderTimings.Bounds.TotalMilliseconds:0.000} ms; " +
+            $"axis={renderTimings.AxisGeneration.TotalMilliseconds:0.000} ms; " +
+            $"heatmapGeometry={renderTimings.HeatmapGeometry.TotalMilliseconds:0.000} ms; " +
+            $"wpfDrawing={renderTimings.WpfDrawing.TotalMilliseconds:0.000} ms; " +
+            $"RenderTargetBitmap.Render={bitmapRenderElapsed.TotalMilliseconds:0.000} ms; " +
+            $"CopyPixels={copyPixelsElapsed.TotalMilliseconds:0.000} ms; " +
+            $"hostSerialization={hostTiming.SerializationWait.TotalMilliseconds:0.000} ms; " +
+            $"hostDispatcherQueue={hostTiming.DispatcherQueueWait.TotalMilliseconds:0.000} ms; " +
+            $"hostExecution={hostTiming.Execution.TotalMilliseconds:0.000} ms.");
+    }
+
+    [Fact]
+    public void CoreSceneBuild_HeatmapIsFastAndDoesNotRequireWpfDispatcher()
+    {
+        TabularDataAsset asset = CreateAsset();
+        PlotObject plot = CreatePlot(asset, PlotKind.Heatmap);
+        FigurePlotPanelExportItem panel = FigurePlotPanelExportItem.Create(
+            plot,
+            asset,
+            new PixelRect64(0, 0, 420, 300),
+            "a",
+            typographyOverride: FigurePlotTypographyOverride.FromPlot(plot.Typography));
+
+        long started = Stopwatch.GetTimestamp();
+        FigurePlotScene scene = FigurePlotSceneBuilder.Build(
+            panel,
+            FigureGlobalStyle.Default,
+            96);
+        TimeSpan elapsed = Stopwatch.GetElapsedTime(started);
+
+        _output.WriteLine(
+            $"12-point Heatmap core scene: {elapsed.TotalMilliseconds:0.000} ms; " +
+            $"primitives={scene.Primitives.Count}.");
+        Assert.True(scene.Primitives.Count > 12, "Heatmap scene did not include axes and cells.");
+        Assert.True(
+            elapsed < TimeSpan.FromSeconds(2),
+            $"12-point Heatmap core scene took {elapsed.TotalMilliseconds:0.0} ms.");
     }
 
     private static PlotObject CreatePlot(TabularDataAsset asset, PlotKind kind)
