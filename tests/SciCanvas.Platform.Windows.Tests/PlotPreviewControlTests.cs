@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Text;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -110,7 +112,7 @@ public sealed class PlotPreviewControlTests
             typographyOverride: FigurePlotTypographyOverride.FromPlot(plot.Typography));
 
         long started = Stopwatch.GetTimestamp();
-        FigurePlotScene scene = FigurePlotSceneBuilder.Build(
+        PlotScene scene = PlotSceneBuilder.Build(
             panel,
             FigureGlobalStyle.Default,
             96);
@@ -123,6 +125,76 @@ public sealed class PlotPreviewControlTests
         Assert.True(
             elapsed < TimeSpan.FromSeconds(2),
             $"12-point Heatmap core scene took {elapsed.TotalMilliseconds:0.0} ms.");
+    }
+
+    [Fact]
+    public async Task PreviewFigureSvgAndPdf_ShareCanonicalTickAndSeriesGeometry()
+    {
+        TabularDataAsset asset = CreateAsset();
+        PlotObject plot = CreatePlot(asset, PlotKind.LineAndSymbol);
+        PlotScene? previewScene = null;
+        WpfTestHost.Invoke(() =>
+        {
+            var control = new PlotPreviewControl
+            {
+                Width = 420,
+                Height = 300,
+                DataAsset = asset,
+                Plot = plot,
+            };
+            control.Measure(new Size(420, 300));
+            control.Arrange(new Rect(0, 0, 420, 300));
+            var bitmap = new RenderTargetBitmap(420, 300, 96, 96, PixelFormats.Pbgra32);
+            bitmap.Render(control);
+            previewScene = control.LastRenderScene;
+        }, TimeSpan.FromSeconds(5));
+
+        Assert.NotNull(previewScene);
+        FigurePlotPanelExportItem panel = FigurePlotPanelExportItem.Create(
+            plot,
+            asset,
+            new PixelRect64(0, 0, 420, 300),
+            string.Empty,
+            typographyOverride: FigurePlotTypographyOverride.FromPlot(plot.Typography));
+        PlotScene figureScene = PlotSceneBuilder.Build(panel, FigureGlobalStyle.Default, 96);
+        Assert.Equal(figureScene.Chart, previewScene.Chart);
+        Assert.Equal(figureScene.AxisBounds, previewScene.AxisBounds);
+        Assert.Equal(figureScene.Primitives.Count, previewScene.Primitives.Count);
+        for (int index = 0; index < figureScene.Primitives.Count; index++)
+        {
+            Assert.Equal(figureScene.Primitives[index], previewScene.Primitives[index]);
+        }
+
+        using var workspace = new TestWorkspace();
+        var document = new FigureExportDocument(420, 300, 96, [], plotPanels: [panel]);
+        string svgPath = Path.Combine(workspace.Root, "parity.svg");
+        string pdfPath = Path.Combine(workspace.Root, "parity.pdf");
+        var exporter = new WpfFigureExporter();
+        await exporter.ExportAsync(document, svgPath);
+        await exporter.ExportAsync(document, pdfPath);
+        string svg = await File.ReadAllTextAsync(svgPath);
+        string pdf = Encoding.ASCII.GetString(await File.ReadAllBytesAsync(pdfPath));
+
+        PlotLine majorXTick = previewScene.Primitives.OfType<PlotLine>().First(line =>
+            line.Stroke == "#FF303945" &&
+            Math.Abs(line.A.X - line.B.X) < 1e-9 &&
+            Math.Abs(line.A.Y - previewScene.Chart.Bottom) < 1e-9 &&
+            line.B.Y - line.A.Y > 4);
+        Assert.Contains(
+            $"<line x1=\"{F(majorXTick.A.X)}\" y1=\"{F(majorXTick.A.Y)}\" " +
+            $"x2=\"{F(majorXTick.B.X)}\" y2=\"{F(majorXTick.B.Y)}\"",
+            svg,
+            StringComparison.Ordinal);
+
+        PlotLine seriesLine = previewScene.Primitives.OfType<PlotLine>()
+            .First(line => line.Stroke == plot.Style.LineColor);
+        const double pdfScale = 72.0 / 96.0;
+        double pageHeight = 300 * pdfScale;
+        Assert.Contains(
+            $"{F(seriesLine.A.X * pdfScale)} {F(pageHeight - seriesLine.A.Y * pdfScale)} m " +
+            $"{F(seriesLine.B.X * pdfScale)} {F(pageHeight - seriesLine.B.Y * pdfScale)} l S Q",
+            pdf,
+            StringComparison.Ordinal);
     }
 
     private static PlotObject CreatePlot(TabularDataAsset asset, PlotKind kind)
@@ -212,4 +284,7 @@ public sealed class PlotPreviewControlTests
                 OriginalHeaders = columns.Select(column => column.Name).ToArray(),
             }).EnsureValid();
     }
+
+    private static string F(double value) =>
+        value.ToString("0.###", CultureInfo.InvariantCulture);
 }
