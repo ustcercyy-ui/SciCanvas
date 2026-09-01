@@ -45,8 +45,8 @@ SciCanvas `v2.5.0-alpha` 在 v2.4 科研组图与可复现出版链路上，交�
 ## 验证
 
 - Core Tests：`188/188` passed。
-- Windows/WPF Tests：`276/276` passed。
-- Total：`464/464` passed，`0` failed，`0` skipped。
+- Windows/WPF Tests：`275/276` passed；`PlotPreviewControlTests` 的 Heatmap 用例因共享 WPF Dispatcher 排队在 `5 s` 后超时。
+- Total：`463/464` passed，`1` failed，`0` skipped；以 release commit `f84db228735f41f6ed82627d58afe135e12e5440` 的 [GitHub Actions run 33472031578](https://github.com/ustcercyy-ui/SciCanvas/actions/runs/33472031578) 为准，不能视为 green CI。
 - `dotnet build SciCanvas.sln --no-restore`：`0` warnings，`0` errors。
 - Windows x64 self-contained Release build：成功。
 
