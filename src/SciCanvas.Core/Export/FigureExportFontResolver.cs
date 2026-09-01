@@ -1,3 +1,4 @@
+using SciCanvas.Core.Plotting;
 using SciCanvas.Core.Workspace;
 
 namespace SciCanvas.Core.Export;
@@ -48,6 +49,7 @@ public static class FigureExportFontResolver
         }).ToArray();
         FigurePlotPanelExportItem[] plotPanels = source.PlotPanels.Select(panel => panel with
         {
+            Plot = ResolvePlotColorbarFont(panel.Plot, Effective),
             StyleOverride = ResolveStyleOverride(panel.StyleOverride, Effective),
             TypographyOverride = ResolvePlotTypographyOverride(panel.TypographyOverride, Effective),
         }).ToArray();
@@ -133,6 +135,24 @@ public static class FigureExportFontResolver
                 {
                     Label = ResolveText(style.Measurement.Label, effective)!,
                 },
+        };
+    }
+
+    private static PlotObject ResolvePlotColorbarFont(
+        PlotObject plot,
+        Func<string, string> effective)
+    {
+        if (plot.PlotType != PlotKind.Heatmap || plot.Colorbar?.LabelStyle is not { } style)
+        {
+            return plot;
+        }
+
+        return plot with
+        {
+            Colorbar = plot.Colorbar with
+            {
+                LabelStyle = style with { FontFamily = effective(style.FontFamily) },
+            },
         };
     }
 

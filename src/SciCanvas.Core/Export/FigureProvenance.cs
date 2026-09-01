@@ -4,6 +4,7 @@ using SciCanvas.Core.Channels;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Images;
 using SciCanvas.Core.Linking;
+using SciCanvas.Core.Plotting;
 using SciCanvas.Core.Science;
 using SciCanvas.Core.Sources;
 using SciCanvas.Core.Workspace;
@@ -56,7 +57,8 @@ public sealed record FigureProvenancePlotPanel(
     int ExcludedRowCount,
     int UnplottableRowCount,
     string? FilterExpression,
-    IReadOnlyList<string> AppliedTransforms);
+    IReadOnlyList<string> AppliedTransforms,
+    HeatmapScientificProvenance? Heatmap = null);
 
 public sealed record FigureProvenanceMeasurementOverlay(
     Guid OverlayId,
@@ -510,7 +512,11 @@ public static class FigureProvenanceWriter
                 panel.Projection.ExcludedRowCount,
                 panel.Projection.UnplottableRowCount,
                 panel.Plot.Filter?.Expression,
-                panel.Projection.AppliedTransforms)).ToArray());
+                panel.Projection.AppliedTransforms,
+                panel.Plot.PlotType == PlotKind.Heatmap
+                    ? HeatmapScientificProvenanceBuilder.Create(
+                        HeatmapDomainBuilder.Build(panel.Plot, panel.Projection))
+                    : null)).ToArray());
     }
 
     private static FigureProvenanceScientificObject CreateScientificObjectProvenance(

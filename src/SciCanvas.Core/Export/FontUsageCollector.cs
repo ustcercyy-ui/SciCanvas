@@ -1,3 +1,4 @@
+using SciCanvas.Core.Plotting;
 using SciCanvas.Core.Workspace;
 
 namespace SciCanvas.Core.Export;
@@ -16,6 +17,7 @@ public enum FontUsageKind
     PlotTick,
     PlotLegend,
     PlotAnnotation,
+    PlotColorbar,
 }
 
 public sealed record FontUsage(
@@ -82,6 +84,13 @@ public static class FontUsageCollector
             Add(usages, typography.Tick.Value.FontFamily, FontUsageKind.PlotTick, figureId, panelId, NormalizeId(panel.Plot.Id), panel.Label, typography.Tick.Value.IsBold);
             Add(usages, typography.Legend.Value.FontFamily, FontUsageKind.PlotLegend, figureId, panelId, NormalizeId(panel.Plot.Id), panel.Label, typography.Legend.Value.IsBold);
             Add(usages, typography.Annotation.Value.FontFamily, FontUsageKind.PlotAnnotation, figureId, panelId, NormalizeId(panel.Plot.Id), panel.Label, typography.Annotation.Value.IsBold);
+            if (panel.Plot.PlotType == PlotKind.Heatmap &&
+                (panel.Plot.ColorScale ?? PlotColorScale.Default).ShowColorbar)
+            {
+                TextStyle colorbarStyle = panel.Plot.Colorbar?.LabelStyle ?? typography.Tick.Value;
+                Add(usages, colorbarStyle.FontFamily, FontUsageKind.PlotColorbar,
+                    figureId, panelId, NormalizeId(panel.Plot.Id), panel.Label, colorbarStyle.IsBold);
+            }
         }
 
         foreach (FigureAnnotationExportItem annotation in document.Annotations.Where(item => includeHidden || item.IsVisible))

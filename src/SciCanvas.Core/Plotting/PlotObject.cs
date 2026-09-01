@@ -349,6 +349,12 @@ public sealed record PlotObject
 
     public IReadOnlyList<PlotDataTransform> Transforms { get; init; } = [];
 
+    public HeatmapGridDefinition? HeatmapGrid { get; init; }
+
+    public PlotColorScale? ColorScale { get; init; }
+
+    public PlotColorbarDefinition? Colorbar { get; init; }
+
     public PlotObject EnsureValid(TabularDataAsset asset) =>
         EnsureValidCore(asset, validateOperations: true);
 
@@ -374,6 +380,7 @@ public sealed record PlotObject
         YAxis.EnsureValid();
         Typography.EnsureValid();
         Style.EnsureValid();
+        EnsureHeatmapConfiguration();
         Filter?.EnsureValid(asset);
         EnsureAxisDataCompatibility(asset);
         if (Transforms.Any(transform => transform is null))
@@ -392,6 +399,23 @@ public sealed record PlotObject
         }
 
         return this;
+    }
+
+    private void EnsureHeatmapConfiguration()
+    {
+        if (PlotType == PlotKind.Heatmap)
+        {
+            (HeatmapGrid ?? HeatmapGridDefinition.Default).EnsureValid();
+            (ColorScale ?? PlotColorScale.Default).EnsureValid();
+            (Colorbar ?? PlotColorbarDefinition.Default).EnsureValid();
+            return;
+        }
+
+        if (HeatmapGrid is not null || ColorScale is not null || Colorbar is not null)
+        {
+            throw new InvalidDataException(
+                "Heatmap grid, color scale, and colorbar settings only apply to Heatmap plots.");
+        }
     }
 
     private void EnsureAxisDataCompatibility(TabularDataAsset asset)

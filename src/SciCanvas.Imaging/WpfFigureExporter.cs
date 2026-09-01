@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using SciCanvas.Core.Channels;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Geometry;
 using SciCanvas.Core.Science;
@@ -841,16 +842,10 @@ public sealed class WpfFigureExporter : IFigureExporter, IPdfFontExportReportPro
 
     private static Point ToPoint(FigureScientificPoint point) => new(point.X, point.Y);
 
-    internal static IReadOnlyList<Color> GetColormapColors(string colormap) => colormap.ToLowerInvariant() switch
-    {
-        "magma" => [Color.FromRgb(0, 0, 4), Color.FromRgb(115, 20, 117), Color.FromRgb(252, 136, 97), Color.FromRgb(252, 253, 191)],
-        "plasma" => [Color.FromRgb(13, 8, 135), Color.FromRgb(126, 3, 168), Color.FromRgb(204, 71, 120), Color.FromRgb(248, 149, 64), Color.FromRgb(240, 249, 33)],
-        "inferno" => [Color.FromRgb(0, 0, 4), Color.FromRgb(87, 16, 110), Color.FromRgb(188, 55, 84), Color.FromRgb(249, 142, 8), Color.FromRgb(252, 255, 164)],
-        "cividis" => [Color.FromRgb(0, 32, 77), Color.FromRgb(40, 72, 110), Color.FromRgb(87, 108, 116), Color.FromRgb(145, 143, 111), Color.FromRgb(253, 234, 69)],
-        "turbo" => [Color.FromRgb(48, 18, 59), Color.FromRgb(50, 104, 210), Color.FromRgb(44, 203, 128), Color.FromRgb(245, 210, 65), Color.FromRgb(180, 4, 38)],
-        "grayscale" => [Colors.Black, Colors.White],
-        _ => [Color.FromRgb(68, 1, 84), Color.FromRgb(59, 82, 139), Color.FromRgb(33, 145, 140), Color.FromRgb(94, 201, 98), Color.FromRgb(253, 231, 37)],
-    };
+    internal static IReadOnlyList<Color> GetColormapColors(string colormap) =>
+        ScientificColormap.GetStops(colormap)
+            .Select(color => Color.FromArgb(color.Alpha, color.Red, color.Green, color.Blue))
+            .ToArray();
     internal static LinearGradientBrush CreateColormapBrush(
         string colormap,
         FigureObjectOrientation orientation = FigureObjectOrientation.Vertical)

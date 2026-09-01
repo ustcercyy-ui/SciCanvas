@@ -17,7 +17,7 @@ public sealed class PlotSceneGoldenTests
     [InlineData(PlotKind.ErrorBar, 1, 5, 0.75, 5.25, 19, 5, 0)]
     [InlineData(PlotKind.Histogram, 1, 5, 0, 1, 0, 0, 5)]
     [InlineData(PlotKind.BoxPlot, -0.5, 1.5, 1, 5, 8, 0, 2)]
-    [InlineData(PlotKind.Heatmap, 1, 5, 1, 5, 0, 0, 5)]
+    [InlineData(PlotKind.Heatmap, 1, 5, 1, 5, 0, 5, 0)]
     public void Build_AllPlotKinds_MatchesGoldenPrimitiveSummary(
         PlotKind kind,
         double xMinimum,
@@ -36,7 +36,7 @@ public sealed class PlotSceneGoldenTests
         AssertClose(yMaximum, scene.AxisBounds.YMaximum);
         AssertClose(61.8666666667, scene.Chart.X);
         AssertClose(25, scene.Chart.Y);
-        AssertClose(345.3333333333, scene.Chart.Width);
+        AssertClose(kind == PlotKind.Heatmap ? 286.6666666667 : 345.3333333333, scene.Chart.Width);
         AssertClose(223.8, scene.Chart.Height);
         Assert.Equal(seriesLineCount, scene.Primitives.OfType<PlotLine>().Count(line => line.Stroke == SeriesColor));
         Assert.Equal(markerCount, scene.Primitives.OfType<PlotEllipse>().Count());
@@ -132,16 +132,19 @@ public sealed class PlotSceneGoldenTests
     }
 
     [Fact]
-    public void Build_Heatmap_HasGoldenClippedCellBounds()
+    public void Build_IncompleteHeatmap_HasGoldenPointCloudAndSharedColorScale()
     {
         PlotScene scene = Build(PlotKind.Heatmap);
-        PlotHeatmapCell[] cells = scene.Primitives.OfType<PlotHeatmapCell>().ToArray();
+        PlotEllipse[] points = scene.Primitives.OfType<PlotEllipse>().ToArray();
 
-        Assert.Equal(5, cells.Length);
-        Assert.Equal("#FF1E41DC", cells[0].Fill);
-        Assert.Equal("#FFFA411E", cells[^1].Fill);
-        Assert.Equal(new PlotRect(scene.Chart.Left, scene.Chart.Bottom - 9, 9, 9), cells[0].Bounds);
-        Assert.Equal(new PlotRect(scene.Chart.Right - 9, scene.Chart.Top, 9, 9), cells[^1].Bounds);
+        Assert.Equal(HeatmapGridKind.PointCloud, scene.Heatmap!.EffectiveGridKind);
+        Assert.Equal(5, points.Length);
+        Assert.Equal("#FF440154", points[0].Fill);
+        Assert.Equal("#FFFDE725", points[^1].Fill);
+        AssertClose(scene.Chart.Left, points[0].Bounds.Left + points[0].Bounds.Width / 2);
+        AssertClose(scene.Chart.Bottom, points[0].Bounds.Top + points[0].Bounds.Height / 2);
+        Assert.Equal(scene.Heatmap.Minimum, scene.Heatmap.Colorbar!.Minimum);
+        Assert.Equal(scene.Heatmap.Maximum, scene.Heatmap.Colorbar.Maximum);
     }
 
     private static PlotScene Build(PlotKind kind)

@@ -366,8 +366,14 @@ public static class PlotDataProjector
 
     internal static void ValidateOperations(
         PlotObject plot,
-        TabularDataAsset asset) =>
-        _ = ProjectValidated(plot, asset);
+        TabularDataAsset asset)
+    {
+        PlotDataProjection projection = ProjectValidated(plot, asset);
+        if (plot.PlotType == PlotKind.Heatmap)
+        {
+            _ = HeatmapDomainBuilder.Build(plot, projection);
+        }
+    }
 
     private static PlotDataProjection ProjectValidated(
         PlotObject plot,
@@ -683,7 +689,63 @@ public sealed record PlotScientificProvenance(
     PlotSeriesStyle Style,
     int SourceRowCount,
     int IncludedRowCount,
-    int UnplottableRowCount);
+    int UnplottableRowCount,
+    HeatmapScientificProvenance? Heatmap = null);
+
+public sealed record HeatmapColorbarScientificProvenance(
+    string Binding,
+    string Orientation,
+    string Position,
+    double Minimum,
+    double Maximum,
+    string? Unit,
+    IReadOnlyList<double> Ticks,
+    IReadOnlyList<string> TickLabels);
+
+public sealed record HeatmapScientificProvenance(
+    string RequestedGridKind,
+    string EffectiveGridKind,
+    string DuplicateCellPolicy,
+    bool DuplicateAggregationApplied,
+    string Colormap,
+    double Minimum,
+    double Maximum,
+    string Scale,
+    string ClampMode,
+    string? NoDataColor,
+    HeatmapColorbarScientificProvenance? Colorbar,
+    IReadOnlyList<string> DomainIssueCodes);
+
+public static class HeatmapScientificProvenanceBuilder
+{
+    public static HeatmapScientificProvenance Create(HeatmapDomain domain)
+    {
+        ArgumentNullException.ThrowIfNull(domain);
+        return new HeatmapScientificProvenance(
+            domain.RequestedGridKind.ToString(),
+            domain.EffectiveGridKind.ToString(),
+            domain.DuplicateCellPolicy.ToString(),
+            domain.Issues.Any(issue => issue.Code == HeatmapQcCodes.DuplicateCell),
+            domain.Colormap,
+            domain.Minimum,
+            domain.Maximum,
+            domain.Scale.ToString(),
+            domain.ClampMode.ToString(),
+            domain.NoDataColor,
+            domain.Colorbar is null
+                ? null
+                : new HeatmapColorbarScientificProvenance(
+                    domain.Colorbar.Binding.ToString(),
+                    domain.Colorbar.Orientation.ToString(),
+                    domain.Colorbar.Position.ToString(),
+                    domain.Colorbar.Minimum,
+                    domain.Colorbar.Maximum,
+                    domain.Colorbar.Unit,
+                    domain.Colorbar.Ticks,
+                    domain.Colorbar.TickLabels),
+            domain.Issues.Select(issue => issue.Code).Distinct(StringComparer.Ordinal).ToArray());
+    }
+}
 
 public static class PlotScientificProvenanceBuilder
 {
@@ -692,6 +754,9 @@ public static class PlotScientificProvenanceBuilder
         TabularDataAsset asset)
     {
         PlotDataProjection projection = PlotDataProjector.Project(plot, asset);
+        HeatmapScientificProvenance? heatmap = plot.PlotType == PlotKind.Heatmap
+            ? HeatmapScientificProvenanceBuilder.Create(HeatmapDomainBuilder.Build(plot, projection))
+            : null;
         return new PlotScientificProvenance(
             plot.Id,
             plot.Data.DataAssetId,
@@ -707,6 +772,7 @@ public static class PlotScientificProvenanceBuilder
             plot.Style,
             projection.SourceRowCount,
             projection.IncludedRowCount,
-            projection.UnplottableRowCount);
+            projection.UnplottableRowCount,
+            heatmap);
     }
 }

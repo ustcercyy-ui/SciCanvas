@@ -1,4 +1,5 @@
 using SciCanvas.Core.Sources;
+using SciCanvas.Core.Plotting;
 using SciCanvas.Core.Workspace;
 
 namespace SciCanvas.Core.Export;
@@ -292,6 +293,27 @@ public static class FigurePreflight
             {
                 panel.EnsureValid();
                 _ = panel.ResolveTypography(document.GlobalStyle);
+                if (panel.Plot.PlotType == PlotKind.Heatmap)
+                {
+                    HeatmapDomain domain = HeatmapDomainBuilder.Build(panel.Plot, panel.Projection);
+                    issues.AddRange(domain.Issues.Select(issue => new FigurePreflightIssue(
+                        issue.Severity == HeatmapDomainIssueSeverity.Warning
+                            ? FigurePreflightSeverity.Warning
+                            : FigurePreflightSeverity.Info,
+                        issue.Code,
+                        issue.Message,
+                        panel.Label,
+                        ObjectId: panel.Plot.Id)));
+                }
+            }
+            catch (HeatmapDomainException exception)
+            {
+                issues.Add(new FigurePreflightIssue(
+                    FigurePreflightSeverity.Error,
+                    exception.Code,
+                    exception.Message,
+                    panel.Label,
+                    ObjectId: panel.Plot.Id));
             }
             catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
             {

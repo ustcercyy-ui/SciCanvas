@@ -56,6 +56,7 @@ public sealed class PlotWorkspaceViewModel : ObservableObject, IDisposable
         LegendFont = new PlotTextStyleEditorViewModel(PlotTypography.Default.Legend);
         AnnotationFont = new PlotTextStyleEditorViewModel(PlotTypography.Default.Annotation);
         SeriesStyle = new PlotSeriesStyleEditorViewModel(PlotSeriesStyle.Default);
+        Heatmap = new HeatmapPlotEditorViewModel(PlotTypography.Default.Tick);
         NewPlotCommand = new RelayCommand(BeginNewPlot);
         SavePlotCommand = new RelayCommand(() => _ = SavePlot());
         PreviewFilterCommand = new RelayCommand(PreviewFilter);
@@ -152,6 +153,8 @@ public sealed class PlotWorkspaceViewModel : ObservableObject, IDisposable
     public PlotTextStyleEditorViewModel AnnotationFont { get; }
 
     public PlotSeriesStyleEditorViewModel SeriesStyle { get; }
+
+    public HeatmapPlotEditorViewModel Heatmap { get; }
 
     public TabularDataAsset? SelectedDataAsset
     {
@@ -412,6 +415,9 @@ public sealed class PlotWorkspaceViewModel : ObservableObject, IDisposable
     public bool UsesValueColumn =>
         SelectedPlotKind == PlotKind.Heatmap;
 
+    public bool UsesHeatmapSettings =>
+        SelectedPlotKind == PlotKind.Heatmap;
+
     public bool UsesSymmetricErrorColumn =>
         UsesErrorBars && SelectedErrorBarMode == PlotErrorBarMode.Symmetric;
 
@@ -440,6 +446,7 @@ public sealed class PlotWorkspaceViewModel : ObservableObject, IDisposable
             LegendFont.Load(PlotTypography.Default.Legend);
             AnnotationFont.Load(PlotTypography.Default.Annotation);
             SeriesStyle.Load(PlotSeriesStyle.Default);
+            Heatmap.Load(null, null, null, PlotTypography.Default.Tick);
             IsFilterEnabled = false;
             SelectedFilterOperator = PlotFilterOperator.GreaterThanOrEqual;
             FilterOperand = string.Empty;
@@ -547,6 +554,15 @@ public sealed class PlotWorkspaceViewModel : ObservableObject, IDisposable
             Transforms = Transforms
                 .Select(transform => transform.CreateModel())
                 .ToArray(),
+            HeatmapGrid = SelectedPlotKind == PlotKind.Heatmap
+                ? Heatmap.CreateGrid()
+                : null,
+            ColorScale = SelectedPlotKind == PlotKind.Heatmap
+                ? Heatmap.CreateColorScale()
+                : null,
+            Colorbar = SelectedPlotKind == PlotKind.Heatmap
+                ? Heatmap.CreateColorbar()
+                : null,
         };
         PlotObject valid = plot.EnsureValid(asset);
         if (valid.Filter is { } filter)
@@ -605,6 +621,11 @@ public sealed class PlotWorkspaceViewModel : ObservableObject, IDisposable
             LegendFont.Load(plot.Typography.Legend);
             AnnotationFont.Load(plot.Typography.Annotation);
             SeriesStyle.Load(plot.Style);
+            Heatmap.Load(
+                plot.HeatmapGrid,
+                plot.ColorScale,
+                plot.Colorbar,
+                plot.Typography.Tick);
             if (plot.Filter is { } filter)
             {
                 IsFilterEnabled = true;
@@ -755,6 +776,7 @@ public sealed class PlotWorkspaceViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(UsesCategoryColumn));
         OnPropertyChanged(nameof(UsesErrorBars));
         OnPropertyChanged(nameof(UsesValueColumn));
+        OnPropertyChanged(nameof(UsesHeatmapSettings));
         OnPropertyChanged(nameof(UsesSymmetricErrorColumn));
         OnPropertyChanged(nameof(UsesAsymmetricErrorColumns));
     }

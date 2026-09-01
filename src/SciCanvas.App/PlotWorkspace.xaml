@@ -251,6 +251,159 @@
             </Border>
 
             <Expander Margin="0,10,0,0"
+                      Header="Quantitative Heatmap · grid / color scale / colorbar"
+                      IsExpanded="True"
+                      Visibility="{Binding UsesHeatmapSettings, Converter={StaticResource BooleanToVisibility}}">
+                <Border Margin="0,5,0,0" Padding="8" Background="#151E27" CornerRadius="3">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Margin="0,0,3,0">
+                                <TextBlock Text="Grid semantics" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                <ComboBox Margin="0,3,0,0"
+                                          ItemsSource="{Binding Heatmap.GridKindChoices}"
+                                          SelectedItem="{Binding Heatmap.GridKind}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="3,0,0,0">
+                                <TextBlock Text="Duplicate cell policy" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                <ComboBox Margin="0,3,0,0"
+                                          ItemsSource="{Binding Heatmap.DuplicateCellPolicyChoices}"
+                                          SelectedItem="{Binding Heatmap.DuplicateCellPolicy}" />
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock Margin="0,5,0,0"
+                                   Text="Auto：完整网格按坐标间距绘制；不完整数据使用彩色点且不插值。重复坐标默认 Error。"
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   FontSize="8"
+                                   TextWrapping="Wrap" />
+
+                        <Grid Margin="0,9,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Margin="0,0,3,0">
+                                <TextBlock Text="Colormap" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                <ComboBox Margin="0,3,0,0"
+                                          ItemsSource="{Binding Heatmap.ColormapChoices}"
+                                          SelectedItem="{Binding Heatmap.Colormap}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="3,0">
+                                <TextBlock Text="Value scale" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                <ComboBox Margin="0,3,0,0"
+                                          ItemsSource="{Binding Heatmap.ScaleChoices}"
+                                          SelectedItem="{Binding Heatmap.Scale}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Margin="3,0,0,0">
+                                <TextBlock Text="Clamp mode" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                <ComboBox Margin="0,3,0,0"
+                                          ItemsSource="{Binding Heatmap.ClampModeChoices}"
+                                          SelectedItem="{Binding Heatmap.ClampMode}" />
+                            </StackPanel>
+                        </Grid>
+                        <Grid Margin="0,7,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Margin="0,0,3,0">
+                                <TextBlock Text="Scale min（可空）" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                <TextBox Margin="0,3,0,0" Text="{Binding Heatmap.Minimum, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="3,0">
+                                <TextBlock Text="Scale max（可空）" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                <TextBox Margin="0,3,0,0" Text="{Binding Heatmap.Maximum, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Margin="3,0,0,0">
+                                <TextBlock Text="NoData color（空=透明）" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                <TextBox Margin="0,3,0,0" Text="{Binding Heatmap.NoDataColor, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <CheckBox Margin="0,10,0,0"
+                                  IsChecked="{Binding Heatmap.ShowColorbar}"
+                                  Content="显示与 Heatmap 范围联动的 colorbar" />
+                        <StackPanel Margin="0,7,0,0"
+                                    Visibility="{Binding Heatmap.ShowColorbar, Converter={StaticResource BooleanToVisibility}}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,3,0">
+                                    <TextBlock Text="Binding" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                    <ComboBox Margin="0,3,0,0"
+                                              ItemsSource="{Binding Heatmap.ColorbarBindingChoices}"
+                                              SelectedItem="{Binding Heatmap.ColorbarBinding}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Margin="3,0">
+                                    <TextBlock Text="Orientation" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                    <ComboBox Margin="0,3,0,0"
+                                              ItemsSource="{Binding Heatmap.ColorbarOrientationChoices}"
+                                              SelectedItem="{Binding Heatmap.ColorbarOrientation}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Margin="3,0,0,0">
+                                    <TextBlock Text="Position" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                    <ComboBox Margin="0,3,0,0"
+                                              ItemsSource="{Binding Heatmap.ColorbarPositionChoices}"
+                                              SelectedItem="{Binding Heatmap.ColorbarPosition}" />
+                                </StackPanel>
+                            </Grid>
+                            <Grid Margin="0,7,0,0"
+                                  Visibility="{Binding Heatmap.IsDetachedColorbar, Converter={StaticResource BooleanToVisibility}}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,3,0">
+                                    <TextBlock Text="Detached min" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                    <TextBox Margin="0,3,0,0" Text="{Binding Heatmap.ColorbarMinimum, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Margin="3,0,0,0">
+                                    <TextBlock Text="Detached max" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                    <TextBox Margin="0,3,0,0" Text="{Binding Heatmap.ColorbarMaximum, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                            </Grid>
+                            <Grid Margin="0,7,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="2*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,3,0">
+                                    <TextBlock Text="Unit" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                    <TextBox Margin="0,3,0,0" Text="{Binding Heatmap.ColorbarUnit, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Margin="3,0,0,0">
+                                    <TextBlock Text="Ticks（逗号分隔；空=自动）" Foreground="{DynamicResource MutedBrush}" FontSize="8" />
+                                    <TextBox Margin="0,3,0,0" Text="{Binding Heatmap.ColorbarTicks, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                            </Grid>
+                            <StackPanel Margin="0,7,0,0">
+                                <TextBlock Text="Tick labels（| 分隔；空=按数值自动生成；数量须与 ticks 相同）"
+                                           Foreground="{DynamicResource MutedBrush}"
+                                           FontSize="8" />
+                                <TextBox Margin="0,3,0,0"
+                                         Text="{Binding Heatmap.ColorbarTickLabels, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                            <CheckBox Margin="0,7,0,0"
+                                      IsChecked="{Binding Heatmap.UseCustomColorbarFont}"
+                                      Content="独立 colorbar label 字体（关闭时继承 Tick font）" />
+                            <ContentControl Margin="0,5,0,0"
+                                            Content="{Binding Heatmap.ColorbarFont}"
+                                            ContentTemplate="{StaticResource TextStyleEditorTemplate}"
+                                            Visibility="{Binding Heatmap.UseCustomColorbarFont, Converter={StaticResource BooleanToVisibility}}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Expander>
+
+            <Expander Margin="0,10,0,0"
                       Header="Filter · explicit expression / excluded rows"
                       IsExpanded="True">
                 <Border Margin="0,5,0,0" Padding="8" Background="#151E27" CornerRadius="3">

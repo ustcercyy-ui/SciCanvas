@@ -960,9 +960,10 @@ internal static class WpfEditableFigureExporter
         double scale,
         double pageHeight)
     {
-        content.Append("q ");
         bool fill = item.Fill is not null;
         bool stroke = item.Stroke is not null;
+        if (!fill && !stroke) return;
+        content.Append("q ");
         if (fill) AppendPdfColor(content, WpfFigureExporter.ParseColor(item.Fill!), fill: true);
         if (stroke)
         {
