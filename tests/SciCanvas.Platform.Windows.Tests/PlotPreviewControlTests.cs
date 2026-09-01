@@ -12,6 +12,7 @@ using Xunit.Abstractions;
 
 namespace SciCanvas.Platform.Windows.Tests;
 
+[Collection(WpfTestCollection.Name)]
 public sealed class PlotPreviewControlTests
 {
     private readonly ITestOutputHelper _output;

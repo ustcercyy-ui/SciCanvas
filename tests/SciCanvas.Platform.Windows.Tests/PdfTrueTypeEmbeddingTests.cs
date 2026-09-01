@@ -6,6 +6,7 @@ using SciCanvas.Imaging;
 
 namespace SciCanvas.Platform.Windows.Tests;
 
+[Collection(WpfTestCollection.Name)]
 public sealed class PdfTrueTypeEmbeddingTests
 {
     [Fact]
