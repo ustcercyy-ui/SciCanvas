@@ -60,6 +60,54 @@ public sealed class FigurePlotPanelExporterTests
     }
 
     [Fact]
+    public async Task ExportHeatmap_PreservesCanonicalCellsTransparentNoDataAndSharedColorbarRange()
+    {
+        using var workspace = new TestWorkspace();
+        (TabularDataAsset asset, PlotObject plot) = CreateIncompleteGridHeatmap();
+        FigurePlotPanelExportItem panel = FigurePlotPanelExportItem.Create(
+            plot,
+            asset,
+            new PixelRect64(0, 0, 620, 440),
+            "a",
+            typographyOverride: FigurePlotTypographyOverride.FromPlot(plot.Typography));
+        PlotScene scene = PlotSceneBuilder.Build(panel, FigureGlobalStyle.Default, 96);
+        PlotHeatmapCell[] cells = scene.Primitives.OfType<PlotHeatmapCell>().ToArray();
+        PlotHeatmapCell noData = Assert.Single(cells, cell => cell.IsNoData);
+        var document = new FigureExportDocument(620, 440, 96, [], plotPanels: [panel]);
+        string svgPath = Path.Combine(workspace.Root, "quantitative-heatmap.svg");
+        string pdfPath = Path.Combine(workspace.Root, "quantitative-heatmap.pdf");
+        var exporter = new WpfFigureExporter();
+
+        await exporter.ExportAsync(document, svgPath);
+        await exporter.ExportAsync(document, pdfPath);
+
+        Assert.Equal(4, cells.Length);
+        Assert.Null(noData.Fill);
+        Assert.Null(noData.Value);
+        Assert.Equal(-0.5, scene.AxisBounds.XMinimum);
+        Assert.Equal(1.5, scene.AxisBounds.XMaximum);
+        Assert.Equal(scene.Heatmap!.Minimum, scene.Heatmap.Colorbar!.Minimum);
+        Assert.Equal(scene.Heatmap.Maximum, scene.Heatmap.Colorbar.Maximum);
+        Assert.Equal([20d, 40d, 60d, 80d, 100d], scene.Heatmap.Colorbar.Ticks);
+
+        string svg = await File.ReadAllTextAsync(svgPath);
+        Assert.Contains("fill=\"#440154\"", svg, StringComparison.Ordinal);
+        Assert.Contains("fill=\"#FDE725\"", svg, StringComparison.Ordinal);
+        Assert.Contains(">Low</text>", svg, StringComparison.Ordinal);
+        Assert.Contains(">High</text>", svg, StringComparison.Ordinal);
+        Assert.Contains(
+            $"<rect x=\"{F(noData.Bounds.X)}\" y=\"{F(noData.Bounds.Y)}\" " +
+            $"width=\"{F(noData.Bounds.Width)}\" height=\"{F(noData.Bounds.Height)}\" " +
+            "fill=\"none\" stroke=\"none\"/>",
+            svg,
+            StringComparison.Ordinal);
+        string pdf = Encoding.ASCII.GetString(await File.ReadAllBytesAsync(pdfPath));
+        Assert.Contains("0.267 0.004 0.329 rg", pdf, StringComparison.Ordinal);
+        Assert.Contains("0.992 0.906 0.145 rg", pdf, StringComparison.Ordinal);
+        Assert.DoesNotContain("/Subtype /Image", pdf, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ExportPlotPanel_RendersRasterTiffAndPdfWithoutPdfImageXObject()
     {
         using var workspace = new TestWorkspace();
@@ -189,6 +237,60 @@ public sealed class FigurePlotPanelExporterTests
         return (asset, plot.EnsureValid(asset));
     }
 
+    private static (TabularDataAsset Asset, PlotObject Plot) CreateIncompleteGridHeatmap()
+    {
+        DataColumn x = new(Guid.NewGuid(), "X", TabularDataType.Numeric, Role: DataColumnRole.X);
+        DataColumn y = new(Guid.NewGuid(), "Y", TabularDataType.Numeric, Role: DataColumnRole.Y);
+        DataColumn value = new(Guid.NewGuid(), "Value", TabularDataType.Numeric);
+        DataColumn[] columns = [x, y, value];
+        var asset = new TabularDataAsset(
+            Guid.NewGuid(),
+            "Incomplete heatmap",
+            null,
+            null,
+            1,
+            columns,
+            [
+                HeatmapRow(0, 0, 20),
+                HeatmapRow(1, 0, 60),
+                HeatmapRow(0, 1, 100),
+            ],
+            new TabularImportMetadata
+            {
+                Format = TabularDataFormat.Csv,
+                ImportedAt = DateTimeOffset.UnixEpoch,
+                EncodingName = "UTF-8",
+                Delimiter = ',',
+                DataRowCount = 3,
+                InferenceRowCount = 3,
+                OriginalHeaders = columns.Select(column => column.Name).ToArray(),
+            }).EnsureValid();
+        var plot = new PlotObject
+        {
+            Id = Guid.NewGuid(),
+            Name = "Quantitative heatmap",
+            PlotType = PlotKind.Heatmap,
+            Data = new PlotDataBinding(asset.Id, asset.SourceRevision, x.Id, y.Id, ValueColumnId: value.Id),
+            XAxis = PlotAxisDefinition.DefaultX,
+            YAxis = PlotAxisDefinition.DefaultY,
+            Typography = PlotTypography.Default,
+            Style = PlotSeriesStyle.Default,
+            HeatmapGrid = new HeatmapGridDefinition(HeatmapGridKind.RegularGrid),
+            ColorScale = new PlotColorScale("viridis", 20, 100),
+            Colorbar = new PlotColorbarDefinition(
+                Ticks: [20, 40, 60, 80, 100],
+                TickLabels: ["Low", "40", "60", "80", "High"]),
+        };
+        return (asset, plot.EnsureValid(asset));
+    }
+
+    private static TabularDataRow HeatmapRow(double x, double y, double value) => new(
+    [
+        TabularDataValue.FromNumber(x.ToString(CultureInfo.InvariantCulture), x),
+        TabularDataValue.FromNumber(y.ToString(CultureInfo.InvariantCulture), y),
+        TabularDataValue.FromNumber(value.ToString(CultureInfo.InvariantCulture), value),
+    ]);
+
     private static TabularDataRow Row(double x, double y, double error, double value, string category) => new(
     [
         TabularDataValue.FromNumber(x.ToString(CultureInfo.InvariantCulture), x),
@@ -236,4 +338,7 @@ public sealed class FigurePlotPanelExporterTests
         }
         return count;
     }
+
+    private static string F(double value) =>
+        value.ToString("0.###", CultureInfo.InvariantCulture);
 }

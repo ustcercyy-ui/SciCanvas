@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using SciCanvas.Core.Channels;
 using SciCanvas.Core.Export;
 using SciCanvas.Core.Workspace;
 
@@ -25,10 +26,21 @@ public sealed record PlotRectangle(PlotRect Bounds, string? Fill, string? Stroke
 public sealed record PlotEllipse(PlotRect Bounds, string? Fill, string? Stroke = null, double Width = 0) : PlotPrimitive;
 public sealed record PlotPolygon(IReadOnlyList<PlotPoint> Points, string? Fill, string? Stroke = null, double Width = 0) : PlotPrimitive;
 public sealed record PlotText(string Value, double X, double Y, TextStyle Style, double FontPixels, PlotTextAnchor Anchor = PlotTextAnchor.Start) : PlotPrimitive;
-public sealed record PlotHeatmapCell(PlotRect Bounds, string Fill) : PlotPrimitive;
+public sealed record PlotHeatmapCell(
+    PlotRect Bounds,
+    string? Fill,
+    double? Value = null,
+    double? NormalizedValue = null,
+    bool IsNoData = false,
+    double GridX = 0,
+    double GridY = 0) : PlotPrimitive;
 public sealed record PlotClipRegion(PlotRect Bounds, IReadOnlyList<PlotPrimitive> Primitives) : PlotPrimitive;
 public readonly record struct PlotAxisBounds(double XMinimum, double XMaximum, double YMinimum, double YMaximum);
-public sealed record PlotScene(IReadOnlyList<PlotPrimitive> Primitives, PlotRect Chart, PlotAxisBounds AxisBounds);
+public sealed record PlotScene(
+    IReadOnlyList<PlotPrimitive> Primitives,
+    PlotRect Chart,
+    PlotAxisBounds AxisBounds,
+    HeatmapDomain? Heatmap = null);
 public readonly record struct PlotSceneBuildTimings(TimeSpan Bounds, TimeSpan AxisGeneration, TimeSpan HeatmapGeometry);
 public sealed record PlotSceneBuildResult(PlotScene Scene, PlotSceneBuildTimings Timings);
 
@@ -96,6 +108,13 @@ public static class PlotSceneBuilder
             throw new ArgumentOutOfRangeException(nameof(destination), "Plot scene destination must have finite positive dimensions.");
         }
         typography.EnsureValid();
+        long heatmapStarted = Stopwatch.GetTimestamp();
+        HeatmapDomain? heatmapDomain = plot.PlotType == PlotKind.Heatmap
+            ? HeatmapDomainBuilder.Build(plot, projection)
+            : null;
+        TimeSpan heatmapElapsed = heatmapDomain is null
+            ? TimeSpan.Zero
+            : Stopwatch.GetElapsedTime(heatmapStarted);
         double axisFont = Px(typography.Axis.FontSizePt, dpi);
         double tickFont = Px(typography.Tick.FontSizePt, dpi);
         double legendFont = Px(typography.Legend.FontSizePt, dpi);
@@ -104,6 +123,7 @@ public static class PlotSceneBuilder
         double right = Math.Max(12, tickFont * 1.2);
         double top = Math.Max(25, legendFont * 1.8);
         double bottom = Math.Max(46, tickFont * 1.6 + axisFont * 1.6 + annotationFont * 1.4);
+        ReserveColorbarMargin(heatmapDomain?.Colorbar, tickFont, ref left, ref right, ref top, ref bottom);
         var chart = new PlotRect(
             destination.Left + left,
             destination.Top + top,
@@ -112,12 +132,11 @@ public static class PlotSceneBuilder
         var output = new List<PlotPrimitive> { new PlotRectangle(destination, "#FFFFFFFF") };
         Series series = BuildSeries(projection, plot.PlotType);
         long boundsStarted = Stopwatch.GetTimestamp();
-        Bounds bounds = ResolveBounds(plot, series);
+        Bounds bounds = ResolveBounds(plot, series, heatmapDomain);
         TimeSpan boundsElapsed = Stopwatch.GetElapsedTime(boundsStarted);
         long axisStarted = Stopwatch.GetTimestamp();
         AddAxes(output, chart, plot, typography, bounds, dpi);
         TimeSpan axisElapsed = Stopwatch.GetElapsedTime(axisStarted);
-        TimeSpan heatmapElapsed = TimeSpan.Zero;
         switch (plot.PlotType)
         {
             case PlotKind.Line:
@@ -140,9 +159,9 @@ public static class PlotSceneBuilder
                 AddBoxes(output, chart, plot, typography, bounds, series.Groups, dpi);
                 break;
             case PlotKind.Heatmap:
-                long heatmapStarted = Stopwatch.GetTimestamp();
-                AddHeatmap(output, chart, plot, bounds, series.Samples);
-                heatmapElapsed = Stopwatch.GetElapsedTime(heatmapStarted);
+                long heatmapGeometryStarted = Stopwatch.GetTimestamp();
+                AddHeatmap(output, chart, plot, typography, bounds, heatmapDomain!, dpi);
+                heatmapElapsed += Stopwatch.GetElapsedTime(heatmapGeometryStarted);
                 break;
             default:
                 throw new InvalidDataException("未知 Plot 类型。");
@@ -165,7 +184,11 @@ public static class PlotSceneBuilder
             annotationFont,
             PlotTextAnchor.End));
         return new PlotSceneBuildResult(
-            new PlotScene(output, chart, new PlotAxisBounds(bounds.X0, bounds.X1, bounds.Y0, bounds.Y1)),
+            new PlotScene(
+                output,
+                chart,
+                new PlotAxisBounds(bounds.X0, bounds.X1, bounds.Y0, bounds.Y1),
+                heatmapDomain),
             new PlotSceneBuildTimings(boundsElapsed, axisElapsed, heatmapElapsed));
     }
 
@@ -192,13 +215,53 @@ public static class PlotSceneBuilder
         return new(samples, [], [], projection);
     }
 
-    private static Bounds ResolveBounds(PlotObject plot, Series series)
+    private static void ReserveColorbarMargin(
+        HeatmapColorbarDomain? colorbar,
+        double tickFont,
+        ref double left,
+        ref double right,
+        ref double top,
+        ref double bottom)
+    {
+        if (colorbar is null) return;
+        double side = Math.Max(48, tickFont * 5.5);
+        double horizontal = Math.Max(42, tickFont * 3.5);
+        switch (colorbar.Position)
+        {
+            case PlotColorbarPosition.Right:
+                right += side;
+                break;
+            case PlotColorbarPosition.Left:
+                left += side;
+                break;
+            case PlotColorbarPosition.Top:
+                top += horizontal;
+                break;
+            case PlotColorbarPosition.Bottom:
+                bottom += horizontal;
+                break;
+        }
+    }
+
+    private static Bounds ResolveBounds(
+        PlotObject plot,
+        Series series,
+        HeatmapDomain? heatmapDomain)
     {
         double x0;
         double x1;
         double y0;
         double y1;
-        if (plot.PlotType == PlotKind.Histogram)
+        bool expand = true;
+        if (heatmapDomain is not null && heatmapDomain.EffectiveGridKind != HeatmapGridKind.PointCloud)
+        {
+            x0 = heatmapDomain.Cells.Min(cell => cell.Left);
+            x1 = heatmapDomain.Cells.Max(cell => cell.Right);
+            y0 = heatmapDomain.Cells.Min(cell => cell.Bottom);
+            y1 = heatmapDomain.Cells.Max(cell => cell.Top);
+            expand = false;
+        }
+        else if (plot.PlotType == PlotKind.Histogram)
         {
             if (series.Bins.Count == 0) throw new InvalidDataException("Histogram 没有可绘制数值。");
             x0 = series.Bins[0].Lower;
@@ -222,8 +285,11 @@ public static class PlotSceneBuilder
             y0 = series.Samples.Min(sample => sample.Low is { } error ? sample.Y - error : sample.Y);
             y1 = series.Samples.Max(sample => sample.High is { } error ? sample.Y + error : sample.Y);
         }
-        (x0, x1) = Expand(x0, x1);
-        (y0, y1) = Expand(y0, y1);
+        if (expand)
+        {
+            (x0, x1) = Expand(x0, x1);
+            (y0, y1) = Expand(y0, y1);
+        }
         x0 = plot.XAxis.Minimum ?? x0;
         x1 = plot.XAxis.Maximum ?? x1;
         y0 = plot.YAxis.Minimum ?? y0;
@@ -381,27 +447,179 @@ public static class PlotSceneBuilder
         }
     }
 
-    private static void AddHeatmap(List<PlotPrimitive> output, PlotRect chart, PlotObject plot, Bounds bounds, IReadOnlyList<Sample> samples)
+    private static void AddHeatmap(
+        List<PlotPrimitive> output,
+        PlotRect chart,
+        PlotObject plot,
+        PlotTypography typography,
+        Bounds bounds,
+        HeatmapDomain domain,
+        int dpi)
     {
-        double[] values = samples.Where(sample => sample.Value.HasValue).Select(sample => sample.Value!.Value).ToArray();
-        if (values.Length == 0) throw new InvalidDataException("Heatmap value 列没有可绘制数值。");
-        double minimum = values.Min();
-        double maximum = values.Max();
-        double width = Math.Clamp(chart.Width / Math.Max(8, Math.Sqrt(values.Length) * 2), 3, 18);
-        double height = Math.Clamp(chart.Height / Math.Max(8, Math.Sqrt(values.Length) * 2), 3, 18);
-        foreach (Sample sample in samples.Where(sample => sample.Value.HasValue))
+        if (domain.EffectiveGridKind == HeatmapGridKind.PointCloud)
         {
-            PlotPoint point = Map(chart, plot, bounds, sample.X, sample.Y);
-            double f = maximum > minimum ? (sample.Value!.Value - minimum) / (maximum - minimum) : 0.5;
-            byte red = (byte)(30 + 220 * f);
-            byte green = (byte)(65 + 110 * (1 - Math.Abs(f - 0.5) * 2));
-            byte blue = (byte)(220 - 190 * f);
-            PlotRect cell = Intersect(new(point.X - width / 2, point.Y - height / 2, width, height), chart);
-            if (cell.Width > 0 && cell.Height > 0)
+            double radius = Math.Max(2, Px(plot.Style.MarkerSizePt, dpi) / 2);
+            foreach (HeatmapDomainCell cell in domain.Cells)
             {
-                output.Add(new PlotHeatmapCell(cell, $"#FF{red:X2}{green:X2}{blue:X2}"));
+                if (cell.Fill is null) continue;
+                PlotPoint point = Map(chart, plot, bounds, cell.X, cell.Y);
+                if (Contains(chart, point))
+                {
+                    output.Add(new PlotEllipse(
+                        new PlotRect(point.X - radius, point.Y - radius, radius * 2, radius * 2),
+                        cell.Fill));
+                }
             }
         }
+        else
+        {
+            foreach (HeatmapDomainCell cell in domain.Cells)
+            {
+                PlotPoint lower = Map(chart, plot, bounds, cell.Left, cell.Bottom);
+                PlotPoint upper = Map(chart, plot, bounds, cell.Right, cell.Top);
+                PlotRect rectangle = Intersect(new PlotRect(
+                    Math.Min(lower.X, upper.X),
+                    Math.Min(lower.Y, upper.Y),
+                    Math.Abs(upper.X - lower.X),
+                    Math.Abs(lower.Y - upper.Y)), chart);
+                if (rectangle.Width > 0 && rectangle.Height > 0)
+                {
+                    output.Add(new PlotHeatmapCell(
+                        rectangle,
+                        cell.Fill,
+                        cell.Value,
+                        cell.NormalizedValue,
+                        cell.IsNoData,
+                        cell.X,
+                        cell.Y));
+                }
+            }
+        }
+
+        if (domain.Colorbar is { } colorbar)
+        {
+            AddColorbar(output, chart, typography, domain, colorbar, dpi);
+        }
+    }
+
+    private static void AddColorbar(
+        List<PlotPrimitive> output,
+        PlotRect chart,
+        PlotTypography typography,
+        HeatmapDomain domain,
+        HeatmapColorbarDomain colorbar,
+        int dpi)
+    {
+        const int bandCount = 64;
+        double gap = Math.Max(7, Px(5, dpi));
+        double thickness = Math.Max(10, Px(8, dpi));
+        TextStyle labelStyle = colorbar.LabelStyle ?? typography.Tick;
+        double font = Px(labelStyle.FontSizePt, dpi);
+        double axisClearance = Px(typography.Tick.FontSizePt, dpi) * 1.6 +
+            Px(typography.Axis.FontSizePt, dpi) * 1.6;
+        bool vertical = colorbar.Orientation == PlotColorbarOrientation.Vertical;
+        PlotRect bar = colorbar.Position switch
+        {
+            PlotColorbarPosition.Left => new PlotRect(
+                chart.Left - gap - thickness - font * 4.5,
+                chart.Top,
+                thickness,
+                chart.Height),
+            PlotColorbarPosition.Top => new PlotRect(chart.Left, chart.Top - gap - thickness, chart.Width, thickness),
+            PlotColorbarPosition.Bottom => new PlotRect(
+                chart.Left,
+                chart.Bottom + gap + axisClearance,
+                chart.Width,
+                thickness),
+            _ => new PlotRect(chart.Right + gap, chart.Top, thickness, chart.Height),
+        };
+        for (int index = 0; index < bandCount; index++)
+        {
+            double fraction = (index + 0.5) / bandCount;
+            string fill = ScientificColormap.Sample(domain.Colormap, fraction).ToHex();
+            PlotRect band = vertical
+                ? new PlotRect(
+                    bar.Left,
+                    bar.Bottom - (index + 1) * bar.Height / bandCount,
+                    bar.Width,
+                    bar.Height / bandCount + 0.25)
+                : new PlotRect(
+                    bar.Left + index * bar.Width / bandCount,
+                    bar.Top,
+                    bar.Width / bandCount + 0.25,
+                    bar.Height);
+            output.Add(new PlotRectangle(band, fill));
+        }
+        output.Add(new PlotRectangle(bar, null, "#FF303945", Math.Max(0.5, Px(0.6, dpi))));
+
+        double tickLength = Math.Max(3, Px(3, dpi));
+        for (int tickIndex = 0; tickIndex < colorbar.Ticks.Count; tickIndex++)
+        {
+            double tick = colorbar.Ticks[tickIndex];
+            string tickLabel = colorbar.TickLabels[tickIndex];
+            double fraction = ColorbarFraction(
+                tick,
+                colorbar.Minimum,
+                colorbar.Maximum,
+                domain.Scale);
+            if (vertical)
+            {
+                double y = bar.Bottom - fraction * bar.Height;
+                bool left = colorbar.Position == PlotColorbarPosition.Left;
+                double edge = left ? bar.Left : bar.Right;
+                double end = edge + (left ? -tickLength : tickLength);
+                output.Add(new PlotLine(new PlotPoint(edge, y), new PlotPoint(end, y), "#FF303945", Math.Max(0.5, Px(0.6, dpi))));
+                output.Add(new PlotText(
+                    tickLabel,
+                    end + (left ? -3 : 3),
+                    y - font * 0.55,
+                    labelStyle,
+                    font,
+                    left ? PlotTextAnchor.End : PlotTextAnchor.Start));
+            }
+            else
+            {
+                double x = bar.Left + fraction * bar.Width;
+                bool top = colorbar.Position == PlotColorbarPosition.Top;
+                double edge = top ? bar.Top : bar.Bottom;
+                double end = edge + (top ? -tickLength : tickLength);
+                output.Add(new PlotLine(new PlotPoint(x, edge), new PlotPoint(x, end), "#FF303945", Math.Max(0.5, Px(0.6, dpi))));
+                output.Add(new PlotText(
+                    tickLabel,
+                    x,
+                    top ? end - font * 1.1 : end + 2,
+                    labelStyle,
+                    font,
+                    PlotTextAnchor.Middle));
+            }
+        }
+
+        if (colorbar.Unit is { } unit)
+        {
+            output.Add(new PlotText(
+                unit,
+                vertical ? bar.Left + bar.Width / 2 : bar.Right,
+                vertical ? bar.Top - font * 1.25 : bar.Top - font * 1.25,
+                labelStyle,
+                font,
+                vertical ? PlotTextAnchor.Middle : PlotTextAnchor.End));
+        }
+    }
+
+    private static double ColorbarFraction(
+        double value,
+        double minimum,
+        double maximum,
+        PlotColorScaleKind scale)
+    {
+        if (maximum == minimum) return 0.5;
+        if (scale == PlotColorScaleKind.Log10)
+        {
+            value = Math.Log10(value);
+            minimum = Math.Log10(minimum);
+            maximum = Math.Log10(maximum);
+        }
+        return (value - minimum) / (maximum - minimum);
     }
 
     private static void AddMarker(List<PlotPrimitive> output, PlotPoint point, PlotSeriesStyle style, int dpi)

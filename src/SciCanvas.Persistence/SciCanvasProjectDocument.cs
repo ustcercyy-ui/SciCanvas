@@ -214,6 +214,57 @@ public sealed class ProjectPlotSnapshot
     public ProjectPlotFilterSnapshot? Filter { get; init; }
 
     public IReadOnlyList<ProjectPlotTransformSnapshot> Transforms { get; init; } = [];
+
+    public ProjectHeatmapGridSnapshot? HeatmapGrid { get; init; }
+
+    public ProjectPlotColorScaleSnapshot? ColorScale { get; init; }
+
+    public ProjectPlotColorbarSnapshot? Colorbar { get; init; }
+}
+
+public sealed class ProjectHeatmapGridSnapshot
+{
+    public string Kind { get; init; } = "auto";
+
+    public string DuplicateCellPolicy { get; init; } = "error";
+}
+
+public sealed class ProjectPlotColorScaleSnapshot
+{
+    public string Colormap { get; init; } = "viridis";
+
+    public double? Minimum { get; init; }
+
+    public double? Maximum { get; init; }
+
+    public string Scale { get; init; } = "linear";
+
+    public string ClampMode { get; init; } = "clamp";
+
+    public string? NoDataColor { get; init; }
+
+    public bool ShowColorbar { get; init; } = true;
+}
+
+public sealed class ProjectPlotColorbarSnapshot
+{
+    public string Binding { get; init; } = "linked";
+
+    public string Orientation { get; init; } = "vertical";
+
+    public string Position { get; init; } = "right";
+
+    public double? Minimum { get; init; }
+
+    public double? Maximum { get; init; }
+
+    public string? Unit { get; init; }
+
+    public IReadOnlyList<double> Ticks { get; init; } = [];
+
+    public IReadOnlyList<string> TickLabels { get; init; } = [];
+
+    public ProjectTextStyleSnapshot? LabelStyle { get; init; }
 }
 
 public sealed class ProjectPlotDataBindingSnapshot

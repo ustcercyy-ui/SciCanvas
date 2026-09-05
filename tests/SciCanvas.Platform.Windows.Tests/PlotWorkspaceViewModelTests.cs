@@ -89,6 +89,52 @@ public sealed class PlotWorkspaceViewModelTests
     }
 
     [Fact]
+    public void HeatmapEditor_SavesAndReloadsQuantitativeDomainAndColorbarSettings()
+    {
+        TestTable table = CreateTable();
+        using var viewModel = new PlotWorkspaceViewModel(
+            new ObservableCollection<TabularDataAsset>([table.Asset]));
+        viewModel.SelectedPlotKind = PlotKind.Heatmap;
+        viewModel.PlotName = "Quantitative heatmap";
+        viewModel.SelectedXColumn = table.X;
+        viewModel.SelectedYColumn = table.Y;
+        viewModel.SelectedValueColumn = table.Value;
+        viewModel.Heatmap.GridKind = HeatmapGridKind.PointCloud;
+        viewModel.Heatmap.DuplicateCellPolicy = HeatmapDuplicateCellPolicy.Median;
+        viewModel.Heatmap.Colormap = "viridis";
+        viewModel.Heatmap.Minimum = 20;
+        viewModel.Heatmap.Maximum = 100;
+        viewModel.Heatmap.NoDataColor = "#00000000";
+        viewModel.Heatmap.ColorbarTicks = "20, 40, 60, 80, 100";
+        viewModel.Heatmap.ColorbarTickLabels = "Low | 40 | 60 | 80 | High";
+        viewModel.Heatmap.ColorbarUnit = "a.u.";
+        viewModel.Heatmap.UseCustomColorbarFont = true;
+        viewModel.Heatmap.ColorbarFont.FontFamily = "Times New Roman";
+        viewModel.Heatmap.ColorbarFont.FontSizePt = 9;
+
+        PlotObject plot = Assert.IsType<PlotObject>(viewModel.SavePlot());
+
+        Assert.Equal(HeatmapGridKind.PointCloud, plot.HeatmapGrid!.Kind);
+        Assert.Equal(HeatmapDuplicateCellPolicy.Median, plot.HeatmapGrid.DuplicateCellPolicy);
+        Assert.Equal(20, plot.ColorScale!.Minimum);
+        Assert.Equal(100, plot.ColorScale.Maximum);
+        Assert.Equal("#00000000", plot.ColorScale.NoDataColor);
+        Assert.Equal([20d, 40d, 60d, 80d, 100d], plot.Colorbar!.Ticks);
+        Assert.Equal(["Low", "40", "60", "80", "High"], plot.Colorbar.TickLabels);
+        Assert.Equal("Times New Roman", plot.Colorbar.LabelStyle!.FontFamily);
+
+        viewModel.BeginNewPlot();
+        viewModel.SelectedPlot = plot;
+
+        Assert.True(viewModel.UsesHeatmapSettings);
+        Assert.Equal(HeatmapGridKind.PointCloud, viewModel.Heatmap.GridKind);
+        Assert.Equal("20, 40, 60, 80, 100", viewModel.Heatmap.ColorbarTicks);
+        Assert.Equal("Low | 40 | 60 | 80 | High", viewModel.Heatmap.ColorbarTickLabels);
+        Assert.True(viewModel.Heatmap.UseCustomColorbarFont);
+        Assert.Equal("Times New Roman", viewModel.Heatmap.ColorbarFont.FontFamily);
+    }
+
+    [Fact]
     public void SavePlot_InvalidAxisOrMissingColumnDoesNotMutateProject()
     {
         TestTable table = CreateTable();

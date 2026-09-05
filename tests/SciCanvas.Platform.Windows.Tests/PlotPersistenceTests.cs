@@ -56,6 +56,66 @@ public sealed class PlotPersistenceTests
     }
 
     [Fact]
+    public void PlotSnapshotMapper_RoundTripsQuantitativeHeatmapSettings()
+    {
+        TabularDataAsset asset = CreateHeatmapAsset();
+        PlotObject plot = CreateHeatmap(asset) with
+        {
+            HeatmapGrid = new HeatmapGridDefinition(
+                HeatmapGridKind.IrregularGrid,
+                HeatmapDuplicateCellPolicy.Median),
+            ColorScale = new PlotColorScale(
+                "magma", 10, 100, PlotColorScaleKind.Linear,
+                PlotColorClampMode.Clamp, "#00000000", true),
+            Colorbar = new PlotColorbarDefinition(
+                PlotColorbarBinding.Detached,
+                PlotColorbarOrientation.Horizontal,
+                PlotColorbarPosition.Bottom,
+                0,
+                120,
+                "a.u.",
+                [0, 30, 60, 90, 120],
+                PlotTypography.Default.Tick with { FontFamily = "Calibri", FontSizePt = 9 },
+                ["Low", "30", "60", "90", "High"]),
+        };
+
+        ProjectPlotSnapshot snapshot = PlotSnapshotMapper.ToSnapshot(plot);
+        PlotObject restored = PlotSnapshotMapper.ToModel(snapshot, asset);
+
+        Assert.Equal(plot.HeatmapGrid, restored.HeatmapGrid);
+        Assert.Equal(plot.ColorScale, restored.ColorScale);
+        Assert.Equal(plot.Colorbar!.Binding, restored.Colorbar!.Binding);
+        Assert.Equal(plot.Colorbar.Orientation, restored.Colorbar.Orientation);
+        Assert.Equal(plot.Colorbar.Position, restored.Colorbar.Position);
+        Assert.Equal(plot.Colorbar.Minimum, restored.Colorbar.Minimum);
+        Assert.Equal(plot.Colorbar.Maximum, restored.Colorbar.Maximum);
+        Assert.Equal(plot.Colorbar.Unit, restored.Colorbar.Unit);
+        Assert.Equal(plot.Colorbar.Ticks, restored.Colorbar.Ticks);
+        Assert.Equal(plot.Colorbar.TickLabels, restored.Colorbar.TickLabels);
+        Assert.Equal(plot.Colorbar.LabelStyle, restored.Colorbar.LabelStyle);
+    }
+
+    [Fact]
+    public void PlotSnapshotMapper_OldHeatmapWithoutOptionalSettings_UsesCompatibleDefaults()
+    {
+        TabularDataAsset asset = CreateHeatmapAsset();
+        ProjectPlotSnapshot snapshot = PlotSnapshotMapper.ToSnapshot(CreateHeatmap(asset));
+
+        Assert.Null(snapshot.HeatmapGrid);
+        Assert.Null(snapshot.ColorScale);
+        Assert.Null(snapshot.Colorbar);
+
+        PlotObject restored = PlotSnapshotMapper.ToModel(snapshot, asset);
+        HeatmapDomain domain = HeatmapDomainBuilder.Build(
+            restored,
+            PlotDataProjector.Project(restored, asset));
+
+        Assert.Equal(HeatmapGridKind.Auto, domain.RequestedGridKind);
+        Assert.Equal("viridis", domain.Colormap);
+        Assert.NotNull(domain.Colorbar);
+    }
+
+    [Fact]
     public async Task ProjectStore_RejectsPlotWithMissingDataAssetWithoutWritingFile()
     {
         using var workspace = new TestWorkspace();
@@ -192,6 +252,60 @@ public sealed class PlotPersistenceTests
                 Alignment: PlotMovingAverageAlignment.Trailing),
         ],
     }.EnsureValid(asset);
+
+    private static PlotObject CreateHeatmap(TabularDataAsset asset) => new PlotObject
+    {
+        Id = Guid.NewGuid(),
+        Name = "Quantitative heatmap",
+        PlotType = PlotKind.Heatmap,
+        Data = new PlotDataBinding(
+            asset.Id,
+            asset.SourceRevision,
+            asset.Columns[0].Id,
+            asset.Columns[1].Id,
+            ValueColumnId: asset.Columns[2].Id),
+        XAxis = PlotAxisDefinition.DefaultX,
+        YAxis = PlotAxisDefinition.DefaultY,
+        Typography = PlotTypography.Default,
+        Style = PlotSeriesStyle.Default,
+    };
+
+    private static TabularDataAsset CreateHeatmapAsset()
+    {
+        DataColumn x = new(Guid.NewGuid(), "X", TabularDataType.Numeric, Role: DataColumnRole.X);
+        DataColumn y = new(Guid.NewGuid(), "Y", TabularDataType.Numeric, Role: DataColumnRole.Y);
+        DataColumn value = new(Guid.NewGuid(), "Intensity", TabularDataType.Numeric);
+        DataColumn[] columns = [x, y, value];
+        return new TabularDataAsset(
+            Guid.NewGuid(),
+            "Heatmap",
+            null,
+            null,
+            1,
+            columns,
+            [
+                new TabularDataRow([
+                    TabularDataValue.FromNumber("0", 0),
+                    TabularDataValue.FromNumber("0", 0),
+                    TabularDataValue.FromNumber("10", 10),
+                ]),
+                new TabularDataRow([
+                    TabularDataValue.FromNumber("1", 1),
+                    TabularDataValue.FromNumber("0", 0),
+                    TabularDataValue.FromNumber("100", 100),
+                ]),
+            ],
+            new TabularImportMetadata
+            {
+                Format = TabularDataFormat.Csv,
+                ImportedAt = DateTimeOffset.UnixEpoch,
+                EncodingName = "UTF-8",
+                Delimiter = ',',
+                DataRowCount = 2,
+                InferenceRowCount = 2,
+                OriginalHeaders = columns.Select(column => column.Name).ToArray(),
+            }).EnsureValid();
+    }
 
     private static TabularDataAsset CreateAsset()
     {

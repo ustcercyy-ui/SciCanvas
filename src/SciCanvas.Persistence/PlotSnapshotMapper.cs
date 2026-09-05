@@ -76,6 +76,39 @@ public static class PlotSnapshotMapper
                             : "trailing",
                 })
                 .ToArray(),
+            HeatmapGrid = plot.HeatmapGrid is null
+                ? null
+                : new ProjectHeatmapGridSnapshot
+                {
+                    Kind = ToHeatmapGridKindKey(plot.HeatmapGrid.Kind),
+                    DuplicateCellPolicy = ToDuplicateCellPolicyKey(plot.HeatmapGrid.DuplicateCellPolicy),
+                },
+            ColorScale = plot.ColorScale is null
+                ? null
+                : new ProjectPlotColorScaleSnapshot
+                {
+                    Colormap = plot.ColorScale.Colormap,
+                    Minimum = plot.ColorScale.Minimum,
+                    Maximum = plot.ColorScale.Maximum,
+                    Scale = plot.ColorScale.Scale == PlotColorScaleKind.Linear ? "linear" : "log10",
+                    ClampMode = plot.ColorScale.ClampMode == PlotColorClampMode.Clamp ? "clamp" : "error",
+                    NoDataColor = plot.ColorScale.NoDataColor,
+                    ShowColorbar = plot.ColorScale.ShowColorbar,
+                },
+            Colorbar = plot.Colorbar is null
+                ? null
+                : new ProjectPlotColorbarSnapshot
+                {
+                    Binding = plot.Colorbar.Binding == PlotColorbarBinding.Linked ? "linked" : "detached",
+                    Orientation = plot.Colorbar.Orientation == PlotColorbarOrientation.Vertical ? "vertical" : "horizontal",
+                    Position = ToColorbarPositionKey(plot.Colorbar.Position),
+                    Minimum = plot.Colorbar.Minimum,
+                    Maximum = plot.Colorbar.Maximum,
+                    Unit = plot.Colorbar.Unit,
+                    Ticks = plot.Colorbar.Ticks?.ToArray() ?? [],
+                    TickLabels = plot.Colorbar.TickLabels?.ToArray() ?? [],
+                    LabelStyle = plot.Colorbar.LabelStyle is null ? null : ToSnapshot(plot.Colorbar.LabelStyle),
+                },
         };
     }
 
@@ -139,6 +172,33 @@ public static class PlotSnapshotMapper
                         ? null
                         : ParseMovingAverageAlignment(transform.Alignment)))
                 .ToArray(),
+            HeatmapGrid = snapshot.HeatmapGrid is null
+                ? null
+                : new HeatmapGridDefinition(
+                    ParseHeatmapGridKind(snapshot.HeatmapGrid.Kind),
+                    ParseDuplicateCellPolicy(snapshot.HeatmapGrid.DuplicateCellPolicy)),
+            ColorScale = snapshot.ColorScale is null
+                ? null
+                : new PlotColorScale(
+                    snapshot.ColorScale.Colormap,
+                    snapshot.ColorScale.Minimum,
+                    snapshot.ColorScale.Maximum,
+                    ParseColorScale(snapshot.ColorScale.Scale),
+                    ParseClampMode(snapshot.ColorScale.ClampMode),
+                    snapshot.ColorScale.NoDataColor,
+                    snapshot.ColorScale.ShowColorbar),
+            Colorbar = snapshot.Colorbar is null
+                ? null
+                : new PlotColorbarDefinition(
+                    ParseColorbarBinding(snapshot.Colorbar.Binding),
+                    ParseColorbarOrientation(snapshot.Colorbar.Orientation),
+                    ParseColorbarPosition(snapshot.Colorbar.Position),
+                    snapshot.Colorbar.Minimum,
+                    snapshot.Colorbar.Maximum,
+                    snapshot.Colorbar.Unit,
+                    snapshot.Colorbar.Ticks,
+                    snapshot.Colorbar.LabelStyle is null ? null : ToModel(snapshot.Colorbar.LabelStyle),
+                    snapshot.Colorbar.TickLabels),
         };
         return plot.EnsureValid(asset);
     }
@@ -303,4 +363,90 @@ public static class PlotSnapshotMapper
             "trailing" => PlotMovingAverageAlignment.Trailing,
             _ => throw new InvalidDataException($"未知 moving-average alignment：{value}"),
         };
+
+    private static string ToHeatmapGridKindKey(HeatmapGridKind value) => value switch
+    {
+        HeatmapGridKind.Auto => "auto",
+        HeatmapGridKind.RegularGrid => "regularGrid",
+        HeatmapGridKind.IrregularGrid => "irregularGrid",
+        HeatmapGridKind.PointCloud => "pointCloud",
+        _ => throw new InvalidDataException("未知 Heatmap grid kind。"),
+    };
+
+    private static HeatmapGridKind ParseHeatmapGridKind(string value) =>
+        value.ToLowerInvariant() switch
+        {
+            "auto" => HeatmapGridKind.Auto,
+            "regulargrid" => HeatmapGridKind.RegularGrid,
+            "irregulargrid" => HeatmapGridKind.IrregularGrid,
+            "pointcloud" => HeatmapGridKind.PointCloud,
+            _ => throw new InvalidDataException($"未知 Heatmap grid kind：{value}"),
+        };
+
+    private static string ToDuplicateCellPolicyKey(HeatmapDuplicateCellPolicy value) => value switch
+    {
+        HeatmapDuplicateCellPolicy.Error => "error",
+        HeatmapDuplicateCellPolicy.Mean => "mean",
+        HeatmapDuplicateCellPolicy.Median => "median",
+        HeatmapDuplicateCellPolicy.Min => "min",
+        HeatmapDuplicateCellPolicy.Max => "max",
+        _ => throw new InvalidDataException("未知 Heatmap duplicate-cell policy。"),
+    };
+
+    private static HeatmapDuplicateCellPolicy ParseDuplicateCellPolicy(string value) =>
+        value.ToLowerInvariant() switch
+        {
+            "error" => HeatmapDuplicateCellPolicy.Error,
+            "mean" => HeatmapDuplicateCellPolicy.Mean,
+            "median" => HeatmapDuplicateCellPolicy.Median,
+            "min" => HeatmapDuplicateCellPolicy.Min,
+            "max" => HeatmapDuplicateCellPolicy.Max,
+            _ => throw new InvalidDataException($"未知 Heatmap duplicate-cell policy：{value}"),
+        };
+
+    private static PlotColorScaleKind ParseColorScale(string value) => value.ToLowerInvariant() switch
+    {
+        "linear" => PlotColorScaleKind.Linear,
+        "log10" => PlotColorScaleKind.Log10,
+        _ => throw new InvalidDataException($"未知 Heatmap color scale：{value}"),
+    };
+
+    private static PlotColorClampMode ParseClampMode(string value) => value.ToLowerInvariant() switch
+    {
+        "clamp" => PlotColorClampMode.Clamp,
+        "error" => PlotColorClampMode.Error,
+        _ => throw new InvalidDataException($"未知 Heatmap clamp mode：{value}"),
+    };
+
+    private static PlotColorbarBinding ParseColorbarBinding(string value) => value.ToLowerInvariant() switch
+    {
+        "linked" => PlotColorbarBinding.Linked,
+        "detached" => PlotColorbarBinding.Detached,
+        _ => throw new InvalidDataException($"未知 Heatmap colorbar binding：{value}"),
+    };
+
+    private static PlotColorbarOrientation ParseColorbarOrientation(string value) => value.ToLowerInvariant() switch
+    {
+        "vertical" => PlotColorbarOrientation.Vertical,
+        "horizontal" => PlotColorbarOrientation.Horizontal,
+        _ => throw new InvalidDataException($"未知 Heatmap colorbar orientation：{value}"),
+    };
+
+    private static string ToColorbarPositionKey(PlotColorbarPosition value) => value switch
+    {
+        PlotColorbarPosition.Right => "right",
+        PlotColorbarPosition.Left => "left",
+        PlotColorbarPosition.Top => "top",
+        PlotColorbarPosition.Bottom => "bottom",
+        _ => throw new InvalidDataException("未知 Heatmap colorbar position。"),
+    };
+
+    private static PlotColorbarPosition ParseColorbarPosition(string value) => value.ToLowerInvariant() switch
+    {
+        "right" => PlotColorbarPosition.Right,
+        "left" => PlotColorbarPosition.Left,
+        "top" => PlotColorbarPosition.Top,
+        "bottom" => PlotColorbarPosition.Bottom,
+        _ => throw new InvalidDataException($"未知 Heatmap colorbar position：{value}"),
+    };
 }
